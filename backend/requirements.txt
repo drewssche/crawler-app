@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+alembic
+redis
+celery
+httpx
+beautifulsoup4
+lxml
+playwright
+python-dotenv
+passlib[bcrypt]
+python-jose[cryptography]
+bcrypt<5
