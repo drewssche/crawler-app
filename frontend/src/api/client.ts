@@ -1,4 +1,5 @@
-export const API_BASE = "http://localhost:8000";
+const envApiBase = String(import.meta.env.VITE_API_BASE ?? "").trim();
+export const API_BASE = (envApiBase || "http://localhost:8000").replace(/\/+$/, "");
 const TOKEN_KEY = "auth_token";
 
 export function getToken(): string | null {
