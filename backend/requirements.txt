@@ -13,3 +13,4 @@ python-dotenv
 passlib[bcrypt]
 python-jose[cryptography]
 bcrypt<5
+openpyxl

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet } from "../../api/client";
+import RoleBadge from "../ui/RoleBadge";
 import { useAuth } from "../../hooks/auth";
 
 type Profile = {
@@ -12,7 +13,7 @@ type Profile = {
 export default function SidebarLeft() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshMe } = useAuth();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [search, setSearch] = useState("");
 
@@ -20,6 +21,11 @@ export default function SidebarLeft() {
     apiGet<Profile[]>("/profiles")
       .then(setProfiles)
       .catch(() => setProfiles([]));
+  }, [location.pathname]);
+
+  useEffect(() => {
+    refreshMe().catch(() => null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
   const filtered = useMemo(() => {
@@ -42,19 +48,18 @@ export default function SidebarLeft() {
     >
       <div>
         <button
+          onClick={() => navigate("/settings")}
+          style={{ padding: "10px 12px", borderRadius: 10, cursor: "pointer", width: "100%" }}
+        >
+          Настройки
+        </button>
+        <hr style={{ margin: "10px 0", borderColor: "#3333" }} />
+        <button
           onClick={() => navigate("/profiles/new")}
           style={{ padding: "10px 12px", borderRadius: 10, cursor: "pointer", width: "100%" }}
         >
           + Создать профиль
         </button>
-        {user?.role === "admin" && (
-          <button
-            onClick={() => navigate("/users")}
-            style={{ padding: "10px 12px", borderRadius: 10, cursor: "pointer", width: "100%", marginTop: 8 }}
-          >
-            Пользователи
-          </button>
-        )}
         <input
           placeholder="Поиск профилей..."
           value={search}
@@ -107,7 +112,7 @@ export default function SidebarLeft() {
 
       <div style={{ borderTop: "1px solid #3333", marginTop: 12, paddingTop: 12 }}>
         <div style={{ fontWeight: 700 }}>{user?.email ?? "неизвестно"}</div>
-        <div style={{ opacity: 0.7, marginBottom: 10 }}>роль: {user?.role ?? "-"}</div>
+        <div style={{ marginTop: 6, marginBottom: 10 }}><RoleBadge role={user?.role ?? "-"} /></div>
         <button
           onClick={() => {
             logout();

@@ -6,8 +6,7 @@ from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.profiles import router as profiles_router
 from app.api.runs import router as runs_router
-from app.core.security import hash_password
-from app.db.models.user import User
+from app.core.admin_sync import parse_admin_emails, sync_admin_users
 from app.db.session import SessionLocal
 
 app = FastAPI(title="Crawler API")
@@ -31,30 +30,15 @@ def health():
 
 @app.on_event("startup")
 def bootstrap_admin():
-    admin_email = os.getenv("ADMIN_EMAIL")
+    admin_emails_raw = os.getenv("ADMIN_EMAILS", "")
     admin_password = os.getenv("ADMIN_PASSWORD")
+    admin_emails = parse_admin_emails(admin_emails_raw)
 
-    if not admin_email or not admin_password:
+    if not admin_emails or not admin_password:
         return
 
     db = SessionLocal()
     try:
-        existing = db.query(User).filter(User.email == admin_email).first()
-        if existing:
-            existing.role = "admin"
-            existing.is_admin = True
-            existing.is_approved = True
-            db.commit()
-            return
-
-        admin = User(
-            email=admin_email,
-            hashed_password=hash_password(admin_password),
-            role="admin",
-            is_admin=True,
-            is_approved=True,
-        )
-        db.add(admin)
-        db.commit()
+        sync_admin_users(db, admin_emails, admin_password)
     finally:
         db.close()

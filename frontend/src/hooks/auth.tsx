@@ -1,34 +1,40 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost, clearToken, getToken, setToken } from "../api/client";
+import { type BaseRole } from "../utils/roles";
 
 type AuthUser = {
   email: string;
-  role: "admin" | "editor" | "viewer";
+  role: BaseRole;
 };
 
 type VerifyCodeResponse = {
   access_token: string;
   token_type: string;
+  trusted_device_token?: string | null;
 };
 
 type LoginStartResponse = {
-  mfa_required: boolean;
-  challenge_id: number;
+  status: string;
+  challenge_id?: number;
   message: string;
   dev_code?: string;
+  access_token?: string;
+  token_type?: string;
+  trusted_device_token?: string | null;
 };
 
 type AuthContextValue = {
   token: string | null;
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<LoginStartResponse>;
+  login: (email: string) => Promise<LoginStartResponse>;
   verifyCode: (challengeId: number, code: string) => Promise<void>;
   logout: () => void;
   refreshMe: () => Promise<AuthUser | null>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const TRUSTED_DEVICE_KEY = "trusted_device_token";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setTokenState] = useState<string | null>(() => getToken());
@@ -56,8 +62,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const login = async (email: string, password: string): Promise<LoginStartResponse> => {
-    return apiPost<LoginStartResponse>("/auth/login", { email, password });
+  const login = async (email: string): Promise<LoginStartResponse> => {
+    const trustedDeviceToken = localStorage.getItem(TRUSTED_DEVICE_KEY);
+    const res = await apiPost<LoginStartResponse>("/auth/start", {
+      email,
+      trusted_device_token: trustedDeviceToken,
+    });
+
+    if (res.status === "authenticated" && res.access_token) {
+      setToken(res.access_token);
+      setTokenState(res.access_token);
+      const me = await apiGet<AuthUser>("/auth/me");
+      setUser(me);
+    }
+
+    return res;
   };
 
   const verifyCode = async (challengeId: number, code: string) => {
@@ -67,6 +86,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     setToken(data.access_token);
     setTokenState(data.access_token);
+    if (data.trusted_device_token) {
+      localStorage.setItem(TRUSTED_DEVICE_KEY, data.trusted_device_token);
+    }
     const me = await apiGet<AuthUser>("/auth/me");
     setUser(me);
   };
