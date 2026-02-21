@@ -14,4 +14,5 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_approved: Mapped[bool] = mapped_column(Boolean, default=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     token_version: Mapped[int] = mapped_column(Integer, default=0)

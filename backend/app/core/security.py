@@ -11,6 +11,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
+from app.core.permissions import Permission, has_permission
 from app.db.models.user import User
 from app.db.session import get_db
 
@@ -91,7 +92,7 @@ def get_current_user(
         raise credentials_exception from exc
 
     user = db.query(User).filter(User.email == email).first()
-    if not user or not user.is_approved or user.is_blocked:
+    if not user or not user.is_approved or user.is_blocked or user.is_deleted:
         raise credentials_exception
     if token_version is None or int(token_version) != int(user.token_version):
         raise credentials_exception
@@ -115,3 +116,16 @@ def require_admin_user(current_user: User = Depends(get_current_user)) -> User:
             detail="Admin access required",
         )
     return current_user
+
+
+def require_permission(permission: Permission):
+    def _dependency(current_user: User = Depends(get_current_user)) -> User:
+        role = get_user_role(current_user)
+        if not has_permission(role, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission required: {permission}",
+            )
+        return current_user
+
+    return _dependency

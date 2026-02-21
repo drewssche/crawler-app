@@ -1,651 +1,676 @@
-﻿import { useEffect, useMemo, useState } from "react";
-import { apiGet, apiPost } from "../api/client";
-import AccentPill from "../components/ui/AccentPill";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { apiGet, apiPost, isAbortError } from "../api/client";
+import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
-import EmptyState from "../components/ui/EmptyState";
-import RoleBadge from "../components/ui/RoleBadge";
+import ClearableInput from "../components/ui/ClearableInput";
+import RelevanceBadge from "../components/ui/RelevanceBadge";
+import RolePermissionsHint from "../components/ui/RolePermissionsHint";
+import SelectableListRow from "../components/ui/SelectableListRow";
+import SegmentedControl from "../components/ui/SegmentedControl";
+import IdentityBadgeRow from "../components/users/IdentityBadgeRow";
+import UserDetailsDrawer, { type UserDetailsResponse } from "../components/users/UserDetailsDrawer";
+import UserActionPanel, {
+  type ActionCatalogItem,
+  type BulkAction,
+  type TrustPolicy,
+  type TrustPolicyCatalogItem,
+  type UserRole,
+} from "../components/users/UserActionPanel";
+import UserBadgeGroups from "../components/users/UserBadgeGroups";
+import { UserStatusPills, UserTrustPills } from "../components/users/UserStatusPills";
+import { useAuth } from "../hooks/auth";
+import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll";
+import type { AvailableActionsResponse } from "../types/catalog";
+import { getUserAndTrustCatalogsCached } from "../utils/catalogCache";
+import { formatApiDateTime } from "../utils/datetime";
 import { resolveDisplayRole } from "../utils/roles";
+import { loadUserContextByEmail, loadUserContextById } from "../utils/userContext";
 
-type TrustPolicy = "strict" | "standard" | "extended" | "permanent";
+type UsersTab = "all" | "pending" | "approved" | "deleted";
 
-type UserItem = {
+type UserRow = {
   id: number;
   email: string;
-  role: "admin" | "editor" | "viewer" | string;
-  is_root_admin?: boolean;
+  role: string;
+  is_root_admin: boolean;
   pending_requested_at?: string | null;
   is_approved: boolean;
   is_admin: boolean;
   is_blocked: boolean;
+  is_deleted: boolean;
   trust_policy: TrustPolicy;
   trusted_days_left: number | null;
+  trusted_devices_count?: number;
+  last_activity_at?: string | null;
+  last_ip?: string | null;
+  last_user_agent?: string | null;
+  pending_unread?: boolean;
+  pending_event_id?: number | null;
 };
 
-type Tab = "all" | "pending" | "approved";
-
-type BulkAction =
-  | "approve"
-  | "remove_approve"
-  | "block"
-  | "unblock"
-  | "revoke_sessions"
-  | "revoke_trusted_devices"
-  | "send_code"
-  | "set_trust_policy";
-
-const TRUST_HINTS: Record<TrustPolicy, string> = {
-  strict: "Код при каждом входе.",
-  standard: "Доверие 30 дней.",
-  extended: "Доверие 90 дней.",
-  permanent: "Бессрочное доверие.",
-};
-
-const TRUST_POLICY_META: Record<TrustPolicy, { label: string; color: string; bg: string; codeRequired: string; duration: string; risk: string }> = {
-  strict: {
-    label: "strict",
-    color: "#f0a85e",
-    bg: "rgba(240,168,94,0.14)",
-    codeRequired: "Да, на каждый вход",
-    duration: "0 дней",
-    risk: "Минимальный риск",
-  },
-  standard: {
-    label: "standard",
-    color: "#64a8c9",
-    bg: "rgba(100,168,201,0.16)",
-    codeRequired: "Только при новом устройстве",
-    duration: "30 дней",
-    risk: "Сбалансированно",
-  },
-  extended: {
-    label: "extended",
-    color: "#56bfd1",
-    bg: "rgba(86,191,209,0.14)",
-    codeRequired: "Только при новом устройстве",
-    duration: "90 дней",
-    risk: "Выше standard",
-  },
-  permanent: {
-    label: "permanent",
-    color: "#e67f7f",
-    bg: "rgba(230,127,127,0.14)",
-    codeRequired: "Только при первом входе",
-    duration: "Бессрочно",
-    risk: "Повышенный риск",
-  },
-};
-
-const ACTION_LABELS: Record<BulkAction, string> = {
-  approve: "Подтвердить доступ",
-  remove_approve: "Снять approve",
-  block: "Заблокировать",
-  unblock: "Разблокировать",
-  revoke_sessions: "Отозвать сессии",
-  revoke_trusted_devices: "Отозвать доверие",
-  send_code: "Выслать код",
-  set_trust_policy: "Назначить trust-policy",
-};
-
-const CRITICAL_ACTIONS = new Set<BulkAction>(["block", "remove_approve", "revoke_sessions", "revoke_trusted_devices"]);
-
-const ACTION_HINTS: Record<BulkAction, { icon: string; title: string; details: string; impact: string }> = {
-  approve: {
-    icon: "i",
-    title: "Подтверждение доступа",
-    details: "Пользователь получит доступ к системе с указанной ролью.",
-    impact: "Используйте для новых запросов доступа.",
-  },
-  remove_approve: {
-    icon: "!",
-    title: "Снятие approve",
-    details: "Пользователь больше не сможет входить, пока не будет одобрен снова.",
-    impact: "Критичное действие для временного отключения доступа.",
-  },
-  block: {
-    icon: "!",
-    title: "Блокировка",
-    details: "Вход блокируется, активные сессии будут отозваны.",
-    impact: "Критичное действие. Применяйте при подозрительной активности.",
-  },
-  unblock: {
-    icon: "i",
-    title: "Разблокировка",
-    details: "Снимает блок входа.",
-    impact: "Используйте после проверки и подтверждения пользователя.",
-  },
-  revoke_sessions: {
-    icon: "!",
-    title: "Отзыв сессий",
-    details: "Все текущие JWT-сессии (токены входа) будут завершены и станут недействительными.",
-    impact: "Критичное действие. Пользователь войдет заново.",
-  },
-  revoke_trusted_devices: {
-    icon: "!",
-    title: "Отзыв доверия",
-    details: "Удаляются доверенные устройства, потребуется код при следующем входе.",
-    impact: "Критичное действие для сброса доверенного входа.",
-  },
-  send_code: {
-    icon: "i",
-    title: "Отправка кода",
-    details: "Одноразовый код входа отправляется на email пользователя.",
-    impact: "Используйте для оперативной помощи пользователю с входом.",
-  },
-  set_trust_policy: {
-    icon: "i",
-    title: "Настройка trust-policy",
-    details: "Меняет политику доверенных устройств для выбранных пользователей.",
-    impact: "Влияет на частоту ввода кода и срок доверия устройства.",
-  },
-};
-
-function ActionHintCard({
-  action,
-  critical,
-  selectedCount,
-  trustPolicy,
-}: {
+type ActionPayload = {
   action: BulkAction;
-  critical: boolean;
-  selectedCount: number;
-  trustPolicy: TrustPolicy;
-}) {
-  const hint = ACTION_HINTS[action];
-  const trustMeta = TRUST_POLICY_META[trustPolicy];
-  return (
-    <Card
-      style={{
-        borderColor: critical ? "rgba(243,198,119,0.45)" : "#3333",
-        background: critical ? "rgba(243,198,119,0.08)" : "rgba(255,255,255,0.03)",
-      }}
-    >
-      <div style={{ display: "grid", gridTemplateColumns: "24px 1fr", gap: 10, alignItems: "start" }}>
-        <div
-          style={{
-            width: 24,
-            height: 24,
-            borderRadius: 12,
-            display: "grid",
-            placeItems: "center",
-            fontWeight: 700,
-            border: "1px solid #3333",
-            fontSize: 12,
-          }}
-        >
-          {hint.icon}
-        </div>
-        <div style={{ display: "grid", gap: 4 }}>
-          <div>
-            <AccentPill tone={critical ? "warning" : "info"}>Действие: {hint.title}</AccentPill>
-          </div>
-          <div style={{ fontWeight: 700 }}>{hint.title}</div>
-          <div style={{ fontSize: 13, opacity: 0.9 }}>{hint.details}</div>
-          <div style={{ fontSize: 12, opacity: 0.8 }}>{hint.impact}</div>
-          <div style={{ fontSize: 12, opacity: 0.82 }}>Применится к выбранным пользователям: {selectedCount}</div>
-          {action === "set_trust_policy" && (
-            <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  background: trustMeta.bg,
-                  color: trustMeta.color,
-                  border: `1px solid ${trustMeta.color}55`,
-                  borderRadius: 999,
-                  padding: "4px 10px",
-                  width: "fit-content",
-                  fontWeight: 700,
-                  fontSize: 12,
-                }}
-              >
-                Текущая политика: {trustMeta.label}
-              </div>
-              <div style={{ fontSize: 12, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                <AccentPill style={{ background: trustMeta.bg, color: trustMeta.color, padding: "3px 8px", borderRadius: 8 }}>
-                  Код: {trustMeta.codeRequired}
-                </AccentPill>
-                <AccentPill style={{ background: trustMeta.bg, color: trustMeta.color, padding: "3px 8px", borderRadius: 8 }}>
-                  Срок доверия: {trustMeta.duration}
-                </AccentPill>
-                <AccentPill style={{ background: trustMeta.bg, color: trustMeta.color, padding: "3px 8px", borderRadius: 8 }}>
-                  Риск: {trustMeta.risk}
-                </AccentPill>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </Card>
-  );
+  role?: UserRole;
+  trust_policy?: TrustPolicy;
+  reason?: string;
+};
+
+const TXT = {
+  title: "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0438",
+  tabAll: "\u0412\u0441\u0435",
+  tabPending: "\u041e\u0436\u0438\u0434\u0430\u044e\u0442 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f",
+  tabApproved: "\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u043d\u044b\u0435",
+  tabDeleted: "\u0423\u0434\u0430\u043b\u0435\u043d\u043d\u044b\u0435",
+  chooseUsersFirst: "\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439 \u0432 \u0441\u043f\u0438\u0441\u043a\u0435.",
+  noApplicable: "\u0414\u043b\u044f \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0433\u043e \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f \u043d\u0435\u0442 \u043f\u043e\u0434\u0445\u043e\u0434\u044f\u0449\u0438\u0445 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439.",
+  actionDone: "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u043e.",
+  userActionDone: "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043f\u043e \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044e \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e.",
+  userNotFoundInDb: "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u0432 \u0411\u0414.",
+  resetContext: "\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442",
+  searchPlaceholder: "\u041f\u043e\u0438\u0441\u043a \u043f\u043e email",
+  loading: "\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...",
+  find: "\u041d\u0430\u0439\u0442\u0438",
+  selectAllTitle: "\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u0432\u0441\u0435 \u0432 \u0442\u0435\u043a\u0443\u0449\u0435\u043c \u0441\u043f\u0438\u0441\u043a\u0435",
+  usersList: "\u0421\u043f\u0438\u0441\u043e\u043a \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439",
+  selected: "\u0412\u044b\u0431\u0440\u0430\u043d\u043e",
+  selectUserTitle: "\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f",
+  open: "\u041e\u0442\u043a\u0440\u044b\u0442\u044c",
+  pendingRequest: "\u0417\u0430\u044f\u0432\u043a\u0430",
+  hasUnreadRequest: "\u0415\u0441\u0442\u044c \u043d\u0435\u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430",
+  usersNotFound: "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0438 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b.",
+  shown: "\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e",
+  actionsForSelected: "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044f \u0434\u043b\u044f \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439",
+  reasonOptional: "\u041f\u0440\u0438\u0447\u0438\u043d\u0430 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f (\u043d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e, \u043d\u043e \u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f)",
+  loadingActions: "\u041e\u0431\u043d\u043e\u0432\u043b\u044f\u044e \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f...",
+} as const;
+
+const TAB_OPTIONS: Array<{ value: UsersTab; label: string }> = [
+  { value: "all", label: TXT.tabAll },
+  { value: "pending", label: TXT.tabPending },
+  { value: "approved", label: TXT.tabApproved },
+  { value: "deleted", label: TXT.tabDeleted },
+];
+
+const BASE_ROWS = 20;
+
+function normalizeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
-function YesMark() {
-  return <span style={{ color: "#6ec7b5", fontWeight: 700, fontSize: 16, lineHeight: 1 }}>✓</span>;
+function isActionApplicable(
+  user: UserRow,
+  action: BulkAction,
+  options: { actorIsRoot: boolean; actorEmail: string; targetRole?: UserRole },
+): boolean {
+  const isSelf = user.email.toLowerCase() === options.actorEmail;
+  const rootAdminAllowedForAdminUser = new Set<BulkAction>([
+    "remove_approve",
+    "block",
+    "unblock",
+    "revoke_sessions",
+    "revoke_trusted_devices",
+    "send_code",
+    "set_trust_policy",
+    "set_role",
+    "delete_soft",
+    "restore",
+    "delete_hard",
+  ]);
+
+  if (action === "delete_hard") {
+    if (!options.actorIsRoot) return false;
+    if (user.is_root_admin) return false;
+    if (isSelf) return false;
+    return true;
+  }
+
+  if (action === "set_role") {
+    if (!user.is_approved || user.is_deleted) return false;
+    if (user.is_root_admin) return false;
+    if (isSelf && (options.targetRole === "viewer" || options.targetRole === "editor")) return false;
+    if (user.is_admin && !options.actorIsRoot) return false;
+    if (options.targetRole === "admin" && !options.actorIsRoot) return false;
+    return true;
+  }
+
+  if (action === "approve" && options.targetRole === "admin" && !options.actorIsRoot) {
+    return false;
+  }
+
+  if (user.is_admin) {
+    if (user.is_root_admin) return false;
+    if (!options.actorIsRoot) return false;
+    if (!rootAdminAllowedForAdminUser.has(action)) return false;
+    if (action === "remove_approve") return user.is_approved;
+    if (action === "block") return !user.is_blocked;
+    if (action === "unblock") return user.is_blocked;
+    if (action === "send_code") return user.is_approved && !user.is_blocked && !user.is_deleted;
+    if (action === "set_trust_policy" || action === "revoke_sessions" || action === "revoke_trusted_devices") {
+      return !user.is_deleted;
+    }
+    if (action === "delete_soft") return !user.is_deleted;
+    if (action === "restore") return user.is_deleted;
+    return true;
+  }
+
+  if (user.is_deleted) {
+    return action === "restore";
+  }
+
+  if (action === "approve") return !user.is_approved;
+  if (action === "remove_approve") return user.is_approved;
+  if (action === "block") return !user.is_blocked;
+  if (action === "unblock") return user.is_blocked;
+  if (action === "revoke_sessions") return true;
+  if (action === "revoke_trusted_devices") return true;
+  if (action === "send_code") return user.is_approved && !user.is_blocked;
+  if (action === "set_trust_policy") return true;
+  if (action === "delete_soft") return true;
+  if (action === "restore") return false;
+
+  return false;
 }
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<UserItem[]>([]);
-  const [selected, setSelected] = useState<number[]>([]);
-  const [tab, setTab] = useState<Tab>("all");
+  const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const [tab, setTab] = useState<UsersTab>("all");
   const [query, setQuery] = useState("");
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [rowsVisible, setRowsVisible] = useState(BASE_ROWS);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const [action, setAction] = useState<BulkAction>("approve");
-  const [roleForApprove, setRoleForApprove] = useState<"viewer" | "editor">("viewer");
-  const [trustPolicy, setTrustPolicy] = useState<TrustPolicy>("standard");
-  const [reason, setReason] = useState("");
-  const [hoveredId, setHoveredId] = useState<number | null>(null);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [rolesOpen, setRolesOpen] = useState(false);
+  const [actionCatalog, setActionCatalog] = useState<Record<BulkAction, ActionCatalogItem>>({} as Record<BulkAction, ActionCatalogItem>);
+  const [trustPolicyCatalog, setTrustPolicyCatalog] = useState<Record<TrustPolicy, TrustPolicyCatalogItem>>({} as Record<TrustPolicy, TrustPolicyCatalogItem>);
 
-  async function loadUsers(nextTab = tab, nextQuery = query) {
+  const [availableActions, setAvailableActions] = useState<BulkAction[]>([]);
+  const [availableLoading, setAvailableLoading] = useState(false);
+
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerLoading, setDrawerLoading] = useState(false);
+  const [drawerError, setDrawerError] = useState("");
+  const [drawerData, setDrawerData] = useState<UserDetailsResponse | null>(null);
+  const [drawerAvailableActions, setDrawerAvailableActions] = useState<BulkAction[]>([]);
+  const [drawerUserId, setDrawerUserId] = useState<number | null>(null);
+
+  const usersAbortRef = useRef<AbortController | null>(null);
+  const availableAbortRef = useRef<AbortController | null>(null);
+  const drawerAbortRef = useRef<AbortController | null>(null);
+  const drawerRequestSeqRef = useRef(0);
+
+  const actorEmail = (user?.email || "").toLowerCase();
+  const actorIsRoot = user?.role === "root-admin";
+
+  const selectedUsers = useMemo(() => {
+    if (selectedIds.length === 0) return [];
+    const selectedSet = new Set(selectedIds);
+    return users.filter((row) => selectedSet.has(row.id));
+  }, [users, selectedIds]);
+
+  const allVisibleIds = useMemo(() => users.slice(0, rowsVisible).map((row) => row.id), [users, rowsVisible]);
+  const allVisibleSelected = useMemo(
+    () => allVisibleIds.length > 0 && allVisibleIds.every((id) => selectedIds.includes(id)),
+    [allVisibleIds, selectedIds],
+  );
+
+  const applicableCountByAction = useMemo(() => {
+    const out: Partial<Record<BulkAction, number>> = {};
+    for (const action of availableActions) {
+      out[action] = selectedUsers.filter((row) =>
+        isActionApplicable(row, action, {
+          actorIsRoot,
+          actorEmail,
+          targetRole: action === "approve" || action === "set_role" ? "viewer" : undefined,
+        }),
+      ).length;
+    }
+    return out;
+  }, [availableActions, selectedUsers, actorEmail, actorIsRoot]);
+
+  async function loadUsers(options?: { nextTab?: UsersTab; nextQuery?: string; keepSelection?: boolean }) {
+    usersAbortRef.current?.abort();
+    const controller = new AbortController();
+    usersAbortRef.current = controller;
+
+    const nextTab = options?.nextTab ?? tab;
+    const nextQuery = options?.nextQuery ?? query;
+
+    setLoading(true);
     setError("");
+
     try {
-      const q = encodeURIComponent(nextQuery.trim());
-      const data = await apiGet<UserItem[]>(`/admin/users?status=${nextTab}&q=${q}`);
-      setUsers(data);
-      setSelected([]);
+      const data = await apiGet<UserRow[]>(
+        `/admin/users?status=${nextTab}&q=${encodeURIComponent(nextQuery.trim())}`,
+        { signal: controller.signal },
+      );
+      setUsers(data || []);
+      setRowsVisible(BASE_ROWS);
+      if (options?.keepSelection) {
+        const nextSet = new Set((data || []).map((row) => row.id));
+        setSelectedIds((prev) => prev.filter((id) => nextSet.has(id)));
+      } else {
+        setSelectedIds([]);
+      }
     } catch (e) {
-      setError(String(e));
+      if (isAbortError(e)) return;
+      setError(normalizeError(e));
+    } finally {
+      if (usersAbortRef.current === controller) {
+        usersAbortRef.current = null;
+      }
+      setLoading(false);
     }
   }
 
+  async function refreshDrawerContext(userId: number) {
+    const seq = ++drawerRequestSeqRef.current;
+    drawerAbortRef.current?.abort();
+    const controller = new AbortController();
+    drawerAbortRef.current = controller;
+
+    setDrawerLoading(true);
+    setDrawerError("");
+
+    try {
+      const loaded = await loadUserContextById(userId, { signal: controller.signal });
+      if (seq !== drawerRequestSeqRef.current) return;
+      setDrawerData(loaded.details);
+      setDrawerAvailableActions(loaded.availableActions);
+      setDrawerUserId(userId);
+    } catch (e) {
+      if (isAbortError(e)) return;
+      if (seq !== drawerRequestSeqRef.current) return;
+      setDrawerError(normalizeError(e));
+      setDrawerData(null);
+      setDrawerAvailableActions([]);
+      setDrawerUserId(userId);
+    } finally {
+      if (drawerAbortRef.current === controller) {
+        drawerAbortRef.current = null;
+      }
+      if (seq === drawerRequestSeqRef.current) {
+        setDrawerLoading(false);
+      }
+    }
+  }
+
+  async function openDrawerById(userId: number) {
+    setDrawerOpen(true);
+    await refreshDrawerContext(userId);
+  }
+
+  async function runBulkAction(payload: ActionPayload) {
+    if (selectedUsers.length === 0) {
+      throw new Error(TXT.chooseUsersFirst);
+    }
+
+    const applicableIds = selectedUsers
+      .filter((row) =>
+        isActionApplicable(row, payload.action, {
+          actorIsRoot,
+          actorEmail,
+          targetRole: payload.role,
+        }),
+      )
+      .map((row) => row.id);
+
+    if (applicableIds.length === 0) {
+      throw new Error(TXT.noApplicable);
+    }
+
+    await apiPost("/admin/users/bulk", {
+      user_ids: applicableIds,
+      action: payload.action,
+      role: payload.role,
+      trust_policy: payload.trust_policy,
+      reason: payload.reason,
+    });
+
+    setMessage(TXT.actionDone);
+    await loadUsers({ keepSelection: true });
+
+    if (drawerUserId && applicableIds.includes(drawerUserId)) {
+      await refreshDrawerContext(drawerUserId);
+    }
+  }
+
+  async function runDrawerAction(payload: ActionPayload) {
+    if (!drawerUserId) return;
+    await apiPost("/admin/users/bulk", {
+      user_ids: [drawerUserId],
+      action: payload.action,
+      role: payload.role,
+      trust_policy: payload.trust_policy,
+      reason: payload.reason,
+    });
+    setMessage(TXT.userActionDone);
+    await Promise.all([refreshDrawerContext(drawerUserId), loadUsers({ keepSelection: true })]);
+  }
+
+  async function revokeTrustedDevice(deviceId: number) {
+    if (!drawerUserId) return;
+    await apiPost(`/admin/users/${drawerUserId}/trusted-devices/${deviceId}/revoke`, {});
+    await Promise.all([refreshDrawerContext(drawerUserId), loadUsers({ keepSelection: true })]);
+  }
+
+  async function revokeTrustedDevicesExceptLatest(keepDeviceId: number) {
+    if (!drawerUserId) return;
+    await apiPost(`/admin/users/${drawerUserId}/trusted-devices/revoke-except`, { keep_device_id: keepDeviceId });
+    await Promise.all([refreshDrawerContext(drawerUserId), loadUsers({ keepSelection: true })]);
+  }
+
+  function toggleOne(id: number) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function toggleAllVisible() {
+    setSelectedIds((prev) => {
+      if (allVisibleSelected) {
+        const hideSet = new Set(allVisibleIds);
+        return prev.filter((id) => !hideSet.has(id));
+      }
+      const next = new Set(prev);
+      allVisibleIds.forEach((id) => next.add(id));
+      return Array.from(next);
+    });
+  }
+
+  useWorkspaceInfiniteScroll({
+    canLoadMore: rowsVisible < users.length,
+    isLoading: loading,
+    onLoadMore: () => setRowsVisible((prev) => Math.min(prev + BASE_ROWS, users.length)),
+    contentKey: `${rowsVisible}:${users.length}:${tab}:${query}`,
+  });
+
   useEffect(() => {
-    loadUsers();
+    let active = true;
+    getUserAndTrustCatalogsCached()
+      .then(({ actionCatalog: actionMap, trustPolicyCatalog: trustMap }) => {
+        if (!active) return;
+        setActionCatalog(actionMap);
+        setTrustPolicyCatalog(trustMap);
+      })
+      .catch(() => {
+        if (!active) return;
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    void loadUsers({ nextTab: tab, nextQuery: query });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  const selectedUsers = useMemo(() => users.filter((u) => selected.includes(u.id)), [users, selected]);
-  const selectedNonAdmin = useMemo(() => selectedUsers.filter((u) => !u.is_admin), [selectedUsers]);
+  useEffect(() => {
+    if (selectedIds.length === 0) {
+      setAvailableActions([]);
+      setAvailableLoading(false);
+      availableAbortRef.current?.abort();
+      availableAbortRef.current = null;
+      return;
+    }
 
-  const availableActions = useMemo(() => {
-    const actions: BulkAction[] = [];
-    if (selectedNonAdmin.some((u) => !u.is_approved)) actions.push("approve");
-    if (selectedNonAdmin.some((u) => u.is_approved)) actions.push("remove_approve");
-    if (selectedNonAdmin.some((u) => !u.is_blocked)) actions.push("block");
-    if (selectedNonAdmin.some((u) => u.is_blocked)) actions.push("unblock");
-    if (selectedNonAdmin.length > 0) actions.push("revoke_sessions");
-    if (selectedNonAdmin.length > 0) actions.push("revoke_trusted_devices");
-    if (selectedNonAdmin.some((u) => u.is_approved && !u.is_blocked)) actions.push("send_code");
-    if (selectedNonAdmin.length > 0) actions.push("set_trust_policy");
-    return actions;
-  }, [selectedNonAdmin]);
+    setAvailableLoading(true);
+    setError("");
+
+    const controller = new AbortController();
+    availableAbortRef.current?.abort();
+    availableAbortRef.current = controller;
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const data = await apiPost<AvailableActionsResponse>(
+          "/admin/users/actions/available",
+          { user_ids: selectedIds },
+          { signal: controller.signal },
+        );
+        setAvailableActions(data.actions || []);
+      } catch (e) {
+        if (isAbortError(e)) return;
+        setError(normalizeError(e));
+      } finally {
+        if (availableAbortRef.current === controller) {
+          availableAbortRef.current = null;
+        }
+        setAvailableLoading(false);
+      }
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+      if (availableAbortRef.current === controller) {
+        availableAbortRef.current = null;
+      }
+      setAvailableLoading(false);
+    };
+  }, [selectedIds]);
 
   useEffect(() => {
-    if (availableActions.length === 0) return;
-    if (!availableActions.includes(action)) {
-      setAction(availableActions[0]);
-    }
-  }, [availableActions, action]);
+    const params = new URLSearchParams(location.search);
+    const highlightUserId = Number(params.get("highlight_user_id") || "");
+    const highlightEmail = params.get("highlight_email") || "";
 
-  const visibleIds = useMemo(() => users.map((u) => u.id), [users]);
-  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.includes(id));
-
-  function toggleOne(userId: number) {
-    setSelected((prev) => (prev.includes(userId) ? prev.filter((x) => x !== userId) : [...prev, userId]));
-  }
-
-  function toggleAll() {
-    setSelected(allSelected ? [] : visibleIds);
-  }
-
-  async function executeBulkAction() {
-    setError("");
-    setMessage("");
-
-    if (selected.length === 0) {
-      setError("Сначала выберите пользователей в списке.");
+    if (Number.isFinite(highlightUserId) && highlightUserId > 0) {
+      void openDrawerById(highlightUserId);
       return;
     }
 
-    try {
-      await apiPost("/admin/users/bulk", {
-        user_ids: selected,
-        action,
-        role: action === "approve" ? roleForApprove : undefined,
-        trust_policy: action === "set_trust_policy" ? trustPolicy : undefined,
-        reason: reason.trim() || undefined,
-      });
-
-      setMessage(`Выполнено: ${ACTION_LABELS[action]}.`);
-      setReason("");
-      await loadUsers();
-    } catch (e) {
-      setError(String(e));
+    if (highlightEmail.trim()) {
+      void (async () => {
+        setDrawerOpen(true);
+        setDrawerLoading(true);
+        setDrawerError("");
+        try {
+          const loaded = await loadUserContextByEmail(highlightEmail);
+          if (!loaded) {
+            setDrawerData(null);
+            setDrawerAvailableActions([]);
+            setDrawerUserId(null);
+            setDrawerError(TXT.userNotFoundInDb);
+            return;
+          }
+          setDrawerData(loaded.details);
+          setDrawerAvailableActions(loaded.availableActions);
+          setDrawerUserId(loaded.details.user.id);
+        } catch (e) {
+          setDrawerError(normalizeError(e));
+        } finally {
+          setDrawerLoading(false);
+        }
+      })();
     }
-  }
+  }, [location.search]);
 
-  function onApplyAction() {
-    if (CRITICAL_ACTIONS.has(action)) {
-      setConfirmOpen(true);
-      return;
-    }
-    executeBulkAction();
-  }
-
-  async function quickApprove(userId: number, role: "viewer" | "editor") {
-    setError("");
-    setMessage("");
-    try {
-      await apiPost("/admin/users/bulk", {
-        user_ids: [userId],
-        action: "approve",
-        role,
-      });
-      setMessage(`Пользователь одобрен как ${role}.`);
-      await loadUsers();
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  function formatDaysLeft(value: number | null) {
-    if (value === null) return "не настроено";
-    if (value < 0) return "бессрочно";
-    return `${value} дн.`;
-  }
-
-  function trustStatusColor(value: number | null, policy: TrustPolicy) {
-    if (value === null) return { color: "#9ea7b3", bg: "rgba(158,167,179,0.14)" };
-    if (value < 0) return TRUST_POLICY_META.permanent;
-    if (value <= 3) return { color: "#e67f7f", bg: "rgba(230,127,127,0.14)" };
-    return { color: TRUST_POLICY_META[policy].color, bg: TRUST_POLICY_META[policy].bg };
-  }
-
-  function trustDeviceStatus(value: number | null) {
-    if (value === null) return "не настроено";
-    if (value < 0) return "бессрочно";
-    if (value <= 3) return "истекает скоро";
-    return "активно";
-  }
-
-  function tabStyle(active: boolean) {
-    return {
-      padding: "8px 10px",
-      borderRadius: 10,
-      cursor: "pointer",
-      border: active ? "1px solid #6aa0ff" : "1px solid #3333",
-      background: active ? "rgba(106,160,255,0.12)" : "transparent",
-      fontWeight: active ? 700 : 500,
+  useEffect(() => {
+    return () => {
+      usersAbortRef.current?.abort();
+      usersAbortRef.current = null;
+      availableAbortRef.current?.abort();
+      availableAbortRef.current = null;
+      drawerAbortRef.current?.abort();
+      drawerAbortRef.current = null;
     };
-  }
+  }, []);
+
+  const visibleRows = useMemo(() => users.slice(0, rowsVisible), [users, rowsVisible]);
+  const hasDeepLinkContext = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return Boolean(params.get("highlight_user_id") || params.get("highlight_email"));
+  }, [location.search]);
 
   return (
-    <div>
-      <h2 style={{ marginTop: 0 }}>Пользователи</h2>
+    <div style={{ display: "grid", gap: 12 }}>
+      <h2 style={{ marginTop: 0, marginBottom: 0 }}>{TXT.title}</h2>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <button onClick={() => setTab("all")} style={tabStyle(tab === "all")}>Все</button>
-        <button onClick={() => setTab("pending")} style={tabStyle(tab === "pending")}>Запросившие</button>
-        <button onClick={() => setTab("approved")} style={tabStyle(tab === "approved")}>Активные</button>
+      {error && <div style={{ color: "#d55" }}>{error}</div>}
+      {message && <div style={{ color: "#8fd18f" }}>{message}</div>}
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <SegmentedControl value={tab} options={TAB_OPTIONS} onChange={setTab} />
+        {hasDeepLinkContext && (
+          <Button size="sm" variant="ghost" onClick={() => navigate({ pathname: "/users", search: "" }, { replace: true })}>
+            {TXT.resetContext}
+          </Button>
+        )}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginBottom: 12 }}>
-        <input
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+        <ClearableInput
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Поиск по email"
-          style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
+          onChange={setQuery}
+          placeholder={TXT.searchPlaceholder}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              void loadUsers({ nextTab: tab, nextQuery: query });
+            }
+          }}
         />
-        <button onClick={() => loadUsers(tab, query)} style={{ padding: "10px 12px", borderRadius: 10, cursor: "pointer" }}>
-          Найти
-        </button>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => {
+            void loadUsers({ nextTab: tab, nextQuery: query });
+          }}
+          disabled={loading}
+        >
+          {loading ? TXT.loading : TXT.find}
+        </Button>
       </div>
 
-      {error && <div style={{ color: "#d55", marginBottom: 10 }}>{error}</div>}
-      {message && <div style={{ color: "#8fd18f", marginBottom: 10 }}>{message}</div>}
-
-      <Card style={{ marginBottom: 14 }}>
+      <Card>
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 12, alignItems: "center", opacity: 0.8 }}>
-            <input
-              type="checkbox"
-              checked={allSelected}
-              onChange={toggleAll}
-              title="Выбрать всех пользователей в текущем списке"
-            />
-            <div style={{ fontSize: 13 }}>Список пользователей</div>
-            <div style={{ fontSize: 13 }}>Выбрано: {selected.length}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center", gap: 10, opacity: 0.82 }}>
+            <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} title={TXT.selectAllTitle} />
+            <div>{TXT.usersList}</div>
+            <div>
+              {TXT.selected}: {selectedIds.length}
+            </div>
           </div>
 
-          {users.map((u) => {
-            const showQuickApprove = tab === "pending" && !u.is_approved && !u.is_admin && hoveredId === u.id;
+          {visibleRows.map((row) => {
+            const isSelf = !!actorEmail && row.email.toLowerCase() === actorEmail;
+            const isHighlighted = drawerOpen && drawerData?.user.id === row.id;
+            const identityBadges =
+              row.is_approved || row.is_root_admin ? (
+                <IdentityBadgeRow role={resolveDisplayRole(row)} showSelf={isSelf} />
+              ) : isSelf ? (
+                <RelevanceBadge relevance="self" />
+              ) : null;
             return (
-              <Card
-                key={u.id}
-                style={{ padding: 12 }}
-              >
-                <div
-                  onMouseEnter={() => setHoveredId(u.id)}
-                  onMouseLeave={() => setHoveredId((prev) => (prev === u.id ? null : prev))}
-                  style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 12, alignItems: "center" }}
-                >
-                  <input type="checkbox" checked={selected.includes(u.id)} onChange={() => toggleOne(u.id)} />
-                  <div>
-                    <div style={{ fontWeight: 700 }}>{u.email}</div>
-                    <div style={{ opacity: 0.9, fontSize: 13, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 4 }}>
-                      <RoleBadge role={resolveDisplayRole(u)} />
-                      <AccentPill style={u.is_approved ? { background: "rgba(82,201,122,0.2)", color: "#69db93" } : undefined} tone={u.is_approved ? "success" : "neutral"}>
-                        approve: {u.is_approved ? "да" : "нет"}
-                      </AccentPill>
-                      <AccentPill tone={u.is_blocked ? "danger" : "neutral"}>blocked: {u.is_blocked ? "да" : "нет"}</AccentPill>
+              <SelectableListRow
+                key={row.id}
+                checked={selectedIds.includes(row.id)}
+                onToggle={() => toggleOne(row.id)}
+                title={row.email}
+                badges={
+                  <UserBadgeGroups
+                    identity={identityBadges}
+                    status={
+                      <UserStatusPills
+                        user={row.is_approved ? row : { ...row, role: null }}
+                        showApproveWhenTrue={false}
+                        showApproveWhenFalse={false}
+                        showBlockedWhenFalse={false}
+                        hideRole
+                        preferPendingBadge
+                      />
+                    }
+                    trust={
+                      row.is_approved && !row.is_deleted ? (
+                        <UserTrustPills
+                          trustPolicy={row.trust_policy}
+                          trustedDaysLeft={row.trusted_days_left}
+                          trustPolicyCatalog={trustPolicyCatalog}
+                          showExpires={false}
+                          showDeviceStatus={false}
+                        />
+                      ) : null
+                    }
+                  />
+                }
+                details={
+                  tab === "pending" && row.pending_requested_at ? (
+                    <div style={{ fontSize: 12, opacity: 0.75, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <span>
+                        {TXT.pendingRequest}: {formatApiDateTime(row.pending_requested_at)}
+                      </span>
+                      {row.pending_unread ? <span>{TXT.hasUnreadRequest}</span> : null}
                     </div>
-                    <div style={{ opacity: 0.85, fontSize: 13, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 6 }} title={TRUST_HINTS[u.trust_policy] ?? "Политика доверия"}>
-                      <AccentPill style={{ background: TRUST_POLICY_META[u.trust_policy].bg, color: TRUST_POLICY_META[u.trust_policy].color }}>
-                        trust: {u.trust_policy}
-                      </AccentPill>
-                      <AccentPill style={{ background: trustStatusColor(u.trusted_days_left, u.trust_policy).bg, color: trustStatusColor(u.trusted_days_left, u.trust_policy).color }}>
-                        до истечения: {formatDaysLeft(u.trusted_days_left)}
-                      </AccentPill>
-                      <AccentPill style={{ background: trustStatusColor(u.trusted_days_left, u.trust_policy).bg, color: trustStatusColor(u.trusted_days_left, u.trust_policy).color }}>
-                        статус устройства: {trustDeviceStatus(u.trusted_days_left)}
-                      </AccentPill>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    {showQuickApprove && (
-                      <>
-                        <button onClick={() => quickApprove(u.id, "viewer")} style={{ padding: "6px 8px", borderRadius: 8, cursor: "pointer" }}>
-                          Одобрить как viewer
-                        </button>
-                        <button onClick={() => quickApprove(u.id, "editor")} style={{ padding: "6px 8px", borderRadius: 8, cursor: "pointer" }}>
-                          Одобрить как editor
-                        </button>
-                      </>
-                    )}
-                    {u.is_root_admin && <RoleBadge role="root-admin" />}
-                  </div>
-                </div>
-              </Card>
+                  ) : null
+                }
+                onOpen={() => {
+                  void openDrawerById(row.id);
+                }}
+                highlighted={isHighlighted}
+                checkboxTitle={TXT.selectUserTitle}
+                openLabel={TXT.open}
+              />
             );
           })}
 
-          {users.length === 0 && <EmptyState text="Пользователи не найдены." />}
+          {!loading && users.length === 0 && <div style={{ opacity: 0.78 }}>{TXT.usersNotFound}</div>}
+
+          {users.length > visibleRows.length && (
+            <div style={{ fontSize: 12, opacity: 0.72 }}>
+              {TXT.shown}: {visibleRows.length} {"\u0438\u0437"} {users.length}
+            </div>
+          )}
         </div>
       </Card>
 
-      {selected.length > 0 && (
-        <Card style={{ marginBottom: 18, maxHeight: "42vh", overflowY: "auto", overflowX: "hidden" }}>
-          <div style={{ display: "grid", gap: 10, minHeight: 0 }}>
-            <div style={{ fontWeight: 700 }}>Действия для выбранных пользователей</div>
-
-            {availableActions.length > 0 ? (
-              <>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <select value={action} onChange={(e) => setAction(e.target.value as BulkAction)} style={{ padding: "8px 10px", borderRadius: 10 }}>
-                    {availableActions.map((key) => (
-                      <option key={key} value={key}>
-                        {ACTION_LABELS[key]}
-                      </option>
-                    ))}
-                  </select>
-
-                  {action === "approve" && (
-                    <select value={roleForApprove} onChange={(e) => setRoleForApprove(e.target.value as "viewer" | "editor")} style={{ padding: "8px 10px", borderRadius: 10 }}>
-                      <option value="viewer">Роль: viewer</option>
-                      <option value="editor">Роль: editor</option>
-                    </select>
-                  )}
-
-                  {action === "set_trust_policy" && (
-                    <select value={trustPolicy} onChange={(e) => setTrustPolicy(e.target.value as TrustPolicy)} style={{ padding: "8px 10px", borderRadius: 10 }}>
-                      <option value="strict">strict</option>
-                      <option value="standard">standard</option>
-                      <option value="extended">extended</option>
-                      <option value="permanent">permanent</option>
-                    </select>
-                  )}
-
-                  <button onClick={onApplyAction} style={{ padding: "8px 12px", borderRadius: 10, cursor: "pointer" }}>
-                    Применить
-                  </button>
-                </div>
-
-                <ActionHintCard
-                  action={action}
-                  critical={CRITICAL_ACTIONS.has(action)}
-                  selectedCount={selectedNonAdmin.length}
-                  trustPolicy={trustPolicy}
-                />
-
-                <input
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  placeholder="Причина действия (необязательно, но рекомендуется)"
-                  style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
-                />
-
-                {selectedUsers.some((u) => u.is_admin) && (
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>
-                    В выборке есть admin. Неприменимые операции для admin будут пропущены на backend.
-                  </div>
-                )}
-              </>
-            ) : (
-              <EmptyState text="Для текущего набора выбранных пользователей нет доступных действий." />
-            )}
-          </div>
-        </Card>
+      {selectedIds.length > 0 && (
+        <UserActionPanel
+          title={TXT.actionsForSelected}
+          availableActions={availableActions}
+          actionCatalog={actionCatalog}
+          trustPolicyCatalog={trustPolicyCatalog}
+          selectedCount={selectedIds.length}
+          applicableCountByAction={applicableCountByAction}
+          onRunAction={runBulkAction}
+          reasonOptionalPlaceholder={TXT.reasonOptional}
+        />
       )}
 
-      <Card style={{ borderColor: "rgba(120,166,255,0.5)", background: "rgba(120,166,255,0.06)" }}>
-        <button
-          onClick={() => setRolesOpen((v) => !v)}
-          style={{
-            display: "flex",
-            justifyContent: "flex-start",
-            alignItems: "center",
-            gap: 8,
-            border: "none",
-            background: "transparent",
-            color: "inherit",
-            padding: 0,
-            cursor: "pointer",
-          }}
-          title="Нажмите, чтобы свернуть или развернуть раздел ролей"
-        >
-          <h3 style={{ margin: 0 }}>Роли и права</h3>
-          <AccentPill tone="info">Справка</AccentPill>
-          <span style={{ fontSize: 12, opacity: 0.8 }}>{rolesOpen ? "Свернуть" : "Развернуть"}</span>
-        </button>
-        {!rolesOpen && <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>Раздел свернут. Нажмите заголовок, чтобы открыть.</div>}
-        {rolesOpen && (
-          <div style={{ overflowX: "auto", marginTop: 10 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid #3333" }}>Возможность</th>
-                  <th style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><RoleBadge role="viewer" /></th>
-                  <th style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><RoleBadge role="editor" /></th>
-                  <th style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><RoleBadge role="admin" /></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td style={{ padding: "8px 6px", borderBottom: "1px solid #3333" }}>Просмотр данных</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><YesMark /></td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><YesMark /></td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><YesMark /></td>
-                </tr>
-                <tr>
-                  <td style={{ padding: "8px 6px", borderBottom: "1px solid #3333" }}>Запуск прогонов</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}>—</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><YesMark /></td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><YesMark /></td>
-                </tr>
-                <tr>
-                  <td style={{ padding: "8px 6px", borderBottom: "1px solid #3333" }}>Редактирование профилей</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}>—</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><YesMark /></td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><YesMark /></td>
-                </tr>
-                <tr>
-                  <td style={{ padding: "8px 6px", borderBottom: "1px solid #3333" }}>Управление пользователями</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}>—</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}>—</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px", borderBottom: "1px solid #3333" }}><YesMark /></td>
-                </tr>
-                <tr>
-                  <td style={{ padding: "8px 6px" }}>Управление системными администраторами</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px" }}>—</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px" }}>—</td>
-                  <td style={{ textAlign: "center", padding: "8px 6px" }}><RoleBadge role="root-admin" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      {confirmOpen && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.45)",
-            display: "grid",
-            placeItems: "center",
-            zIndex: 20,
-          }}
-        >
-          <Card style={{ width: 480, maxWidth: "92vw", padding: 14, background: "#1a1a1a", borderColor: "rgba(243,198,119,0.45)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <AccentPill tone="warning">Критичное действие</AccentPill>
-              <h3 style={{ margin: 0 }}>Подтвердите действие</h3>
-            </div>
-            <div style={{ display: "grid", gap: 8, fontSize: 14 }}>
-              <div>
-                Действие: <b>{ACTION_LABELS[action]}</b>
-              </div>
-              <div>Выбрано пользователей: {selectedUsers.length}</div>
-              <div>Будет обработано (без admin): {selectedNonAdmin.length}</div>
-              <div>Будет пропущено admin: {Math.max(0, selectedUsers.length - selectedNonAdmin.length)}</div>
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.78, marginTop: 10 }}>
-              После подтверждения изменение будет записано в журнал действий.
-            </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-              <button onClick={() => setConfirmOpen(false)} style={{ padding: "8px 12px", borderRadius: 10, cursor: "pointer" }}>
-                Отмена
-              </button>
-              <button
-                onClick={() => {
-                  setConfirmOpen(false);
-                  executeBulkAction();
-                }}
-                style={{ padding: "8px 12px", borderRadius: 10, cursor: "pointer", borderColor: "rgba(243,198,119,0.55)" }}
-              >
-                Подтвердить действие
-              </button>
-            </div>
-          </Card>
-        </div>
+      {selectedIds.length > 0 && availableLoading && (
+        <div style={{ fontSize: 12, opacity: 0.7 }}>{TXT.loadingActions}</div>
       )}
+
+      <RolePermissionsHint />
+
+      <UserDetailsDrawer
+        open={drawerOpen}
+        loading={drawerLoading}
+        error={drawerError}
+        data={drawerData}
+        currentUserEmail={user?.email || null}
+        availableActions={drawerAvailableActions}
+        actionCatalog={actionCatalog}
+        trustPolicyCatalog={trustPolicyCatalog}
+        browserJwtLeftSeconds={null}
+        onRunAction={runDrawerAction}
+        onRevokeTrustedDevice={revokeTrustedDevice}
+        onRevokeTrustedDevicesExceptLatest={revokeTrustedDevicesExceptLatest}
+        onClose={() => {
+          setDrawerOpen(false);
+          setDrawerLoading(false);
+          setDrawerError("");
+          setDrawerData(null);
+          setDrawerAvailableActions([]);
+          setDrawerUserId(null);
+          drawerAbortRef.current?.abort();
+          drawerAbortRef.current = null;
+        }}
+      />
     </div>
   );
 }
-
-
-

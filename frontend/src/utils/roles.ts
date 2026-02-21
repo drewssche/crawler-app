@@ -1,4 +1,4 @@
-export type BaseRole = "root-admin" | "admin" | "editor" | "viewer";
+﻿export type BaseRole = "root-admin" | "admin" | "editor" | "viewer";
 export type DisplayRole = BaseRole | "не назначена" | string;
 
 export type RoleSource = {
@@ -19,8 +19,7 @@ export function isAdminRole(role?: string | null): boolean {
 export function resolveDisplayRole(source: RoleSource): DisplayRole {
   if (source.is_root_admin) return "root-admin";
   if (source.is_approved === false) return "не назначена";
-  const role = (source.role || "viewer").trim().toLowerCase();
-  if (!role) return "viewer";
+  const role = (source.role || "").trim().toLowerCase();
+  if (!role) return "не назначена";
   return role;
 }
-

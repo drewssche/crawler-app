@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
 
 type Tone = "neutral" | "info" | "success" | "warning" | "danger";
 
@@ -6,7 +6,7 @@ type Props = {
   children: ReactNode;
   tone?: Tone;
   style?: CSSProperties;
-};
+} & HTMLAttributes<HTMLSpanElement>;
 
 const TONE_STYLES: Record<Tone, CSSProperties> = {
   neutral: { background: "rgba(158,167,179,0.14)", color: "#9ea7b3" },
@@ -16,9 +16,10 @@ const TONE_STYLES: Record<Tone, CSSProperties> = {
   danger: { background: "rgba(230,127,127,0.14)", color: "#e67f7f" },
 };
 
-export default function AccentPill({ children, tone = "neutral", style }: Props) {
+export default function AccentPill({ children, tone = "neutral", style, ...rest }: Props) {
   return (
     <span
+      {...rest}
       style={{
         ...TONE_STYLES[tone],
         padding: "2px 8px",

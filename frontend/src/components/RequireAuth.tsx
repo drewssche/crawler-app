@@ -1,41 +1,19 @@
-import { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/auth";
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { token, refreshMe } = useAuth();
+  const { token, user, loading } = useAuth();
   const location = useLocation();
-  const [checking, setChecking] = useState(true);
-  const [valid, setValid] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (!token) {
-        if (!active) return;
-        setValid(false);
-        setChecking(false);
-        return;
-      }
-      const me = await refreshMe();
-      if (!active) return;
-      setValid(Boolean(me));
-      setChecking(false);
-    })();
-    return () => {
-      active = false;
-    };
-  }, [token]);
 
   if (!token) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
-  if (checking) {
-    return <div style={{ padding: 24 }}>Проверка авторизации...</div>;
+  if (loading) {
+    return <div style={{ padding: 24 }}>{"\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0430\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u0438..."}</div>;
   }
 
-  if (!valid) {
+  if (!user) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 

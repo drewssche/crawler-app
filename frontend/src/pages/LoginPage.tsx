@@ -1,7 +1,9 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiPost } from "../api/client";
+import Button from "../components/ui/Button";
+import SegmentedControl from "../components/ui/SegmentedControl";
 import { useAuth } from "../hooks/auth";
 
 type AuthTab = "signin" | "request";
@@ -35,7 +37,7 @@ export default function LoginPage() {
   function validateEmailOrThrow(raw: string): string {
     const normalized = raw.trim().toLowerCase();
     if (!EMAIL_RE.test(normalized)) {
-      throw new Error("Введите корректный email.");
+      throw new Error("\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043a\u043e\u0440\u0440\u0435\u043a\u0442\u043d\u044b\u0439 email.");
     }
     return normalized;
   }
@@ -52,22 +54,22 @@ export default function LoginPage() {
       if (res.challenge_id) {
         setChallengeId(res.challenge_id);
       }
-      setMessage(res.dev_code ? `${res.message} Код: ${res.dev_code}` : res.message);
+      setMessage(res.dev_code ? `${res.message} \u041a\u043e\u0434: ${res.dev_code}` : res.message);
       return;
     }
 
     if (res.status === "not_found") {
-      setMessage("Пользователь не найден. Перейдите на вкладку 'Запрос доступа'.");
+      setMessage("\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d. \u041f\u0435\u0440\u0435\u0439\u0434\u0438\u0442\u0435 \u043d\u0430 \u0432\u043a\u043b\u0430\u0434\u043a\u0443 '\u0417\u0430\u043f\u0440\u043e\u0441 \u0434\u043e\u0441\u0442\u0443\u043f\u0430'.");
       return;
     }
 
     if (res.status === "pending") {
-      setMessage("Заявка уже отправлена и ожидает подтверждения администратора.");
+      setMessage("\u0417\u0430\u044f\u0432\u043a\u0430 \u0443\u0436\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0430 \u0438 \u043e\u0436\u0438\u0434\u0430\u0435\u0442 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u0430.");
       return;
     }
 
     if (res.status === "blocked") {
-      setMessage("Пользователь заблокирован. Обратитесь к администратору.");
+      setMessage("\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d. \u041e\u0431\u0440\u0430\u0442\u0438\u0442\u0435\u0441\u044c \u043a \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u0443.");
       return;
     }
 
@@ -103,7 +105,7 @@ export default function LoginPage() {
   async function onVerifyCode(e: FormEvent) {
     e.preventDefault();
     if (!challengeId) {
-      setError("Сначала нажмите 'Далее'.");
+      setError("\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u043d\u0430\u0436\u043c\u0438\u0442\u0435 '\u0414\u0430\u043b\u0435\u0435'.");
       return;
     }
 
@@ -138,63 +140,37 @@ export default function LoginPage() {
           gap: 12,
         }}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <button
-            onClick={() => {
-              setTab("signin");
-              setChallengeId(null);
-              setCode("");
-              setError("");
-              setMessage("");
-              if (DEFAULT_ADMIN_EMAIL) {
-                setEmail(DEFAULT_ADMIN_EMAIL);
-              }
-            }}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              cursor: "pointer",
-              border: isSignIn ? "1px solid #6aa0ff" : "1px solid #3333",
-              background: isSignIn ? "rgba(106,160,255,0.12)" : "transparent",
-            }}
-          >
-            Вход
-          </button>
-          <button
-            onClick={() => {
-              setTab("request");
-              setChallengeId(null);
-              setCode("");
-              setError("");
-              setMessage("");
-            }}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              cursor: "pointer",
-              border: !isSignIn ? "1px solid #6aa0ff" : "1px solid #3333",
-              background: !isSignIn ? "rgba(106,160,255,0.12)" : "transparent",
-            }}
-          >
-            Запрос доступа
-          </button>
-        </div>
+        <SegmentedControl
+          value={tab}
+          onChange={(nextTab) => {
+            setTab(nextTab);
+            setChallengeId(null);
+            setCode("");
+            setError("");
+            setMessage("");
+            if (nextTab === "signin" && DEFAULT_ADMIN_EMAIL) {
+              setEmail(DEFAULT_ADMIN_EMAIL);
+            }
+          }}
+          options={[
+            { value: "signin", label: "\u0412\u0445\u043e\u0434" },
+            { value: "request", label: "\u0417\u0430\u043f\u0440\u043e\u0441 \u0434\u043e\u0441\u0442\u0443\u043f\u0430" },
+          ]}
+        />
 
         {!isCodeStep && (
           <form onSubmit={startByEmail} style={{ display: "grid", gap: 10 }}>
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder={isSignIn ? (DEFAULT_ADMIN_EMAIL || "Email для входа") : "Ваш рабочий email"}
+              placeholder={isSignIn ? (DEFAULT_ADMIN_EMAIL || "Email \u0434\u043b\u044f \u0432\u0445\u043e\u0434\u0430") : "\u0412\u0430\u0448 \u0440\u0430\u0431\u043e\u0447\u0438\u0439 email"}
               style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
             />
 
             {error && <div style={{ color: "#d55", fontSize: 13 }}>{error}</div>}
             {message && <div style={{ color: "#8fd18f", fontSize: 13 }}>{message}</div>}
 
-            <button type="submit" style={{ padding: "10px 12px", borderRadius: 10, cursor: "pointer" }}>
-              Далее
-            </button>
+            <Button type="submit" variant="primary">{"\u0414\u0430\u043b\u0435\u0435"}</Button>
           </form>
         )}
 
@@ -208,16 +184,14 @@ export default function LoginPage() {
             <input
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="Код из письма"
+              placeholder={"\u041a\u043e\u0434 \u0438\u0437 \u043f\u0438\u0441\u044c\u043c\u0430"}
               style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
             />
 
             {error && <div style={{ color: "#d55", fontSize: 13 }}>{error}</div>}
             {message && <div style={{ color: "#8fd18f", fontSize: 13 }}>{message}</div>}
 
-            <button type="submit" style={{ padding: "10px 12px", borderRadius: 10, cursor: "pointer" }}>
-              Войти
-            </button>
+            <Button type="submit" variant="primary">{"\u0412\u043e\u0439\u0442\u0438"}</Button>
           </form>
         )}
       </div>
