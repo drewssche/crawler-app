@@ -13,6 +13,7 @@ const REFRESH_MS = 15_000;
 const TOP_LIMIT = 20;
 const SSE_RECONNECT_MS = 3_000;
 const SSE_CONNECT_TIMEOUT_MS = 5_000;
+const SSE_MAX_OPEN_FAILURES = 2;
 const PUSH_MODE = String(import.meta.env.VITE_EVENT_CENTER_PUSH_MODE ?? "auto").toLowerCase();
 const SSE_PATH = String(import.meta.env.VITE_EVENT_CENTER_SSE_PATH ?? "/events/center/stream");
 const SSE_TOKEN_QUERY_PARAM = String(import.meta.env.VITE_EVENT_CENTER_SSE_TOKEN_QUERY_PARAM ?? "").trim();
@@ -24,7 +25,9 @@ let sse: EventSource | null = null;
 let sseReconnectTimer: number | null = null;
 let sseConnectTimeout: number | null = null;
 let sseOpened = false;
+let sseOpenFailures = 0;
 let usePush = false;
+let pushDisabledForSession = false;
 const listeners = new Set<Listener>();
 
 function emit(next: EventCenterPollSnapshot) {
@@ -89,6 +92,7 @@ function emitSnapshot(data: CenterEventsResponse) {
 }
 
 function shouldUsePush() {
+  if (pushDisabledForSession) return false;
   if (PUSH_MODE === "off" || PUSH_MODE === "poll") return false;
   if (typeof EventSource === "undefined") return false;
   return true;
@@ -133,6 +137,7 @@ function stopSse() {
 function scheduleSseReconnect() {
   if (listeners.size === 0) return;
   if (!usePush) return;
+  if (pushDisabledForSession) return;
   if (sseReconnectTimer !== null) return;
   sseReconnectTimer = window.setTimeout(() => {
     sseReconnectTimer = null;
@@ -154,6 +159,11 @@ function startSse() {
   sseConnectTimeout = window.setTimeout(() => {
     sseConnectTimeout = null;
     if (sseOpened) return;
+    sseOpenFailures += 1;
+    if (sseOpenFailures >= SSE_MAX_OPEN_FAILURES) {
+      pushDisabledForSession = true;
+      usePush = false;
+    }
     stopSse();
     startPolling();
     scheduleSseReconnect();
@@ -161,6 +171,7 @@ function startSse() {
 
   sse.onopen = () => {
     sseOpened = true;
+    sseOpenFailures = 0;
     if (sseConnectTimeout !== null) {
       window.clearTimeout(sseConnectTimeout);
       sseConnectTimeout = null;
@@ -181,6 +192,13 @@ function startSse() {
   };
 
   sse.onerror = () => {
+    if (!sseOpened) {
+      sseOpenFailures += 1;
+      if (sseOpenFailures >= SSE_MAX_OPEN_FAILURES) {
+        pushDisabledForSession = true;
+        usePush = false;
+      }
+    }
     stopSse();
     startPolling();
     scheduleSseReconnect();
@@ -206,23 +224,6 @@ function stopIfIdle() {
 
 export function refreshEventCenterPollingNow(): Promise<EventCenterPollSnapshot> {
   return fetchPollData();
-}
-
-export function getEventCenterPollingSnapshot(): EventCenterPollSnapshot | null {
-  return snapshot;
-}
-
-export function getEventCenterTransportMode(): "push" | "polling" {
-  if (sse && sseOpened) return "push";
-  return "polling";
-}
-
-export function forceRestartEventCenterTransport(): void {
-  stopSse();
-  stopPolling();
-  if (listeners.size > 0) {
-    ensureRunning();
-  }
 }
 
 export function subscribeEventCenterPolling(listener: Listener, options?: { emitCurrent?: boolean }): () => void {

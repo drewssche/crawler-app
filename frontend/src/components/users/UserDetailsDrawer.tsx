@@ -220,7 +220,6 @@ export default function UserDetailsDrawer({
                   status={(
                     <UserStatusPills
                       user={{ ...data.user, role: null }}
-                      showApproveWhenFalse={false}
                       showBlockedWhenFalse={false}
                       showBlockedForDeleted
                       hideRole

@@ -17,7 +17,6 @@
 | role | `role.root-admin` | `Root-admin` |
 | relevance | `relevance.self` | `Вы` |
 | relevance | `relevance.selected` | `Выбранный пользователь` |
-| status | `status.approve` | `доступ подтверждён` |
 | status | `status.blocked` | `заблокирован` |
 | status | `status.deleted` | `удалён` |
 | status | `status.pending` | `ожидает подтверждения` |
@@ -25,11 +24,6 @@
 | trust | `trust.strict` | `доверие: строгое` |
 | trust | `trust.extended` | `доверие: расширенное` |
 | trust | `trust.permanent` | `доверие: бессрочное` |
-| time | `time.expires` | `срок доверия` |
-| time | `time.device.ok` | `статус устройства` |
-| time | `time.device.soon` | `статус устройства` |
-| time | `time.device.expired` | `статус устройства` |
-| time | `time.device.permanent` | `статус устройства` |
 
 Где используются:
 - `frontend/src/components/ui/RoleBadge.tsx`
@@ -44,23 +38,21 @@
 Правила:
 - Роль: через `RoleBadge` (не показывается для `не назначена`).
 - Pending: `ожидает подтверждения` при `!is_approved && preferPendingBadge && !is_deleted`.
-- Approve: `доступ подтверждён: да/нет` только если включены соответствующие флаги показа и `!is_deleted`.
 - Blocked:
   - `заблокирован` при `is_blocked=true && !is_deleted`
   - `не заблокирован` при `showBlockedWhenFalse=true && !is_deleted`
   - `заблокирован` также для удалённого пользователя при `is_deleted=true && is_blocked=true && showBlockedForDeleted=true`.
 - Deleted: `удалён` при `is_deleted=true`.
 
-## 3) Производные trust/time бейджи пользователя
+## 3) Производные trust-бейджи пользователя
 
 Источник:
 - `frontend/src/components/users/UserStatusPills.tsx` (`UserTrustPills`)
 
 Правила:
 - Trust-policy бейдж (`доверие: ...`) всегда от текущей политики.
-- Expires-бейдж (`срок доверия: N дн.`) показывается по `showExpires` и только при конечном сроке (или если явно разрешен `not configured`).
-- Device-status бейдж (`статус устройства: ...`) показывается по `showDeviceStatus`.
-- Для `trustedDaysLeft < 0` статус считается `бессрочно`.
+- Time/device бейджи удалены из текущего UX как неиспользуемые.
+- Детали срока/риска показываются в `TrustPolicyDetailsCard` (контекст drawer), а не отдельными компактными time-бейджами.
 
 ## 4) Identity row в контекстах пользователя
 
@@ -112,7 +104,7 @@
 
 ## 8) Как вносить изменения корректно
 
-1. Если это role/relevance/status/trust/time пользователя:
+1. Если это role/relevance/status/trust пользователя:
 - меняем в `frontend/src/components/users/userBadgeCatalog.ts`.
 
 2. Если это логика показа (когда бейдж отображать):

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiGet, apiPost, isAbortError } from "../api/client";
 import AccentPill from "../components/ui/AccentPill";
@@ -11,17 +11,32 @@ import SlidePanel from "../components/ui/SlidePanel";
 import type { TrustPolicyCatalogItem } from "../components/users/UserActionPanel";
 import CompactActionCard from "../components/users/CompactActionCard";
 import IdentityBadgeRow from "../components/users/IdentityBadgeRow";
+import UserListSessionMeta from "../components/users/UserListSessionMeta";
 import UserBadgeGroups from "../components/users/UserBadgeGroups";
 import TrustPolicyDetailsCard from "../components/users/TrustPolicyDetailsCard";
 import { UserStatusPills } from "../components/users/UserStatusPills";
 import { useAuth } from "../hooks/auth";
+import { useIncrementalPager } from "../hooks/useIncrementalPager";
 import { getTrustPolicyCatalogCached } from "../utils/catalogCache";
+import { normalizeError } from "../utils/errors";
 import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll";
+import type { PagedResponse } from "../types/common";
 
 type AdminSettingsResponse = {
   admin_emails: string[];
   db_admins: string[];
+  db_profiles?: Record<string, UserLookupRow>;
   is_root_admin: boolean;
+};
+
+type AdminPageRow = {
+  email: string;
+  in_db: boolean;
+  profile?: UserLookupRow | null;
+};
+
+type AdminPageResponse = PagedResponse<AdminPageRow> & {
+  total_all?: number;
 };
 
 type SaveAdminEmailsResponse = {
@@ -45,6 +60,9 @@ type UserLookupRow = {
   is_deleted?: boolean;
   trust_policy?: string;
   trusted_days_left?: number | null;
+  last_activity_at?: string | null;
+  last_ip?: string | null;
+  last_user_agent?: string | null;
 };
 
 type TrustPolicy = "strict" | "standard" | "extended" | "permanent";
@@ -112,8 +130,8 @@ export default function RootAdminsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const [adminEmails, setAdminEmails] = useState<string[]>([]);
-  const [dbAdmins, setDbAdmins] = useState<string[]>([]);
+  const [rows, setRows] = useState<AdminPageRow[]>([]);
+  const [adminCount, setAdminCount] = useState(0);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -122,7 +140,6 @@ export default function RootAdminsPage() {
   const [bulkReason, setBulkReason] = useState("");
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [rowsVisible, setRowsVisible] = useState(BASE_ROWS);
   const [selected, setSelected] = useState<string[]>([]);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -136,35 +153,57 @@ export default function RootAdminsPage() {
     open: false,
     scope: "bulk",
   });
-  const adminListAbortRef = useRef<AbortController | null>(null);
+  const keepSelectionOnResetRef = useRef(false);
+  const searchRef = useRef(search);
   const drawerLookupAbortRef = useRef<AbortController | null>(null);
   const drawerLookupSeqRef = useRef(0);
 
   const selfEmail = (user?.email || "").toLowerCase();
 
-  async function load() {
-    adminListAbortRef.current?.abort();
-    const controller = new AbortController();
-    adminListAbortRef.current = controller;
-    setError("");
-    try {
-      const data = await apiGet<AdminSettingsResponse>("/admin/settings/admin-emails", { signal: controller.signal });
-      setAdminEmails(data.admin_emails || []);
-      setDbAdmins(data.db_admins || []);
-      setRowsVisible(BASE_ROWS);
-    } catch (e) {
-      if (isAbortError(e)) return;
-      setError(String(e));
-    } finally {
-      if (adminListAbortRef.current === controller) {
-        adminListAbortRef.current = null;
+  const { total, isLoading: isListLoading, hasMore, resetAndLoad, requestNextPage } = useIncrementalPager<AdminPageRow>({
+    fetchPage: (nextPage, signal) =>
+      apiGet<AdminPageResponse>(
+        `/admin/settings/admin-emails?page=${nextPage}&page_size=${BASE_ROWS}&q=${encodeURIComponent(searchRef.current.trim())}`,
+        { signal },
+      ),
+    applyPage: (data, append) => {
+      const ext = data as AdminPageResponse;
+      setAdminCount(ext.total_all ?? data.total ?? 0);
+      const items = data.items || [];
+      if (append) {
+        setRows((prev) => {
+          const next = [...prev, ...items];
+          const uniq = new Map<string, AdminPageRow>();
+          for (const row of next) uniq.set(row.email.toLowerCase(), row);
+          return Array.from(uniq.values());
+        });
+        return;
       }
-    }
-  }
+      setRows(items);
+      if (keepSelectionOnResetRef.current) {
+        const nextSet = new Set(items.map((x) => x.email.toLowerCase()));
+        setSelected((prev) => prev.filter((x) => nextSet.has(x.toLowerCase())));
+      } else {
+        setSelected([]);
+      }
+      keepSelectionOnResetRef.current = false;
+    },
+    onReset: () => {
+      setRows([]);
+      setError("");
+    },
+    onError: (e) => {
+      setError(normalizeError(e));
+    },
+  });
 
-  useEffect(() => {
-    load();
-  }, []);
+  function resetRootAdminsList(options?: { nextQuery?: string; keepSelection?: boolean }) {
+    const nextQuery = options?.nextQuery ?? searchRef.current;
+    if (nextQuery !== search) setSearch(nextQuery);
+    searchRef.current = nextQuery;
+    keepSelectionOnResetRef.current = Boolean(options?.keepSelection);
+    resetAndLoad();
+  }
 
   useEffect(() => {
     let active = true;
@@ -182,6 +221,11 @@ export default function RootAdminsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    resetRootAdminsList({ nextQuery: search });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
   async function saveList(nextEmails: string[], reasonText: string) {
     setError("");
     setMessage("");
@@ -191,14 +235,19 @@ export default function RootAdminsPage() {
         emails: nextEmails,
         reason: reasonText,
       });
-      setAdminEmails(res.admin_emails || []);
+      setAdminCount((res.admin_emails || []).length);
       setMessage(TXT.updated);
       setSelected([]);
     } catch (e) {
-      setError(String(e));
+      setError(normalizeError(e));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function fetchAllAdminEmails() {
+    const data = await apiGet<AdminSettingsResponse>("/admin/settings/admin-emails");
+    return data.admin_emails || [];
   }
 
   async function addEmail() {
@@ -212,39 +261,26 @@ export default function RootAdminsPage() {
       setError(TXT.needReason);
       return;
     }
-    if (adminEmails.includes(normalized)) {
+    const full = await fetchAllAdminEmails();
+    if (full.includes(normalized)) {
       setError(TXT.exists);
       return;
     }
-    await saveList([...adminEmails, normalized], reasonText);
+    await saveList([...full, normalized], reasonText);
     setModalOpen(false);
     setNewEmail("");
     setAddReason("");
-    await load();
+    resetRootAdminsList();
   }
 
-  const filtered = useMemo(
-    () => adminEmails.filter((x) => x.includes(search.trim().toLowerCase())),
-    [adminEmails, search],
-  );
-  const visibleAdmins = useMemo(() => filtered.slice(0, rowsVisible), [filtered, rowsVisible]);
-
   useWorkspaceInfiniteScroll({
-    canLoadMore: rowsVisible < filtered.length,
-    isLoading: false,
-    onLoadMore: () => setRowsVisible((v) => Math.min(v + BASE_ROWS, filtered.length)),
-    contentKey: `${rowsVisible}:${filtered.length}`,
+    canLoadMore: hasMore,
+    isLoading: isListLoading,
+    onLoadMore: requestNextPage,
+    contentKey: `${rows.length}:${search}`,
   });
 
-  useEffect(() => {
-    setRowsVisible(BASE_ROWS);
-  }, [search]);
-
-  useEffect(() => {
-    setRowsVisible((v) => Math.min(Math.max(BASE_ROWS, v), Math.max(BASE_ROWS, filtered.length)));
-  }, [filtered.length]);
-
-  const allSelected = visibleAdmins.length > 0 && visibleAdmins.every((x) => selected.includes(x));
+  const allSelected = rows.length > 0 && rows.every((x) => selected.includes(x.email));
 
   const removableSelected = useMemo(() => {
     if (selected.length === 0) return [] as string[];
@@ -253,15 +289,15 @@ export default function RootAdminsPage() {
 
   const canBulkRemove = useMemo(() => {
     if (removableSelected.length === 0) return false;
-    return adminEmails.filter((x) => !removableSelected.includes(x)).length >= 1;
-  }, [adminEmails, removableSelected]);
+    return adminCount - removableSelected.length >= 1;
+  }, [adminCount, removableSelected.length]);
 
   function toggleOne(email: string) {
     setSelected((prev) => (prev.includes(email) ? prev.filter((x) => x !== email) : [...prev, email]));
   }
 
   function toggleAll() {
-    setSelected(allSelected ? [] : visibleAdmins);
+    setSelected(allSelected ? [] : rows.map((x) => x.email));
   }
 
   async function removeSelected() {
@@ -276,12 +312,6 @@ export default function RootAdminsPage() {
     }
     if (!canBulkRemove) {
       setError(TXT.cannotForSelected);
-      return;
-    }
-
-    const next = adminEmails.filter((x) => !removableSelected.includes(x));
-    if (next.length < 1) {
-      setError(TXT.atLeastOne);
       return;
     }
 
@@ -319,15 +349,13 @@ export default function RootAdminsPage() {
 
   useEffect(() => {
     return () => {
-      adminListAbortRef.current?.abort();
-      adminListAbortRef.current = null;
       drawerLookupAbortRef.current?.abort();
       drawerLookupAbortRef.current = null;
     };
   }, []);
 
   const isDrawerSelf = drawerEmail.toLowerCase() === selfEmail;
-  const isLastRootAdmin = adminEmails.length <= 1;
+  const isLastRootAdmin = adminCount <= 1;
   const canRemoveFromDrawer = !isDrawerSelf && !isLastRootAdmin;
 
   async function removeFromDrawer() {
@@ -343,15 +371,20 @@ export default function RootAdminsPage() {
   async function confirmRemove() {
     if (!confirmState.open) return;
     if (confirmState.scope === "bulk") {
-      const next = adminEmails.filter((x) => !removableSelected.includes(x));
       setDrawerActionLoading(true);
       try {
+        const all = await fetchAllAdminEmails();
+        const next = all.filter((x) => !removableSelected.includes(x));
+        if (next.length < 1) {
+          setError(TXT.atLeastOne);
+          return;
+        }
         await saveList(next, bulkReason.trim());
         setBulkReason("");
         if (selected.some((x) => x === selfEmail)) {
           setMessage(TXT.skippedSelf);
         }
-        await load();
+        resetRootAdminsList();
       } finally {
         setDrawerActionLoading(false);
         setConfirmState({ open: false, scope: "bulk" });
@@ -366,10 +399,16 @@ export default function RootAdminsPage() {
 
     setDrawerActionLoading(true);
     try {
-      await saveList(adminEmails.filter((x) => x !== confirmState.email), drawerReason.trim());
+      const all = await fetchAllAdminEmails();
+      const next = all.filter((x) => x !== confirmState.email);
+      if (next.length < 1) {
+        setError(TXT.atLeastOne);
+        return;
+      }
+      await saveList(next, drawerReason.trim());
       setDrawerReason("");
       setDrawerOpen(false);
-      await load();
+      resetRootAdminsList();
     } finally {
       setDrawerActionLoading(false);
       setConfirmState({ open: false, scope: "drawer" });
@@ -398,9 +437,11 @@ export default function RootAdminsPage() {
             <div>{TXT.selected}: {selected.length}</div>
           </div>
 
-          {visibleAdmins.map((email) => {
-            const inDb = dbAdmins.includes(email);
+          {rows.map((row) => {
+            const email = row.email;
+            const inDb = row.in_db;
             const isSelf = email.toLowerCase() === selfEmail;
+            const profile = row.profile || null;
             return (
               <SelectableListRow
                 key={email}
@@ -419,18 +460,23 @@ export default function RootAdminsPage() {
                 onOpen={() => {
                   void openDrawer(email);
                 }}
+                details={
+                  profile ? (
+                    <UserListSessionMeta
+                      lastIp={profile.last_ip}
+                      lastUserAgent={profile.last_user_agent}
+                      lastActivityAt={profile.last_activity_at}
+                    />
+                  ) : null
+                }
                 checkboxTitle={TXT.selectAllTitle}
                 openLabel={TXT.open}
               />
             );
           })}
 
-          {filtered.length === 0 && <div style={{ opacity: 0.75 }}>{TXT.noRows}</div>}
-          {filtered.length > visibleAdmins.length && (
-            <div style={{ fontSize: 12, opacity: 0.72 }}>
-              Показано: {visibleAdmins.length} из {filtered.length}
-            </div>
-          )}
+          {!isListLoading && rows.length === 0 && <div style={{ opacity: 0.75 }}>{TXT.noRows}</div>}
+          {hasMore && <div style={{ fontSize: 12, opacity: 0.72 }}>Показано: {rows.length} из {total}</div>}
         </div>
       </Card>
 
@@ -439,9 +485,7 @@ export default function RootAdminsPage() {
           <div style={{ display: "grid", gap: 8 }}>
             {canBulkRemove ? (
               <>
-                <div style={{ fontSize: 12, opacity: 0.82 }}>
-                  Применится к записям: {removableSelected.length} из {selected.length}
-                </div>
+                <div style={{ fontSize: 12, opacity: 0.82 }}>Применится к записям: {removableSelected.length} из {selected.length}</div>
                 {removableSelected.length < selected.length && (
                   <div style={{ fontSize: 12, opacity: 0.82 }}>
                     Часть выбранных записей будет пропущена (например, нельзя удалить себя).
@@ -467,12 +511,10 @@ export default function RootAdminsPage() {
               </>
             ) : (
               <>
-                <div style={{ fontSize: 12, opacity: 0.82 }}>
-                  Применится к записям: {removableSelected.length} из {selected.length}
-                </div>
+                <div style={{ fontSize: 12, opacity: 0.82 }}>Применится к записям: {removableSelected.length} из {selected.length}</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {selected.some((x) => x === selfEmail) && <AccentPill tone="warning">{TXT.cannotSelf}</AccentPill>}
-                  {adminEmails.length <= 1 && <AccentPill tone="warning">{TXT.cannotLast}</AccentPill>}
+                  {adminCount <= 1 && <AccentPill tone="warning">{TXT.cannotLast}</AccentPill>}
                 </div>
               </>
             )}
@@ -520,7 +562,7 @@ export default function RootAdminsPage() {
                       <IdentityBadgeRow
                         role="root-admin"
                         showSelf={drawerEmail.toLowerCase() === selfEmail}
-                        dbPresence={dbAdmins.includes(drawerEmail) ? "in_db" : "only_env"}
+                        dbPresence={drawerUser ? "in_db" : "only_env"}
                         inDbLabel={TXT.inDb}
                         onlyEnvLabel={TXT.onlyEnv}
                       />
@@ -529,7 +571,6 @@ export default function RootAdminsPage() {
                       drawerUser ? (
                         <UserStatusPills
                           user={{ ...drawerUser, role: null, is_root_admin: false }}
-                          showApproveWhenFalse
                           showBlockedWhenFalse={false}
                         />
                       ) : null
@@ -615,3 +656,4 @@ export default function RootAdminsPage() {
     </div>
   );
 }
+

@@ -2,16 +2,13 @@ import os
 import logging
 import time
 import asyncio
-import csv
-import io
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, Response
-from openpyxl import Workbook
+from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
@@ -21,6 +18,8 @@ from app.api.runs import router as runs_router
 from app.core.admin_sync import parse_admin_emails, sync_admin_users
 from app.core.api_response import error_response_payload, get_request_id, success_response_payload
 from app.core.metrics import increment_counter, prometheus_text, snapshot_metrics
+from app.core.monitoring_cache import get_metrics_snapshot_ttl_seconds, get_or_set_cached
+from app.core.export_utils import csv_attachment_response, xlsx_attachment_response
 from app.core.monitoring_anomaly import run_monitoring_anomaly_loop
 from app.core.security import require_permission
 from app.db.models.user import User
@@ -211,7 +210,12 @@ def health(request: Request):
 
 @app.get("/metrics")
 def metrics(request: Request, _: User = Depends(require_permission("audit.view"))):
-    return success_response_payload(request, data={"counters": snapshot_metrics()})
+    payload = get_or_set_cached(
+        "monitoring:metrics_snapshot:v1",
+        get_metrics_snapshot_ttl_seconds(),
+        lambda: {"counters": snapshot_metrics()},
+    )
+    return success_response_payload(request, data=payload)
 
 
 @app.get("/metrics/prometheus")
@@ -226,15 +230,13 @@ def export_metrics_csv(
     _: User = Depends(require_permission("audit.view")),
 ):
     rows = _flatten_metric_rows(group, query)
-    out = io.StringIO()
-    writer = csv.writer(out)
-    writer.writerow(["metric", "description", "labels", "value"])
-    for row in rows:
-        writer.writerow([row["metric"], row["description"], row["labels"], row["value"]])
-    return Response(
-        content=out.getvalue(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=metrics.csv"},
+    return csv_attachment_response(
+        filename="metrics.csv",
+        header=["metric", "description", "labels", "value"],
+        rows=(
+            [row["metric"], row["description"], row["labels"], row["value"]]
+            for row in rows
+        ),
     )
 
 
@@ -245,16 +247,12 @@ def export_metrics_xlsx(
     _: User = Depends(require_permission("audit.view")),
 ):
     rows = _flatten_metric_rows(group, query)
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Metrics"
-    ws.append(["metric", "description", "labels", "value"])
-    for row in rows:
-        ws.append([row["metric"], row["description"], row["labels"], row["value"]])
-    out = io.BytesIO()
-    wb.save(out)
-    return Response(
-        content=out.getvalue(),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=metrics.xlsx"},
+    return xlsx_attachment_response(
+        filename="metrics.xlsx",
+        sheet_name="Metrics",
+        header=["metric", "description", "labels", "value"],
+        rows=(
+            [row["metric"], row["description"], row["labels"], row["value"]]
+            for row in rows
+        ),
     )

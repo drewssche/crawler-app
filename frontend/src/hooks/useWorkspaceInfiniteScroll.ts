@@ -16,44 +16,89 @@ export function useWorkspaceInfiniteScroll({
   contentKey,
 }: UseWorkspaceInfiniteScrollOptions) {
   const onLoadMoreRef = useRef(onLoadMore);
+  const canLoadMoreRef = useRef(canLoadMore);
+  const isLoadingRef = useRef(isLoading);
+  const thresholdPxRef = useRef(thresholdPx);
+  const targetRef = useRef<HTMLElement | Window | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const scheduleCheckRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     onLoadMoreRef.current = onLoadMore;
   }, [onLoadMore]);
 
   useEffect(() => {
-    const workspace = document.getElementById("workspace-scroll-container");
-    const target: HTMLElement | Window = workspace || window;
+    canLoadMoreRef.current = canLoadMore;
+  }, [canLoadMore]);
 
+  useEffect(() => {
+    isLoadingRef.current = isLoading;
+  }, [isLoading]);
+
+  useEffect(() => {
+    thresholdPxRef.current = thresholdPx;
+  }, [thresholdPx]);
+
+  useEffect(() => {
     const tryLoadMore = () => {
-      if (!canLoadMore || isLoading) return;
+      if (!canLoadMoreRef.current || isLoadingRef.current) return;
       onLoadMoreRef.current();
     };
 
-    const onScroll = () => {
+    const runCheck = () => {
+      const target = targetRef.current;
+      if (!target) return;
+
       if (target === window) {
         const scrollTop = window.scrollY || document.documentElement.scrollTop;
         const viewport = window.innerHeight;
         const fullHeight = document.documentElement.scrollHeight;
-        const nearBottom = fullHeight - (scrollTop + viewport) < thresholdPx;
+        const nearBottom = fullHeight - (scrollTop + viewport) < thresholdPxRef.current;
         if (nearBottom) tryLoadMore();
         return;
       }
 
       const el = target as HTMLElement;
-      const nearBottom = el.scrollHeight - (el.scrollTop + el.clientHeight) < thresholdPx;
+      const nearBottom = el.scrollHeight - (el.scrollTop + el.clientHeight) < thresholdPxRef.current;
       if (nearBottom) tryLoadMore();
+
+      if (el.scrollHeight <= el.clientHeight + 8) {
+        tryLoadMore();
+      }
+    };
+
+    const scheduleCheck = () => {
+      if (rafRef.current !== null) return;
+      rafRef.current = window.requestAnimationFrame(() => {
+        rafRef.current = null;
+        runCheck();
+      });
+    };
+
+    scheduleCheckRef.current = scheduleCheck;
+
+    const workspace = document.getElementById("workspace-scroll-container");
+    const target: HTMLElement | Window = workspace || window;
+    targetRef.current = target;
+
+    const onScroll = () => {
+      scheduleCheck();
     };
 
     target.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
-
-    if (workspace && workspace.scrollHeight <= workspace.clientHeight + 8) {
-      tryLoadMore();
-    }
+    scheduleCheck();
 
     return () => {
       target.removeEventListener("scroll", onScroll as EventListener);
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      targetRef.current = null;
     };
-  }, [canLoadMore, isLoading, thresholdPx, contentKey]);
+  }, []);
+
+  useEffect(() => {
+    scheduleCheckRef.current();
+  }, [contentKey, canLoadMore, isLoading, thresholdPx]);
 }

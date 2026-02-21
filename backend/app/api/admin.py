@@ -1,16 +1,14 @@
 import os
-import csv
-import io
 import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from openpyxl import Workbook
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import Session, aliased
 
 from app.core.admin_sync import (
     get_runtime_admin_emails,
@@ -23,7 +21,14 @@ from app.core.admin_sync import (
 from app.core.api_response import success_response_payload
 from app.core.event_catalog import SECURITY_ADMIN_ACTIONS, admin_action_event_meta, audit_action_catalog_payload
 from app.core.events import emit_event, ensure_event_states
+from app.core.export_utils import csv_attachment_response, xlsx_attachment_response
 from app.core.metrics import increment_counter
+from app.core.monitoring_cache import (
+    get_cached,
+    get_monitoring_history_ttl_seconds,
+    invalidate_cache_prefix,
+    set_cached,
+)
 from app.core.monitoring_settings import get_monitoring_settings, update_monitoring_settings
 from app.core.observability import log_business_event
 from app.core.security import (
@@ -335,6 +340,86 @@ def _calc_trusted_days_left(db: Session, user_id: int) -> float | None:
     return round(max(delta_days, 0), 1)
 
 
+def _build_last_login_map(db: Session, user_ids: list[int]) -> dict[int, LoginHistory]:
+    last_login_by_user_id: dict[int, LoginHistory] = {}
+    if not user_ids:
+        return last_login_by_user_id
+    rows = (
+        db.query(LoginHistory)
+        .filter(LoginHistory.user_id.in_(user_ids))
+        .order_by(LoginHistory.created_at.desc(), LoginHistory.id.desc())
+        .all()
+    )
+    for row in rows:
+        if row.user_id is None:
+            continue
+        if row.user_id not in last_login_by_user_id:
+            last_login_by_user_id[row.user_id] = row
+    return last_login_by_user_id
+
+
+def _build_trust_summary_map(db: Session, user_ids: list[int]) -> dict[int, dict[str, float | int | None]]:
+    summary: dict[int, dict[str, float | int | None]] = {}
+    if not user_ids:
+        return summary
+
+    now = _utc_now_naive()
+    rows = (
+        db.query(TrustedDevice)
+        .filter(TrustedDevice.user_id.in_(user_ids), TrustedDevice.revoked_at.is_(None))
+        .all()
+    )
+    max_exp_by_user: dict[int, datetime] = {}
+    permanent_by_user: set[int] = set()
+    for row in rows:
+        if row.user_id is None:
+            continue
+        entry = summary.setdefault(row.user_id, {"trusted_days_left": None, "trusted_devices_count": 0})
+        entry["trusted_devices_count"] = int(entry["trusted_devices_count"] or 0) + 1
+
+        if row.expires_at is None:
+            permanent_by_user.add(row.user_id)
+            continue
+        current_max = max_exp_by_user.get(row.user_id)
+        if current_max is None or row.expires_at > current_max:
+            max_exp_by_user[row.user_id] = row.expires_at
+
+    for uid, entry in summary.items():
+        if uid in permanent_by_user:
+            entry["trusted_days_left"] = -1.0
+            continue
+        max_exp = max_exp_by_user.get(uid)
+        if max_exp is None:
+            entry["trusted_days_left"] = None
+            continue
+        delta_days = (max_exp - now).total_seconds() / 86400
+        entry["trusted_days_left"] = round(max(delta_days, 0), 1)
+    return summary
+
+
+def _build_user_profile_snapshot(
+    *,
+    user: User,
+    last_login: LoginHistory | None,
+    trust_summary: dict[str, float | int | None] | None = None,
+) -> dict:
+    summary = trust_summary or {}
+    return {
+        "id": user.id,
+        "email": user.email,
+        "role": get_user_role(user),
+        "is_approved": user.is_approved,
+        "is_blocked": user.is_blocked,
+        "is_deleted": user.is_deleted,
+        "trust_policy": user.trust_policy,
+        "trusted_days_left": summary.get("trusted_days_left"),
+        "trusted_devices_count": int(summary.get("trusted_devices_count") or 0),
+        "last_activity_at": last_login.created_at.isoformat() if last_login else None,
+        "last_ip": last_login.ip if last_login else None,
+        "last_user_agent": last_login.user_agent if last_login else None,
+    }
+
+
 def _serialize_trusted_devices(db: Session, user_id: int) -> list[dict]:
     now = _utc_now_naive()
     history_rows = (
@@ -567,6 +652,124 @@ def _collect_audit_items(
     return result
 
 
+def _build_login_history_query(
+    db: Session,
+    *,
+    user_id: int | None,
+    email: str,
+    ip: str,
+    result: str,
+    source: str,
+    date_from: str,
+    date_to: str,
+    sort_dir: Literal["desc", "asc"],
+):
+    query = db.query(LoginHistory)
+    if user_id is not None:
+        query = query.filter(LoginHistory.user_id == user_id)
+    if email.strip():
+        query = query.filter(LoginHistory.email.ilike(f"%{email.strip()}%"))
+    if ip.strip():
+        query = query.filter(LoginHistory.ip.ilike(f"%{ip.strip()}%"))
+    if result.strip():
+        query = query.filter(LoginHistory.result == result.strip())
+    if source.strip():
+        query = query.filter(LoginHistory.source == source.strip())
+    if date_from.strip():
+        try:
+            from_dt = datetime.fromisoformat(date_from.strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid date_from format (use ISO)") from exc
+        query = query.filter(LoginHistory.created_at >= from_dt)
+    if date_to.strip():
+        try:
+            to_dt = datetime.fromisoformat(date_to.strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid date_to format (use ISO)") from exc
+        query = query.filter(LoginHistory.created_at <= to_dt)
+
+    order_created = LoginHistory.created_at.desc() if sort_dir == "desc" else LoginHistory.created_at.asc()
+    order_id = LoginHistory.id.desc() if sort_dir == "desc" else LoginHistory.id.asc()
+    return query.order_by(order_created, order_id)
+
+
+def _serialize_login_history_rows(rows: list[LoginHistory]) -> list[dict]:
+    return [
+        {
+            "id": row.id,
+            "user_id": row.user_id,
+            "email": row.email,
+            "ip": row.ip,
+            "user_agent": row.user_agent,
+            "result": row.result,
+            "source": row.source,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in rows
+    ]
+
+
+def _build_audit_rows_query(
+    db: Session,
+    *,
+    action: str,
+    actor_email: str,
+    target_email: str,
+    security_only: bool,
+    date_from: str,
+    date_to: str,
+    sort_dir: Literal["desc", "asc"],
+):
+    actor_user = aliased(User)
+    target_user = aliased(User)
+
+    actor_expr = func.coalesce(actor_user.email, "system")
+    target_expr = func.coalesce(target_user.email, "-")
+
+    query = (
+        db.query(
+            AdminAuditLog.id.label("id"),
+            AdminAuditLog.created_at.label("created_at"),
+            AdminAuditLog.action.label("action"),
+            actor_expr.label("actor_email"),
+            target_expr.label("target_email"),
+            AdminAuditLog.ip.label("ip"),
+            AdminAuditLog.meta_json.label("meta"),
+        )
+        .outerjoin(actor_user, actor_user.id == AdminAuditLog.actor_user_id)
+        .outerjoin(target_user, target_user.id == AdminAuditLog.target_user_id)
+    )
+
+    action_filter = action.strip()
+    actor_filter = actor_email.strip()
+    target_filter = target_email.strip()
+
+    if security_only:
+        query = query.filter(AdminAuditLog.action.in_(list(SECURITY_ACTIONS)))
+    if action_filter:
+        query = query.filter(AdminAuditLog.action.ilike(f"%{action_filter}%"))
+    if actor_filter:
+        query = query.filter(actor_expr.ilike(f"%{actor_filter}%"))
+    if target_filter:
+        query = query.filter(target_expr.ilike(f"%{target_filter}%"))
+    if date_from.strip():
+        try:
+            from_dt = datetime.fromisoformat(date_from.strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid date_from format (use ISO)") from exc
+        query = query.filter(AdminAuditLog.created_at >= from_dt)
+    if date_to.strip():
+        try:
+            to_dt = datetime.fromisoformat(date_to.strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid date_to format (use ISO)") from exc
+        query = query.filter(AdminAuditLog.created_at <= to_dt)
+
+    order_created = AdminAuditLog.created_at.desc() if sort_dir == "desc" else AdminAuditLog.created_at.asc()
+    order_id = AdminAuditLog.id.desc() if sort_dir == "desc" else AdminAuditLog.id.asc()
+    return query.order_by(order_created, order_id)
+
+
 @router.get("/users")
 def list_users(
     status: Literal["all", "pending", "approved", "deleted"] = "pending",
@@ -574,6 +777,8 @@ def list_users(
     include_deleted: bool = False,
     sort_by: Literal["id", "email", "role", "created"] = "id",
     sort_dir: Literal["asc", "desc"] = "asc",
+    page: int | None = None,
+    page_size: int = 20,
     request: Request = None,
     db: Session = Depends(get_db),
     _admin: User = Depends(require_permission("users.manage")),
@@ -599,13 +804,21 @@ def list_users(
         "created": User.id,
     }.get(sort_by, User.id)
     order_expr = sort_field.desc() if sort_dir == "desc" else sort_field.asc()
-    users = query.order_by(order_expr, User.id.asc()).all()
-    attempts = (
-        db.query(AuthAttempt)
-        .filter(AuthAttempt.action == "request_access")
-        .order_by(AuthAttempt.created_at.desc(), AuthAttempt.id.desc())
-        .all()
-    )
+    query = query.order_by(order_expr, User.id.asc())
+
+    total = query.count()
+    safe_page = max(1, page or 1)
+    safe_page_size = max(1, min(page_size, 200))
+    if page is not None:
+        users = query.offset((safe_page - 1) * safe_page_size).limit(safe_page_size).all()
+    else:
+        users = query.all()
+
+    user_emails = [u.email for u in users if (u.email or "").strip()]
+    attempts_query = db.query(AuthAttempt).filter(AuthAttempt.action == "request_access")
+    if user_emails:
+        attempts_query = attempts_query.filter(AuthAttempt.email.in_(user_emails))
+    attempts = attempts_query.order_by(AuthAttempt.created_at.desc(), AuthAttempt.id.desc()).all()
     pending_requested_at_by_email: dict[str, str] = {}
     for at in attempts:
         email_key = (at.email or "").strip().lower()
@@ -613,31 +826,8 @@ def list_users(
             pending_requested_at_by_email[email_key] = at.created_at.isoformat()
 
     user_ids = [u.id for u in users]
-    last_login_by_user_id: dict[int, LoginHistory] = {}
-    trusted_devices_count_by_user_id: dict[int, int] = {}
-
-    if user_ids:
-        login_rows = (
-            db.query(LoginHistory)
-            .filter(LoginHistory.user_id.in_(user_ids))
-            .order_by(LoginHistory.created_at.desc(), LoginHistory.id.desc())
-            .all()
-        )
-        for row in login_rows:
-            if row.user_id is None:
-                continue
-            if row.user_id not in last_login_by_user_id:
-                last_login_by_user_id[row.user_id] = row
-
-        active_trusted_rows = (
-            db.query(TrustedDevice.user_id)
-            .filter(TrustedDevice.user_id.in_(user_ids), TrustedDevice.revoked_at.is_(None))
-            .all()
-        )
-        for (uid,) in active_trusted_rows:
-            if uid is None:
-                continue
-            trusted_devices_count_by_user_id[uid] = trusted_devices_count_by_user_id.get(uid, 0) + 1
+    last_login_by_user_id = _build_last_login_map(db, user_ids)
+    trust_summary_by_user_id = _build_trust_summary_map(db, user_ids)
 
     pending_unread_by_user_id: dict[int, bool] = {}
     pending_event_id_by_user_id: dict[int, int | None] = {}
@@ -659,28 +849,36 @@ def list_users(
                 if state and (not state.is_read) and (not state.is_dismissed):
                     pending_unread_by_user_id[event.target_user_id] = True
 
-    return success_response_payload(request, data=[
-        {
-            "id": u.id,
-            "email": u.email,
-            "role": get_user_role(u),
-            "is_root_admin": is_root_admin_email(u.email),
-            "pending_requested_at": pending_requested_at_by_email.get(u.email.lower()),
-            "is_approved": u.is_approved,
-            "is_admin": u.is_admin,
-            "is_blocked": u.is_blocked,
-            "is_deleted": u.is_deleted,
-            "trust_policy": u.trust_policy,
-            "trusted_days_left": _calc_trusted_days_left(db, u.id),
-            "trusted_devices_count": int(trusted_devices_count_by_user_id.get(u.id, 0)),
-            "last_activity_at": last_login_by_user_id[u.id].created_at.isoformat() if u.id in last_login_by_user_id else None,
-            "last_ip": last_login_by_user_id[u.id].ip if u.id in last_login_by_user_id else None,
-            "last_user_agent": last_login_by_user_id[u.id].user_agent if u.id in last_login_by_user_id else None,
-            "pending_unread": bool(pending_unread_by_user_id.get(u.id, False)),
-            "pending_event_id": pending_event_id_by_user_id.get(u.id),
-        }
-        for u in users
-    ])
+    items = []
+    for u in users:
+        base = _build_user_profile_snapshot(
+            user=u,
+            last_login=last_login_by_user_id.get(u.id),
+            trust_summary=trust_summary_by_user_id.get(u.id),
+        )
+        base.update(
+            {
+                "is_root_admin": is_root_admin_email(u.email),
+                "pending_requested_at": pending_requested_at_by_email.get(u.email.lower()),
+                "is_admin": u.is_admin,
+                "pending_unread": bool(pending_unread_by_user_id.get(u.id, False)),
+                "pending_event_id": pending_event_id_by_user_id.get(u.id),
+            }
+        )
+        items.append(base)
+
+    if page is not None:
+        return success_response_payload(
+            request,
+            data={
+                "items": items,
+                "total": total,
+                "page": safe_page,
+                "page_size": safe_page_size,
+            },
+        )
+
+    return success_response_payload(request, data=items)
 
 
 @router.get("/users/actions/catalog")
@@ -739,6 +937,8 @@ def update_monitoring_settings_api(
         event="monitoring.settings.update",
         actor_email=admin.email,
     )
+    # Invalidate monitoring time-series cache after settings update to avoid stale context.
+    invalidate_cache_prefix("monitoring:")
     return success_response_payload(request, data=data)
 
 
@@ -747,6 +947,7 @@ def get_monitoring_history_api(
     request: Request,
     range_minutes: int = 60,
     step_seconds: int = 30,
+    force_refresh: bool = False,
     _admin: User = Depends(require_permission("audit.view")),
 ):
     safe_range = max(5, min(range_minutes, 24 * 60))
@@ -763,6 +964,12 @@ def get_monitoring_history_api(
         "invalid_code": '(sum(auth_verify_result_total{result="invalid_code"}) or vector(0))',
     }
 
+    cache_key = f"monitoring:history:v1:range={safe_range}:step={safe_step}"
+    if not force_refresh:
+        cached = get_cached(cache_key)
+        if cached is not None:
+            return success_response_payload(request, data=cached)
+
     try:
         series = {
             key: _query_prometheus_range(
@@ -773,28 +980,26 @@ def get_monitoring_history_api(
             )
             for key, query in queries.items()
         }
-        return success_response_payload(
-            request,
-            data={
-                "enabled": True,
-                "source": "prometheus",
-                "range_minutes": safe_range,
-                "step_seconds": safe_step,
-                "series": series,
-            },
-        )
+        payload = {
+            "enabled": True,
+            "source": "prometheus",
+            "range_minutes": safe_range,
+            "step_seconds": safe_step,
+            "series": series,
+        }
+        set_cached(cache_key, payload, get_monitoring_history_ttl_seconds())
+        return success_response_payload(request, data=payload)
     except Exception as exc:
-        return success_response_payload(
-            request,
-            data={
-                "enabled": False,
-                "source": "prometheus",
-                "range_minutes": safe_range,
-                "step_seconds": safe_step,
-                "series": {k: [] for k in queries.keys()},
-                "error": str(exc),
-            },
-        )
+        payload = {
+            "enabled": False,
+            "source": "prometheus",
+            "range_minutes": safe_range,
+            "step_seconds": safe_step,
+            "series": {k: [] for k in queries.keys()},
+            "error": str(exc),
+        }
+        set_cached(cache_key, payload, max(1, get_monitoring_history_ttl_seconds() // 2))
+        return success_response_payload(request, data=payload)
 
 
 @router.get("/monitoring/history/focus")
@@ -804,6 +1009,7 @@ def get_monitoring_focus_history_api(
     metric_path: str | None = None,
     range_minutes: int = 60,
     step_seconds: int = 30,
+    force_refresh: bool = False,
     _admin: User = Depends(require_permission("audit.view")),
 ):
     safe_range = max(5, min(range_minutes, 24 * 60))
@@ -821,6 +1027,13 @@ def get_monitoring_focus_history_api(
         label_filter = f'{{path="{esc_path}"}}'
 
     promql = f"sum({safe_metric_name}{label_filter})"
+    path_key = (metric_path or "").strip()
+    cache_key = f"monitoring:focus:v1:metric={safe_metric_name}:path={path_key}:range={safe_range}:step={safe_step}"
+    if not force_refresh:
+        cached = get_cached(cache_key)
+        if cached is not None:
+            return success_response_payload(request, data=cached)
+
     try:
         points = _query_prometheus_range(
             query=promql,
@@ -828,30 +1041,28 @@ def get_monitoring_focus_history_api(
             end_ts=end_ts,
             step_seconds=safe_step,
         )
-        return success_response_payload(
-            request,
-            data={
-                "enabled": True,
-                "source": "prometheus",
-                "range_minutes": safe_range,
-                "step_seconds": safe_step,
-                "query": promql,
-                "series": points,
-            },
-        )
+        payload = {
+            "enabled": True,
+            "source": "prometheus",
+            "range_minutes": safe_range,
+            "step_seconds": safe_step,
+            "query": promql,
+            "series": points,
+        }
+        set_cached(cache_key, payload, get_monitoring_history_ttl_seconds())
+        return success_response_payload(request, data=payload)
     except Exception as exc:
-        return success_response_payload(
-            request,
-            data={
-                "enabled": False,
-                "source": "prometheus",
-                "range_minutes": safe_range,
-                "step_seconds": safe_step,
-                "query": promql,
-                "series": [],
-                "error": str(exc),
-            },
-        )
+        payload = {
+            "enabled": False,
+            "source": "prometheus",
+            "range_minutes": safe_range,
+            "step_seconds": safe_step,
+            "query": promql,
+            "series": [],
+            "error": str(exc),
+        }
+        set_cached(cache_key, payload, max(1, get_monitoring_history_ttl_seconds() // 2))
+        return success_response_payload(request, data=payload)
 
 
 @router.post("/users/actions/available")
@@ -1105,16 +1316,78 @@ def revoke_trusted_devices_except_one(
 @router.get("/settings/admin-emails")
 def get_admin_emails_settings(
     request: Request,
+    q: str = "",
+    page: int | None = None,
+    page_size: int = 20,
     db: Session = Depends(get_db),
     admin: User = Depends(require_permission("root_admins.manage")),
 ):
     runtime = get_runtime_admin_emails()
-    db_admins = [u.email for u in db.query(User).filter(User.is_admin.is_(True)).order_by(User.email.asc()).all()]
-    return success_response_payload(request, data={
-        "admin_emails": runtime,
-        "db_admins": db_admins,
-        "is_root_admin": True,
-    })
+    q_norm = q.strip().lower()
+    filtered_runtime = [email for email in runtime if not q_norm or q_norm in email.lower()]
+    total = len(filtered_runtime)
+    safe_page = max(1, page or 1)
+    safe_page_size = max(1, min(page_size, 200))
+    page_emails = (
+        filtered_runtime[(safe_page - 1) * safe_page_size : (safe_page - 1) * safe_page_size + safe_page_size]
+        if page is not None
+        else filtered_runtime
+    )
+
+    db_profiles: dict[str, dict] = {}
+    if page_emails:
+        users_by_email = {
+            (u.email or "").lower(): u
+            for u in db.query(User).filter(User.email.in_(page_emails)).all()
+            if (u.email or "").strip()
+        }
+        user_ids = [u.id for u in users_by_email.values()]
+        last_login_by_user_id = _build_last_login_map(db, user_ids)
+        trust_summary_by_user_id = _build_trust_summary_map(db, user_ids)
+
+        for email in page_emails:
+            hit = users_by_email.get((email or "").lower())
+            if not hit:
+                continue
+            snap = _build_user_profile_snapshot(
+                user=hit,
+                last_login=last_login_by_user_id.get(hit.id),
+                trust_summary=trust_summary_by_user_id.get(hit.id),
+            )
+            snap.pop("trusted_devices_count", None)
+            db_profiles[email] = snap
+    if page is not None:
+        items = [
+            {
+                "email": email,
+                "in_db": email in db_profiles,
+                "profile": db_profiles.get(email),
+            }
+            for email in page_emails
+        ]
+        return success_response_payload(
+            request,
+            data={
+                "items": items,
+                "total": total,
+                "total_all": len(runtime),
+                "page": safe_page,
+                "page_size": safe_page_size,
+                "is_root_admin": True,
+            },
+        )
+
+    db_admin_rows = db.query(User).filter(User.is_admin.is_(True)).order_by(User.email.asc()).all()
+    db_admins = [u.email for u in db_admin_rows]
+    return success_response_payload(
+        request,
+        data={
+            "admin_emails": runtime,
+            "db_admins": db_admins,
+            "db_profiles": db_profiles,
+            "is_root_admin": True,
+        },
+    )
 
 
 @router.post("/settings/admin-emails")
@@ -1185,7 +1458,7 @@ def list_audit_logs(
 ):
     safe_page = max(1, page)
     safe_page_size = max(1, min(page_size, 200))
-    all_items = _collect_audit_items(
+    query = _build_audit_rows_query(
         db=db,
         action=action,
         actor_email=actor_email,
@@ -1195,11 +1468,24 @@ def list_audit_logs(
         date_to=date_to,
         sort_dir=sort_dir,
     )
-    total = len(all_items)
+    total = query.count()
     start = (safe_page - 1) * safe_page_size
     end = start + safe_page_size
+    rows = query.offset(start).limit(safe_page_size).all()
+    items = [
+        {
+            "id": row.id,
+            "created_at": row.created_at.isoformat(),
+            "action": row.action or "",
+            "actor_email": row.actor_email,
+            "target_email": row.target_email,
+            "ip": row.ip,
+            "meta": row.meta,
+        }
+        for row in rows
+    ]
     return success_response_payload(request, data={
-        "items": all_items[start:end],
+        "items": items,
         "total": total,
         "page": safe_page,
         "page_size": safe_page_size,
@@ -1224,8 +1510,8 @@ def list_login_history(
 ):
     safe_page = max(1, page)
     safe_page_size = max(1, min(page_size, 200))
-    items = _collect_login_history_items(
-        db,
+    query = _build_login_history_query(
+        db=db,
         user_id=user_id,
         email=email,
         ip=ip,
@@ -1235,13 +1521,14 @@ def list_login_history(
         date_to=date_to,
         sort_dir=sort_dir,
     )
-    total = len(items)
+    total = query.count()
     start = (safe_page - 1) * safe_page_size
-    end = start + safe_page_size
+    rows = query.offset(start).limit(safe_page_size).all()
+    items = _serialize_login_history_rows(rows)
     return success_response_payload(
         request,
         data={
-            "items": items[start:end],
+            "items": items,
             "total": total,
             "page": safe_page,
             "page_size": safe_page_size,
@@ -1273,11 +1560,10 @@ def export_login_history_csv(
         date_to=date_to,
         sort_dir=sort_dir,
     )
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["id", "created_at", "email", "result", "source", "ip", "user_agent"])
-    for row in items:
-        writer.writerow(
+    return csv_attachment_response(
+        filename="login_history.csv",
+        header=["id", "created_at", "email", "result", "source", "ip", "user_agent"],
+        rows=(
             [
                 row.get("id"),
                 row.get("created_at"),
@@ -1287,11 +1573,8 @@ def export_login_history_csv(
                 row.get("ip") or "",
                 row.get("user_agent") or "",
             ]
-        )
-    return Response(
-        content=buf.getvalue(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=login_history.csv"},
+            for row in items
+        ),
     )
 
 
@@ -1319,12 +1602,11 @@ def export_login_history_xlsx(
         date_to=date_to,
         sort_dir=sort_dir,
     )
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "LoginHistory"
-    ws.append(["id", "created_at", "email", "result", "source", "ip", "user_agent"])
-    for row in items:
-        ws.append(
+    return xlsx_attachment_response(
+        filename="login_history.xlsx",
+        sheet_name="LoginHistory",
+        header=["id", "created_at", "email", "result", "source", "ip", "user_agent"],
+        rows=(
             [
                 row.get("id"),
                 row.get("created_at"),
@@ -1334,15 +1616,8 @@ def export_login_history_xlsx(
                 row.get("ip") or "",
                 row.get("user_agent") or "",
             ]
-        )
-
-    out = io.BytesIO()
-    wb.save(out)
-    out.seek(0)
-    return Response(
-        content=out.getvalue(),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=login_history.xlsx"},
+            for row in items
+        ),
     )
 
 
@@ -1368,12 +1643,10 @@ def export_audit_logs_csv(
         date_to=date_to,
         sort_dir=sort_dir,
     )
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["id", "created_at", "action", "actor_email", "target_email", "ip", "reason"])
-    for row in items:
-        meta = row.get("meta") or {}
-        writer.writerow(
+    return csv_attachment_response(
+        filename="admin_audit_logs.csv",
+        header=["id", "created_at", "action", "actor_email", "target_email", "ip", "reason"],
+        rows=(
             [
                 row.get("id"),
                 row.get("created_at"),
@@ -1381,13 +1654,10 @@ def export_audit_logs_csv(
                 row.get("actor_email"),
                 row.get("target_email"),
                 row.get("ip") or "",
-                meta.get("reason", "") if isinstance(meta, dict) else "",
+                (row.get("meta") or {}).get("reason", "") if isinstance(row.get("meta"), dict) else "",
             ]
-        )
-    return Response(
-        content=buf.getvalue(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=admin_audit_logs.csv"},
+            for row in items
+        ),
     )
 
 
@@ -1413,13 +1683,11 @@ def export_audit_logs_xlsx(
         date_to=date_to,
         sort_dir=sort_dir,
     )
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Audit"
-    ws.append(["id", "created_at", "action", "actor_email", "target_email", "ip", "reason"])
-    for row in items:
-        meta = row.get("meta") or {}
-        ws.append(
+    return xlsx_attachment_response(
+        filename="admin_audit_logs.xlsx",
+        sheet_name="Audit",
+        header=["id", "created_at", "action", "actor_email", "target_email", "ip", "reason"],
+        rows=(
             [
                 row.get("id"),
                 row.get("created_at"),
@@ -1427,17 +1695,10 @@ def export_audit_logs_xlsx(
                 row.get("actor_email"),
                 row.get("target_email"),
                 row.get("ip") or "",
-                meta.get("reason", "") if isinstance(meta, dict) else "",
+                (row.get("meta") or {}).get("reason", "") if isinstance(row.get("meta"), dict) else "",
             ]
-        )
-
-    out = io.BytesIO()
-    wb.save(out)
-    out.seek(0)
-    return Response(
-        content=out.getvalue(),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=admin_audit_logs.xlsx"},
+            for row in items
+        ),
     )
 
 

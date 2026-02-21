@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { apiGet, apiPost, isAbortError } from "../api/client";
+import { apiPost, isAbortError } from "../api/client";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import ClearableInput from "../components/ui/ClearableInput";
@@ -18,12 +18,15 @@ import UserActionPanel, {
   type UserRole,
 } from "../components/users/UserActionPanel";
 import UserBadgeGroups from "../components/users/UserBadgeGroups";
+import UserListSessionMeta from "../components/users/UserListSessionMeta";
 import { UserStatusPills, UserTrustPills } from "../components/users/UserStatusPills";
 import { useAuth } from "../hooks/auth";
+import { useUsersList } from "../hooks/useUsersList";
 import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll";
 import type { AvailableActionsResponse } from "../types/catalog";
 import { getUserAndTrustCatalogsCached } from "../utils/catalogCache";
 import { formatApiDateTime } from "../utils/datetime";
+import { normalizeError } from "../utils/errors";
 import { resolveDisplayRole } from "../utils/roles";
 import { loadUserContextByEmail, loadUserContextById } from "../utils/userContext";
 
@@ -91,12 +94,6 @@ const TAB_OPTIONS: Array<{ value: UsersTab; label: string }> = [
   { value: "approved", label: TXT.tabApproved },
   { value: "deleted", label: TXT.tabDeleted },
 ];
-
-const BASE_ROWS = 20;
-
-function normalizeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function isActionApplicable(
   user: UserRow,
@@ -179,11 +176,8 @@ export default function UsersPage() {
 
   const [tab, setTab] = useState<UsersTab>("all");
   const [query, setQuery] = useState("");
-  const [users, setUsers] = useState<UserRow[]>([]);
-  const [rowsVisible, setRowsVisible] = useState(BASE_ROWS);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -200,13 +194,31 @@ export default function UsersPage() {
   const [drawerAvailableActions, setDrawerAvailableActions] = useState<BulkAction[]>([]);
   const [drawerUserId, setDrawerUserId] = useState<number | null>(null);
 
-  const usersAbortRef = useRef<AbortController | null>(null);
   const availableAbortRef = useRef<AbortController | null>(null);
   const drawerAbortRef = useRef<AbortController | null>(null);
   const drawerRequestSeqRef = useRef(0);
+  const keepSelectionOnResetRef = useRef(false);
+  const tabRef = useRef<UsersTab>(tab);
+  const queryRef = useRef(query);
 
   const actorEmail = (user?.email || "").toLowerCase();
   const actorIsRoot = user?.role === "root-admin";
+
+  const {
+    rows: users,
+    total,
+    isLoading: isUsersLoading,
+    hasMore,
+    resetAndLoad,
+    requestNextPage,
+  } = useUsersList<UserRow>({
+    statusRef: tabRef,
+    queryRef,
+    keepSelectionOnResetRef,
+    setSelectedIds,
+    onReset: () => setError(""),
+    onError: (e) => setError(normalizeError(e)),
+  });
 
   const selectedUsers = useMemo(() => {
     if (selectedIds.length === 0) return [];
@@ -214,7 +226,7 @@ export default function UsersPage() {
     return users.filter((row) => selectedSet.has(row.id));
   }, [users, selectedIds]);
 
-  const allVisibleIds = useMemo(() => users.slice(0, rowsVisible).map((row) => row.id), [users, rowsVisible]);
+  const allVisibleIds = useMemo(() => users.map((row) => row.id), [users]);
   const allVisibleSelected = useMemo(
     () => allVisibleIds.length > 0 && allVisibleIds.every((id) => selectedIds.includes(id)),
     [allVisibleIds, selectedIds],
@@ -234,39 +246,16 @@ export default function UsersPage() {
     return out;
   }, [availableActions, selectedUsers, actorEmail, actorIsRoot]);
 
-  async function loadUsers(options?: { nextTab?: UsersTab; nextQuery?: string; keepSelection?: boolean }) {
-    usersAbortRef.current?.abort();
-    const controller = new AbortController();
-    usersAbortRef.current = controller;
+  function resetUsersList(options?: { nextTab?: UsersTab; nextQuery?: string; keepSelection?: boolean }) {
+    const nextTab = options?.nextTab ?? tabRef.current;
+    const nextQuery = options?.nextQuery ?? queryRef.current;
 
-    const nextTab = options?.nextTab ?? tab;
-    const nextQuery = options?.nextQuery ?? query;
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const data = await apiGet<UserRow[]>(
-        `/admin/users?status=${nextTab}&q=${encodeURIComponent(nextQuery.trim())}`,
-        { signal: controller.signal },
-      );
-      setUsers(data || []);
-      setRowsVisible(BASE_ROWS);
-      if (options?.keepSelection) {
-        const nextSet = new Set((data || []).map((row) => row.id));
-        setSelectedIds((prev) => prev.filter((id) => nextSet.has(id)));
-      } else {
-        setSelectedIds([]);
-      }
-    } catch (e) {
-      if (isAbortError(e)) return;
-      setError(normalizeError(e));
-    } finally {
-      if (usersAbortRef.current === controller) {
-        usersAbortRef.current = null;
-      }
-      setLoading(false);
-    }
+    if (nextTab !== tab) setTab(nextTab);
+    if (nextQuery !== query) setQuery(nextQuery);
+    tabRef.current = nextTab;
+    queryRef.current = nextQuery;
+    keepSelectionOnResetRef.current = Boolean(options?.keepSelection);
+    resetAndLoad();
   }
 
   async function refreshDrawerContext(userId: number) {
@@ -334,7 +323,7 @@ export default function UsersPage() {
     });
 
     setMessage(TXT.actionDone);
-    await loadUsers({ keepSelection: true });
+    resetUsersList({ keepSelection: true });
 
     if (drawerUserId && applicableIds.includes(drawerUserId)) {
       await refreshDrawerContext(drawerUserId);
@@ -351,19 +340,22 @@ export default function UsersPage() {
       reason: payload.reason,
     });
     setMessage(TXT.userActionDone);
-    await Promise.all([refreshDrawerContext(drawerUserId), loadUsers({ keepSelection: true })]);
+    await refreshDrawerContext(drawerUserId);
+    resetUsersList({ keepSelection: true });
   }
 
   async function revokeTrustedDevice(deviceId: number) {
     if (!drawerUserId) return;
     await apiPost(`/admin/users/${drawerUserId}/trusted-devices/${deviceId}/revoke`, {});
-    await Promise.all([refreshDrawerContext(drawerUserId), loadUsers({ keepSelection: true })]);
+    await refreshDrawerContext(drawerUserId);
+    resetUsersList({ keepSelection: true });
   }
 
   async function revokeTrustedDevicesExceptLatest(keepDeviceId: number) {
     if (!drawerUserId) return;
     await apiPost(`/admin/users/${drawerUserId}/trusted-devices/revoke-except`, { keep_device_id: keepDeviceId });
-    await Promise.all([refreshDrawerContext(drawerUserId), loadUsers({ keepSelection: true })]);
+    await refreshDrawerContext(drawerUserId);
+    resetUsersList({ keepSelection: true });
   }
 
   function toggleOne(id: number) {
@@ -383,10 +375,10 @@ export default function UsersPage() {
   }
 
   useWorkspaceInfiniteScroll({
-    canLoadMore: rowsVisible < users.length,
-    isLoading: loading,
-    onLoadMore: () => setRowsVisible((prev) => Math.min(prev + BASE_ROWS, users.length)),
-    contentKey: `${rowsVisible}:${users.length}:${tab}:${query}`,
+    canLoadMore: hasMore,
+    isLoading: isUsersLoading,
+    onLoadMore: requestNextPage,
+    contentKey: `${users.length}:${tab}:${query}`,
   });
 
   useEffect(() => {
@@ -406,7 +398,7 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
-    void loadUsers({ nextTab: tab, nextQuery: query });
+    resetUsersList({ nextTab: tab, nextQuery: query });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -493,8 +485,6 @@ export default function UsersPage() {
 
   useEffect(() => {
     return () => {
-      usersAbortRef.current?.abort();
-      usersAbortRef.current = null;
       availableAbortRef.current?.abort();
       availableAbortRef.current = null;
       drawerAbortRef.current?.abort();
@@ -502,7 +492,6 @@ export default function UsersPage() {
     };
   }, []);
 
-  const visibleRows = useMemo(() => users.slice(0, rowsVisible), [users, rowsVisible]);
   const hasDeepLinkContext = useMemo(() => {
     const params = new URLSearchParams(location.search);
     return Boolean(params.get("highlight_user_id") || params.get("highlight_email"));
@@ -531,7 +520,7 @@ export default function UsersPage() {
           placeholder={TXT.searchPlaceholder}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
-              void loadUsers({ nextTab: tab, nextQuery: query });
+              resetUsersList({ nextTab: tab, nextQuery: query });
             }
           }}
         />
@@ -539,11 +528,11 @@ export default function UsersPage() {
           variant="primary"
           size="sm"
           onClick={() => {
-            void loadUsers({ nextTab: tab, nextQuery: query });
+            resetUsersList({ nextTab: tab, nextQuery: query });
           }}
-          disabled={loading}
+          disabled={isUsersLoading}
         >
-          {loading ? TXT.loading : TXT.find}
+          {isUsersLoading ? TXT.loading : TXT.find}
         </Button>
       </div>
 
@@ -557,72 +546,29 @@ export default function UsersPage() {
             </div>
           </div>
 
-          {visibleRows.map((row) => {
-            const isSelf = !!actorEmail && row.email.toLowerCase() === actorEmail;
-            const isHighlighted = drawerOpen && drawerData?.user.id === row.id;
-            const identityBadges =
-              row.is_approved || row.is_root_admin ? (
-                <IdentityBadgeRow role={resolveDisplayRole(row)} showSelf={isSelf} />
-              ) : isSelf ? (
-                <RelevanceBadge relevance="self" />
-              ) : null;
-            return (
-              <SelectableListRow
-                key={row.id}
-                checked={selectedIds.includes(row.id)}
-                onToggle={() => toggleOne(row.id)}
-                title={row.email}
-                badges={
-                  <UserBadgeGroups
-                    identity={identityBadges}
-                    status={
-                      <UserStatusPills
-                        user={row.is_approved ? row : { ...row, role: null }}
-                        showApproveWhenTrue={false}
-                        showApproveWhenFalse={false}
-                        showBlockedWhenFalse={false}
-                        hideRole
-                        preferPendingBadge
-                      />
-                    }
-                    trust={
-                      row.is_approved && !row.is_deleted ? (
-                        <UserTrustPills
-                          trustPolicy={row.trust_policy}
-                          trustedDaysLeft={row.trusted_days_left}
-                          trustPolicyCatalog={trustPolicyCatalog}
-                          showExpires={false}
-                          showDeviceStatus={false}
-                        />
-                      ) : null
-                    }
-                  />
-                }
-                details={
-                  tab === "pending" && row.pending_requested_at ? (
-                    <div style={{ fontSize: 12, opacity: 0.75, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <span>
-                        {TXT.pendingRequest}: {formatApiDateTime(row.pending_requested_at)}
-                      </span>
-                      {row.pending_unread ? <span>{TXT.hasUnreadRequest}</span> : null}
-                    </div>
-                  ) : null
-                }
-                onOpen={() => {
-                  void openDrawerById(row.id);
-                }}
-                highlighted={isHighlighted}
-                checkboxTitle={TXT.selectUserTitle}
-                openLabel={TXT.open}
-              />
-            );
-          })}
+          {users.map((row) => (
+            <UsersListRow
+              key={row.id}
+              row={row}
+              tab={tab}
+              actorEmail={actorEmail}
+              checked={selectedIds.includes(row.id)}
+              highlighted={drawerOpen && drawerData?.user.id === row.id}
+              trustPolicyCatalog={trustPolicyCatalog}
+              pendingRequestLabel={TXT.pendingRequest}
+              hasUnreadRequestLabel={TXT.hasUnreadRequest}
+              checkboxTitle={TXT.selectUserTitle}
+              openLabel={TXT.open}
+              onToggle={toggleOne}
+              onOpen={openDrawerById}
+            />
+          ))}
 
-          {!loading && users.length === 0 && <div style={{ opacity: 0.78 }}>{TXT.usersNotFound}</div>}
+          {!isUsersLoading && users.length === 0 && <div style={{ opacity: 0.78 }}>{TXT.usersNotFound}</div>}
 
-          {users.length > visibleRows.length && (
+          {hasMore && (
             <div style={{ fontSize: 12, opacity: 0.72 }}>
-              {TXT.shown}: {visibleRows.length} {"\u0438\u0437"} {users.length}
+              {TXT.shown}: {users.length} {"\u0438\u0437"} {total}
             </div>
           )}
         </div>
@@ -674,3 +620,104 @@ export default function UsersPage() {
     </div>
   );
 }
+
+const UsersListRow = memo(
+  function UsersListRow({
+    row,
+    tab,
+    actorEmail,
+    checked,
+    highlighted,
+    trustPolicyCatalog,
+    pendingRequestLabel,
+    hasUnreadRequestLabel,
+    checkboxTitle,
+    openLabel,
+    onToggle,
+    onOpen,
+  }: {
+    row: UserRow;
+    tab: UsersTab;
+    actorEmail: string;
+    checked: boolean;
+    highlighted: boolean;
+    trustPolicyCatalog: Record<TrustPolicy, TrustPolicyCatalogItem>;
+    pendingRequestLabel: string;
+    hasUnreadRequestLabel: string;
+    checkboxTitle: string;
+    openLabel: string;
+    onToggle: (id: number) => void;
+    onOpen: (id: number) => Promise<void>;
+  }) {
+    const isSelf = !!actorEmail && row.email.toLowerCase() === actorEmail;
+    const identityBadges =
+      row.is_approved || row.is_root_admin ? (
+        <IdentityBadgeRow role={resolveDisplayRole(row)} showSelf={isSelf} />
+      ) : isSelf ? (
+        <RelevanceBadge relevance="self" />
+      ) : null;
+
+    return (
+      <SelectableListRow
+        checked={checked}
+        onToggle={() => onToggle(row.id)}
+        title={row.email}
+        badges={
+          <UserBadgeGroups
+            identity={identityBadges}
+            status={
+              <UserStatusPills
+                user={row.is_approved ? row : { ...row, role: null }}
+                showBlockedWhenFalse={false}
+                hideRole
+                preferPendingBadge
+              />
+            }
+            trust={
+              row.is_approved && !row.is_deleted ? (
+                <UserTrustPills
+                  trustPolicy={row.trust_policy}
+                  trustPolicyCatalog={trustPolicyCatalog}
+                />
+              ) : null
+            }
+          />
+        }
+        details={
+          <div style={{ display: "grid", gap: 4 }}>
+            {tab === "pending" && row.pending_requested_at ? (
+              <div style={{ fontSize: 12, opacity: 0.75, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <span>
+                  {pendingRequestLabel}: {formatApiDateTime(row.pending_requested_at)}
+                </span>
+                {row.pending_unread ? <span>{hasUnreadRequestLabel}</span> : null}
+              </div>
+            ) : null}
+            <UserListSessionMeta
+              lastIp={row.last_ip}
+              lastUserAgent={row.last_user_agent}
+              lastActivityAt={row.last_activity_at}
+            />
+          </div>
+        }
+        onOpen={() => {
+          void onOpen(row.id);
+        }}
+        highlighted={highlighted}
+        checkboxTitle={checkboxTitle}
+        openLabel={openLabel}
+      />
+    );
+  },
+  (prev, next) =>
+    prev.row === next.row &&
+    prev.tab === next.tab &&
+    prev.actorEmail === next.actorEmail &&
+    prev.checked === next.checked &&
+    prev.highlighted === next.highlighted &&
+    prev.trustPolicyCatalog === next.trustPolicyCatalog &&
+    prev.pendingRequestLabel === next.pendingRequestLabel &&
+    prev.hasUnreadRequestLabel === next.hasUnreadRequestLabel &&
+    prev.checkboxTitle === next.checkboxTitle &&
+    prev.openLabel === next.openLabel,
+);

@@ -1,4 +1,4 @@
-# Badge Cleanup Candidates
+﻿# Badge Cleanup Candidates
 
 Отдельный список кандидатов на удаление/упрощение бейджей.
 Файл ведется как backlog и не означает автоматическое удаление без согласования.
@@ -7,22 +7,22 @@
 
 1. `relevance.selected`
 - Где: `frontend/src/components/users/userBadgeCatalog.ts`
-- Почему кандидат: в текущем UI не найдено мест рендера `RelevanceBadge` с `selected`.
-- Риск: низкий (визуальный), но перед удалением проверить deep-link/выделение в планируемых сценариях.
+- Текущий статус: оставить.
+- Почему: ключ реально используется через `selectedUserEmail` в `ActivityLogPage` (контекстная релевантность).
+- Риск удаления: средний (сломает сценарий подсветки "выбранного" контекста).
 
-2. `time.expires`
-- Где: `frontend/src/components/users/userBadgeCatalog.ts`, `frontend/src/components/users/UserStatusPills.tsx`
-- Почему кандидат: в текущем list-UX скрыт; используется только в `UserTrustPills`, но в списках отключен.
-- Риск: средний, если вернем детальный time-контекст в списки.
+## Removed In Current Cleanup
 
-3. `time.device.ok|soon|expired|permanent`
-- Где: `frontend/src/components/users/userBadgeCatalog.ts`, `frontend/src/components/users/UserStatusPills.tsx`
-- Почему кандидат: сейчас не используются в компактном списке пользователей; нужны только если возвращаем device-time в list.
-- Риск: средний, влияет на будущее отображение device-time бейджей.
+1. `time.expires`
+- Статус: удален из `userBadgeCatalog` и `UserTrustPills`.
+- Причина: в текущем UX не рендерился, дублировал trust-контекст.
 
-## Already Removed
+2. `time.device.ok|soon|expired|permanent`
+- Статус: удалены из `userBadgeCatalog` и `UserTrustPills`.
+- Причина: не использовались в рендере списков/дроуеров после принятых UX-правок.
+
+## Already Removed Earlier
 
 1. `role.unassigned`
 - Статус: удален из каталога и отключен в рендере.
 - Причина: шумный бейдж, в pending-контексте заменен на `status.pending`.
-

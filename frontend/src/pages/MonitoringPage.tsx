@@ -2,6 +2,7 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet, apiPost, isAbortError } from "../api/client";
 import { downloadBlobFile } from "../utils/download";
+import { normalizeError } from "../utils/errors";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import ClearableInput from "../components/ui/ClearableInput";
@@ -275,7 +276,7 @@ export default function MonitoringPage() {
       setLastUpdated(new Date().toLocaleTimeString("ru-RU"));
     } catch (e) {
       if (isAbortError(e)) return;
-      setError(String(e));
+      setError(normalizeError(e));
     } finally {
       if (metricsAbortRef.current === controller) {
         metricsAbortRef.current = null;
@@ -294,7 +295,7 @@ export default function MonitoringPage() {
       setSettings(s);
     } catch (e) {
       if (isAbortError(e)) return;
-      setError(String(e));
+      setError(normalizeError(e));
     } finally {
       if (settingsAbortRef.current === controller) {
         settingsAbortRef.current = null;
@@ -401,7 +402,7 @@ export default function MonitoringPage() {
       setEditingThresholds(false);
       await loadMetricsHistory();
     } catch (e) {
-      setError(String(e));
+      setError(normalizeError(e));
     }
   }
 
@@ -419,7 +420,7 @@ export default function MonitoringPage() {
       const url = `/metrics/export.${ext}?${qp.toString()}`;
       await downloadBlobFile(url, `metrics.${ext}`);
     } catch (e) {
-      setError(String(e));
+      setError(normalizeError(e));
     }
   }
 

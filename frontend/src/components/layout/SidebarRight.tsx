@@ -11,6 +11,7 @@ import { getMonitoringFocusMeta, loadMonitoringContext, type FocusHistoryRespons
 import { getAuditActionCatalogCached, getUserAndTrustCatalogsCached } from "../../utils/catalogCache";
 import { loadUserContextByEmail, loadUserContextById } from "../../utils/userContext";
 import { refreshEventCenterPollingNow, subscribeEventCenterPolling } from "../../utils/eventCenterPollingManager";
+import { useGuardedAsyncState } from "../../hooks/useGuardedAsyncState";
 import Button from "../ui/Button";
 import Card from "../ui/Card";
 import ContextQuickActions from "../ui/ContextQuickActions";
@@ -338,12 +339,17 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   const [monitoringFocus, setMonitoringFocus] = useState<FocusHistoryResponse | null>(null);
   const [monitoringFocusRangeMinutes, setMonitoringFocusRangeMinutes] = useState(60);
   const [monitoringErrorRows, setMonitoringErrorRows] = useState<Array<{ labels: string; value: number }>>([]);
-  const [contextLoading, setContextLoading] = useState(false);
-  const [contextError, setContextError] = useState("");
   const [contextUser, setContextUser] = useState<UserDetailsResponse | null>(null);
   const [contextAvailableActions, setContextAvailableActions] = useState<BulkAction[]>([]);
   const [actionCatalog, setActionCatalog] = useState<Record<BulkAction, ActionCatalogItem>>({} as Record<BulkAction, ActionCatalogItem>);
   const [trustPolicyCatalog, setTrustPolicyCatalog] = useState<Record<TrustPolicy, TrustPolicyCatalogItem>>({} as Record<TrustPolicy, TrustPolicyCatalogItem>);
+  const {
+    isLoading: contextLoading,
+    error: contextError,
+    run: runContextTask,
+    reset: resetContextTask,
+    setErrorMessage: setContextErrorMessage,
+  } = useGuardedAsyncState();
 
   useEffect(() => {
     notificationsRef.current = notifications;
@@ -563,74 +569,64 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   }
 
   useEffect(() => {
-    let active = true;
-    async function loadContextData() {
-      if (!contextItem) {
-        setMonitoringFocus(null);
-        setMonitoringErrorRows([]);
-        setContextUser(null);
-        setContextAvailableActions([]);
-        setContextError("");
-        setContextLoading(false);
-        return;
-      }
-      setContextLoading(true);
-      setContextError("");
+    if (!contextItem) {
+      resetContextTask();
+      setMonitoringFocus(null);
+      setMonitoringErrorRows([]);
       setContextUser(null);
       setContextAvailableActions([]);
-      const { isMonitoring } = getMonitoringFocusMeta(contextItem);
+      return;
+    }
+
+    setContextUser(null);
+    setContextAvailableActions([]);
+    const { isMonitoring } = getMonitoringFocusMeta(contextItem);
+
+    runContextTask(async ({ isCurrent }) => {
+      const tasks: Promise<unknown>[] = [];
+
+      const targetEmail = (typeof contextItem.meta?.target_email === "string" ? contextItem.meta.target_email : "")
+        || (typeof contextItem.meta?.email === "string" ? contextItem.meta.email : "");
+      const normalizedEmail = targetEmail.trim().toLowerCase();
+      if (normalizedEmail) {
+        tasks.push(
+          (async () => {
+            const context = await loadUserContextByEmail(normalizedEmail);
+            if (!context || !isCurrent()) return;
+            setContextUser(context.details);
+            setContextAvailableActions(context.availableActions);
+          })(),
+        );
+      }
+
+      if (isMonitoring) {
+        tasks.push(
+          (async () => {
+            const ctx = await loadMonitoringContext(contextItem);
+            if (!isCurrent()) return;
+            setMonitoringFocus(ctx.history);
+            setMonitoringFocusRangeMinutes(ctx.rangeMinutes);
+            setMonitoringErrorRows(ctx.errorRows);
+          })(),
+        );
+      } else {
+        setMonitoringFocus(null);
+        setMonitoringErrorRows([]);
+        setMonitoringFocusRangeMinutes(60);
+      }
+
       try {
-        const tasks: Promise<unknown>[] = [];
-
-        const targetEmail = (typeof contextItem.meta?.target_email === "string" ? contextItem.meta.target_email : "")
-          || (typeof contextItem.meta?.email === "string" ? contextItem.meta.email : "");
-        const normalizedEmail = targetEmail.trim().toLowerCase();
-        if (normalizedEmail) {
-          tasks.push(
-            (async () => {
-              const context = await loadUserContextByEmail(normalizedEmail);
-              if (!context || !active) return;
-              if (!active) return;
-              setContextUser(context.details);
-              setContextAvailableActions(context.availableActions);
-            })(),
-          );
-        }
-
-        if (isMonitoring) {
-          tasks.push(
-            (async () => {
-              const ctx = await loadMonitoringContext(contextItem);
-              if (!active) return;
-              setMonitoringFocus(ctx.history);
-              setMonitoringFocusRangeMinutes(ctx.rangeMinutes);
-              setMonitoringErrorRows(ctx.errorRows);
-            })(),
-          );
-        } else {
-          setMonitoringFocus(null);
-          setMonitoringErrorRows([]);
-          setMonitoringFocusRangeMinutes(60);
-        }
-
         if (tasks.length > 0) await Promise.all(tasks);
       } catch {
-        if (!active) return;
+        if (!isCurrent()) return;
         setMonitoringFocus(null);
         setMonitoringErrorRows([]);
         setContextUser(null);
         setContextAvailableActions([]);
-        setContextError("Не удалось загрузить полный контекст события.");
-      } finally {
-        if (!active) return;
-        setContextLoading(false);
+        setContextErrorMessage("Не удалось загрузить полный контекст события.");
       }
-    }
-    loadContextData();
-    return () => {
-      active = false;
-    };
-  }, [contextItem]);
+    });
+  }, [contextItem, resetContextTask, runContextTask, setContextErrorMessage]);
 
   const isAuthSecurityContextEvent = Boolean(
     contextItem?.event_type?.startsWith("auth.") || contextItem?.event_type?.startsWith("security."),
@@ -790,7 +786,6 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
                     </div>
                     <UserStatusPills
                       user={contextUser.user.is_approved ? contextUser.user : { ...contextUser.user, role: null }}
-                      showApproveWhenFalse={false}
                       showBlockedWhenFalse={false}
                     />
                   </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { EventItem } from "../../api/events";
 import ActionMenuPopover from "./ActionMenuPopover";
 import Button from "./Button";
@@ -16,7 +16,7 @@ type Props = {
   showMoreMenu?: boolean;
 };
 
-export default function EventCardActions({
+function EventCardActions({
   item,
   compact = false,
   onOpen,
@@ -128,3 +128,17 @@ export default function EventCardActions({
     </div>
   );
 }
+
+export default memo(
+  EventCardActions,
+  (prev, next) =>
+    prev.item === next.item &&
+    prev.compact === next.compact &&
+    prev.showReadToggle === next.showReadToggle &&
+    prev.showDismissToggle === next.showDismissToggle &&
+    prev.showMoreMenu === next.showMoreMenu &&
+    Boolean(prev.onOpenUser) === Boolean(next.onOpenUser) &&
+    Boolean(prev.onFilterSimilar) === Boolean(next.onFilterSimilar) &&
+    Boolean(prev.onToggleRead) === Boolean(next.onToggleRead) &&
+    Boolean(prev.onToggleDismiss) === Boolean(next.onToggleDismiss),
+);

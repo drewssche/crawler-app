@@ -5,6 +5,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.paging import build_paged_response, paginate_query
 from app.db.models.page import Page
 from app.db.models.profile import Profile
 from app.db.models.run import Run
@@ -57,10 +58,30 @@ def start_run(profile_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/by-profile/{profile_id}")
-def list_runs(profile_id: int, db: Session = Depends(get_db)):
-    return db.query(Run).filter(Run.profile_id == profile_id).order_by(Run.id.desc()).all()
+def list_runs(
+    profile_id: int,
+    page: int | None = None,
+    page_size: int = 20,
+    db: Session = Depends(get_db),
+):
+    query = db.query(Run).filter(Run.profile_id == profile_id).order_by(Run.id.desc())
+    paged = paginate_query(query, page=page, page_size=page_size)
+    if page is None:
+        return paged
+    items, total, safe_page, safe_page_size = paged
+    return build_paged_response(items=items, total=total, page=safe_page, page_size=safe_page_size)
 
 
 @router.get("/{run_id}/pages")
-def list_pages(run_id: int, db: Session = Depends(get_db)):
-    return db.query(Page).filter(Page.run_id == run_id).order_by(Page.id.asc()).all()
+def list_pages(
+    run_id: int,
+    page: int | None = None,
+    page_size: int = 20,
+    db: Session = Depends(get_db),
+):
+    query = db.query(Page).filter(Page.run_id == run_id).order_by(Page.id.asc())
+    paged = paginate_query(query, page=page, page_size=page_size)
+    if page is None:
+        return paged
+    items, total, safe_page, safe_page_size = paged
+    return build_paged_response(items=items, total=total, page=safe_page, page_size=safe_page_size)

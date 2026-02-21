@@ -1,18 +1,20 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { getEventsFeed, markAllEventsRead, markEventRead, setEventDismissed, setEventHandled, type EventItem } from "../api/events";
+import { markAllEventsRead, markEventRead, setEventDismissed, setEventHandled, type EventItem } from "../api/events";
 import { useAuth } from "../hooks/auth";
 import { formatApiDateTime } from "../utils/datetime";
 import { UI_BULLET } from "../utils/uiText";
 import { runEventPrimaryAction } from "../utils/eventPrimaryAction";
 import { eventChannelLabel, eventReadStatusLabel, eventSeverityLabel } from "../utils/eventLabels";
+import { normalizeError } from "../utils/errors";
 import { getEventRelevance } from "../utils/relevance";
 import { apiPost } from "../api/client";
 import { getMonitoringFocusMeta, loadMonitoringContext, type FocusHistoryResponse } from "../utils/monitoringContext";
 import { getUserAndTrustCatalogsCached } from "../utils/catalogCache";
 import { loadUserContextByEmail, loadUserContextById } from "../utils/userContext";
-import { useIncrementalPager } from "../hooks/useIncrementalPager";
+import { useEventFeed } from "../hooks/useEventFeed";
 import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll";
+import { useGuardedAsyncState } from "../hooks/useGuardedAsyncState";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import ClearableInput from "../components/ui/ClearableInput";
@@ -36,7 +38,6 @@ import EventMetaPills from "../components/ui/EventMetaPills";
 import { buildAuthSecurityQuickActions } from "../components/users/userContextQuickActions";
 
 type ChannelFilter = "all" | "notification" | "action";
-const PAGE_SIZE = 20;
 const EVENT_CARD_MIN_HEIGHT = 148;
 const EVENT_CARD_HEADER_MIN_HEIGHT = 26;
 const EVENT_CARD_BODY_MIN_HEIGHT = 46;
@@ -53,7 +54,6 @@ export default function EventsPage() {
   const location = useLocation();
   const { user } = useAuth();
 
-  const [rows, setRows] = useState<EventItem[]>([]);
   const [channel, setChannel] = useState<ChannelFilter>("all");
   const [includeDismissed, setIncludeDismissed] = useState(false);
   const [onlyUnread, setOnlyUnread] = useState(false);
@@ -61,10 +61,7 @@ export default function EventsPage() {
   const [securityOnly, setSecurityOnly] = useState(false);
   const [similar, setSimilar] = useState("");
   const [feedError, setFeedError] = useState("");
-  const contextRequestSeqRef = useRef(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerLoading, setDrawerLoading] = useState(false);
-  const [drawerError, setDrawerError] = useState("");
   const [drawerUser, setDrawerUser] = useState<UserDetailsResponse | null>(null);
   const [drawerEvent, setDrawerEvent] = useState<EventItem | null>(null);
   const [monitoringFocus, setMonitoringFocus] = useState<FocusHistoryResponse | null>(null);
@@ -73,6 +70,12 @@ export default function EventsPage() {
   const [drawerAvailableActions, setDrawerAvailableActions] = useState<BulkAction[]>([]);
   const [actionCatalog, setActionCatalog] = useState<Record<BulkAction, ActionCatalogItem>>({} as Record<BulkAction, ActionCatalogItem>);
   const [trustPolicyCatalog, setTrustPolicyCatalog] = useState<Record<TrustPolicy, TrustPolicyCatalogItem>>({} as Record<TrustPolicy, TrustPolicyCatalogItem>);
+  const {
+    isLoading: drawerLoading,
+    error: drawerError,
+    run: runDrawerContextTask,
+    setErrorMessage: setDrawerErrorMessage,
+  } = useGuardedAsyncState();
 
   useEffect(() => {
     const q = new URLSearchParams(location.search).get("similar");
@@ -97,27 +100,13 @@ export default function EventsPage() {
     };
   }, []);
 
-  const { total, isLoading, hasMore, resetAndLoad, requestNextPage } = useIncrementalPager<EventItem>({
-    fetchPage: (nextPage, signal) =>
-      getEventsFeed({
-        channel,
-        includeDismissed,
-        onlyUnread,
-        securityOnly,
-        page: nextPage,
-        pageSize: PAGE_SIZE,
-        signal,
-      }),
-    applyPage: (data, append) => {
-      setRows((prev) => (append ? [...prev, ...data.items] : data.items));
-    },
-    onReset: () => {
-      setRows([]);
-      setFeedError("");
-    },
-    onError: (e) => {
-      setFeedError(String(e));
-    },
+  const { rows, setRows, total, isLoading, hasMore, resetAndLoad, requestNextPage } = useEventFeed({
+    channel,
+    includeDismissed,
+    onlyUnread,
+    securityOnly,
+    onReset: () => setFeedError(""),
+    onError: (e) => setFeedError(normalizeError(e)),
   });
 
   useEffect(() => {
@@ -135,10 +124,7 @@ export default function EventsPage() {
   }
 
   async function openEventContext(item: EventItem) {
-    const requestSeq = ++contextRequestSeqRef.current;
     setDrawerOpen(true);
-    setDrawerLoading(true);
-    setDrawerError("");
     setDrawerUser(null);
     setDrawerEvent(item);
     setMonitoringFocus(null);
@@ -156,14 +142,14 @@ export default function EventsPage() {
 
     const email = getTargetEmail(item);
     const { isMonitoring } = getMonitoringFocusMeta(item);
-    try {
+    await runDrawerContextTask(async ({ isCurrent }) => {
       const tasks: Promise<unknown>[] = [];
 
       if (email) {
         tasks.push(
           (async () => {
             const context = await loadUserContextByEmail(email);
-            if (requestSeq !== contextRequestSeqRef.current) return;
+            if (!isCurrent()) return;
             if (!context) return;
             setDrawerUser(context.details);
             setDrawerAvailableActions(context.availableActions);
@@ -175,7 +161,7 @@ export default function EventsPage() {
         tasks.push(
           (async () => {
             const ctx = await loadMonitoringContext(item);
-            if (requestSeq !== contextRequestSeqRef.current) return;
+            if (!isCurrent()) return;
             setMonitoringFocus(ctx.history);
             setMonitoringFocusRangeMinutes(ctx.rangeMinutes);
             setMonitoringErrorRows(ctx.errorRows);
@@ -188,14 +174,7 @@ export default function EventsPage() {
       if (tasks.length > 0) {
         await Promise.all(tasks);
       }
-    } catch (e) {
-      if (requestSeq !== contextRequestSeqRef.current) return;
-      setDrawerError(String(e));
-    } finally {
-      if (requestSeq === contextRequestSeqRef.current) {
-        setDrawerLoading(false);
-      }
-    }
+    });
   }
 
   async function toggleRead(item: EventItem) {
@@ -203,7 +182,7 @@ export default function EventsPage() {
       await markEventRead(item.id, !item.is_read);
       setRows((prev) => prev.map((x) => (x.id === item.id ? { ...x, is_read: !item.is_read } : x)));
     } catch (e) {
-      setFeedError(String(e));
+      setFeedError(normalizeError(e));
     }
   }
 
@@ -218,7 +197,7 @@ export default function EventsPage() {
         return prev.map((x) => (x.id === item.id ? { ...x, is_dismissed: nextDismissed } : x));
       });
     } catch (e) {
-      setFeedError(String(e));
+      setFeedError(normalizeError(e));
     }
   }
 
@@ -255,7 +234,7 @@ export default function EventsPage() {
       });
       setDrawerEvent((prev) => (prev && prev.id === item.id ? { ...prev, is_read: true, is_handled: true } : prev));
     } catch (e) {
-      setDrawerError(String(e));
+      setDrawerErrorMessage(normalizeError(e));
     }
   }
 
@@ -264,7 +243,7 @@ export default function EventsPage() {
       await markAllEventsRead(channel, securityOnly);
       setRows((prev) => prev.map((x) => ({ ...x, is_read: true })));
     } catch (e) {
-      setFeedError(String(e));
+      setFeedError(normalizeError(e));
     }
   }
 
@@ -484,7 +463,6 @@ export default function EventsPage() {
                 </div>
                 <UserStatusPills
                   user={drawerUser.user.is_approved ? drawerUser.user : { ...drawerUser.user, role: null }}
-                  showApproveWhenFalse={false}
                   showBlockedWhenFalse={false}
                 />
               </div>
@@ -548,6 +526,11 @@ export default function EventsPage() {
     </div>
   );
 }
+
+
+
+
+
 
 
 

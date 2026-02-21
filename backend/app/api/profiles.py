@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
+from app.core.paging import build_paged_response, paginate_query
 from app.db.session import get_db
 from app.db.models.profile import Profile
 from app.db.models.user import User
@@ -10,12 +11,19 @@ from app.schemas.profile import ProfileCreate, ProfileOut
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
 
-@router.get("", response_model=list[ProfileOut])
+@router.get("")
 def list_profiles(
+    page: int | None = None,
+    page_size: int = 20,
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_user),
 ):
-    return db.query(Profile).order_by(Profile.id.desc()).all()
+    query = db.query(Profile).order_by(Profile.id.desc())
+    paged = paginate_query(query, page=page, page_size=page_size)
+    if page is None:
+        return paged
+    items, total, safe_page, safe_page_size = paged
+    return build_paged_response(items=items, total=total, page=safe_page, page_size=safe_page_size)
 
 
 @router.post("", response_model=ProfileOut)

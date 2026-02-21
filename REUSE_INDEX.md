@@ -48,8 +48,7 @@
   Единый рендер статусов пользователя (без инфошума).
 
 - `frontend/src/components/users/UserTrustPills.tsx`
-  Единый рендер trust/time-статусов пользователя.
-  В compact-режиме не рендерит дублирующий expires-бейдж для `доверие: бессрочное`.
+  Единый рендер trust-статуса пользователя (`доверие: ...`) без отдельного time/device слоя в compact UX.
 
 - `frontend/src/components/users/UserBadgeGroups.tsx`
   Единый layout для групп бейджей (`identity -> status -> trust`) с одинаковой структурой рядов в drawer-контекстах.
@@ -117,9 +116,32 @@
   Единый download-flow для export-сценариев (`apiDownload + objectURL + revoke`) через `downloadBlobFile(path, filename)`.
   Подключен в `MonitoringPage` и `ActivityLogPage`.
 
+- `frontend/src/utils/errors.ts`
+  Единая нормализация ошибок UI (`normalizeError(error)`), чтобы не дублировать `String(e)`/локальные функции.
+  Подключено в `UsersPage`, `EventsPage`, `ActivityLogPage`, `RootAdminsPage`, `MonitoringPage`.
+
 - `frontend/src/hooks/useIncrementalPager.ts`
   Единый hook для page-level пагинации (`load/reset/append + requestNextPage guard + anti-race request-seq + AbortController cancel`).
-  Подключен в `EventsPage` и `ActivityLogPage`.
+  Подключен в `EventsPage`, `ActivityLogPage`, `UsersPage`, `RootAdminsPage` (server-side pagination).
+
+- `frontend/src/hooks/useUsersList.ts`
+  Доменный loader списка пользователей (`/admin/users`) поверх `useIncrementalPager`:
+  `rows + total + hasMore + reset/requestNext` и сохранение selection при reset.
+  Подключен в `UsersPage`.
+
+- `frontend/src/hooks/useEventFeed.ts`
+  Доменный loader ленты событий (`/events/feed`) поверх `useIncrementalPager`.
+  Подключен в `EventsPage`.
+
+- `frontend/src/hooks/useActivityFeed.ts`
+  Доменный loader журнала (`/admin/audit`, `/admin/login-history`) поверх `useIncrementalPager`
+  с переключением `audit/login`.
+  Подключен в `ActivityLogPage`.
+
+- `frontend/src/hooks/useGuardedAsyncState.ts`
+  Единый lifecycle для async drawer-context загрузки:
+  `requestSeq stale-guard + loading/error state + reset`.
+  Подключен в `EventsPage`, `ActivityLogPage`, `SidebarRight`.
 
 - `frontend/src/api/client.ts` (`signal` + `isAbortError`)
   Единый контракт сетевой отмены запросов в UI:
@@ -146,6 +168,10 @@
 - `frontend/src/components/users/CompactActionCard.tsx`
   Единый компактный контейнер action-блоков (типографика/отступы/контраст)
   для `UsersPage` и `RootAdminsPage`.
+
+- `frontend/src/components/users/UserListSessionMeta.tsx`
+  Единая компактная строка сессии для списков (`IP • устройство • активность`).
+  Подключено в `UsersPage` и `RootAdminsPage`.
 
 - `frontend/src/utils/eventTime.ts`
   Единый парсинг/формат времени события:

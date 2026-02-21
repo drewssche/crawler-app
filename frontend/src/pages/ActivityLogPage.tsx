@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -8,6 +8,7 @@ import { useAuth } from "../hooks/auth";
 
 import { formatApiDateTime } from "../utils/datetime";
 import { downloadBlobFile } from "../utils/download";
+import { normalizeError } from "../utils/errors";
 
 import { getAuditRelevance } from "../utils/relevance";
 
@@ -51,12 +52,18 @@ import { shortUserAgent } from "../utils/userAgent";
 import { UI_BULLET } from "../utils/uiText";
 import { getAuditActionCatalogCached, getUserAndTrustCatalogsCached } from "../utils/catalogCache";
 import { loadUserContextByEmail, loadUserContextById } from "../utils/userContext";
-import { useIncrementalPager } from "../hooks/useIncrementalPager";
+import {
+  useActivityFeed,
+  type ActivityAuditItem,
+  type ActivityLoginItem,
+  type ActivityMode,
+} from "../hooks/useActivityFeed";
+import { useGuardedAsyncState } from "../hooks/useGuardedAsyncState";
 import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll";
 import type {
   AuditActionCatalogItem,
 } from "../types/catalog";
-import type { IdEmail, PagedResponse } from "../types/common";
+import type { IdEmail } from "../types/common";
 
 import type { UserDetailsResponse } from "../components/users/UserDetailsDrawer";
 
@@ -64,7 +71,7 @@ import { UserStatusPills } from "../components/users/UserStatusPills";
 
 
 
-type Mode = "audit" | "login";
+type Mode = ActivityMode;
 
 const PAGE_SIZE = 20;
 
@@ -72,45 +79,8 @@ type UserItem = IdEmail;
 
 
 
-type AuditItem = {
-
-  id: number;
-
-  created_at: string;
-
-  action: string;
-
-  actor_email: string;
-
-  target_email: string;
-
-  ip: string | null;
-
-  meta?: Record<string, unknown> | null;
-
-};
-
-
-
-type LoginItem = {
-
-  id: number;
-
-  user_id: number | null;
-
-  email: string;
-
-  created_at: string;
-
-  ip: string | null;
-
-  user_agent: string | null;
-
-  result: string;
-
-  source: string;
-
-};
+type AuditItem = ActivityAuditItem;
+type LoginItem = ActivityLoginItem;
 
 
 
@@ -227,10 +197,6 @@ export default function ActivityLogPage() {
 
 
 
-  const [auditRows, setAuditRows] = useState<AuditItem[]>([]);
-
-  const [loginRows, setLoginRows] = useState<LoginItem[]>([]);
-
   const [users, setUsers] = useState<UserItem[]>([]);
 
   const [actionCatalog, setActionCatalog] = useState<AuditActionCatalogItem[]>([]);
@@ -263,8 +229,8 @@ export default function ActivityLogPage() {
 
 
 
-  const contextRequestSeqRef = useRef(0);
   const emailSuggestRequestSeqRef = useRef(0);
+  const reloadRafRef = useRef<number | null>(null);
 
   const lastScrolledTargetRef = useRef<string>("");
 
@@ -275,10 +241,6 @@ export default function ActivityLogPage() {
   const [showFilters, setShowFilters] = useState(false);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
-
-  const [drawerLoading, setDrawerLoading] = useState(false);
-
-  const [drawerError, setDrawerError] = useState("");
 
   const [drawerData, setDrawerData] = useState<UserDetailsResponse | null>(null);
 
@@ -293,55 +255,32 @@ export default function ActivityLogPage() {
   const [handledAudit, setHandledAudit] = useState<Record<number, true>>({});
 
   const [handledLogin, setHandledLogin] = useState<Record<number, true>>({});
+  const {
+    isLoading: drawerLoading,
+    error: drawerError,
+    run: runDrawerContextTask,
+  } = useGuardedAsyncState();
 
 
+
+  const { auditRows, loginRows, total, isLoading: isFeedLoading, hasMore, resetAndLoad, requestNextPage } = useActivityFeed({
+    mode,
+    pageSize: PAGE_SIZE,
+    dateFrom,
+    dateTo,
+    sortDir,
+    action,
+    actorEmail,
+    targetEmail,
+    securityOnly,
+    ipFilter,
+    resultFilter,
+    sourceFilter,
+    onReset: () => setError(""),
+    onError: (e) => setError(normalizeError(e)),
+  });
 
   const loadedCount = mode === "audit" ? auditRows.length : loginRows.length;
-
-
-
-  const { total, isLoading: isFeedLoading, hasMore, resetAndLoad, requestNextPage } = useIncrementalPager<
-    AuditItem | LoginItem
-  >({
-    fetchPage: async (nextPage, signal) => {
-      const qp = new URLSearchParams({
-        page: String(nextPage),
-        page_size: String(PAGE_SIZE),
-        date_from: dateFrom,
-        date_to: dateTo,
-        sort_dir: sortDir,
-      });
-      if (mode === "audit") {
-        qp.set("action", action.trim());
-        qp.set("actor_email", actorEmail.trim());
-        qp.set("target_email", targetEmail.trim());
-        qp.set("security_only", String(securityOnly));
-        return apiGet<PagedResponse<AuditItem | LoginItem>>(`/admin/audit?${qp.toString()}`, { signal });
-      }
-      qp.set("email", targetEmail.trim());
-      qp.set("ip", ipFilter.trim());
-      qp.set("result", resultFilter.trim());
-      qp.set("source", sourceFilter.trim());
-      return apiGet<PagedResponse<AuditItem | LoginItem>>(`/admin/login-history?${qp.toString()}`, { signal });
-    },
-    applyPage: (data, append) => {
-      if (mode === "audit") {
-        setAuditRows((prev) => (append ? [...prev, ...(data.items as AuditItem[])] : (data.items as AuditItem[])));
-        if (!append) setLoginRows([]);
-        return;
-      }
-      setLoginRows((prev) => (append ? [...prev, ...(data.items as LoginItem[])] : (data.items as LoginItem[])));
-      if (!append) setAuditRows([]);
-    },
-    onReset: () => {
-      setAuditRows([]);
-      setLoginRows([]);
-      setError("");
-    },
-    onError: (e) => {
-      setError(String(e));
-    },
-  });
 
 
 
@@ -441,6 +380,25 @@ export default function ActivityLogPage() {
 
   }, [mode, resetAndLoad]);
 
+  const scheduleResetAndLoad = useCallback(() => {
+    if (reloadRafRef.current !== null) {
+      window.cancelAnimationFrame(reloadRafRef.current);
+    }
+    reloadRafRef.current = window.requestAnimationFrame(() => {
+      reloadRafRef.current = null;
+      resetAndLoad();
+    });
+  }, [resetAndLoad]);
+
+  useEffect(() => {
+    return () => {
+      if (reloadRafRef.current !== null) {
+        window.cancelAnimationFrame(reloadRafRef.current);
+        reloadRafRef.current = null;
+      }
+    };
+  }, []);
+
 
 
   async function exportLogs(ext: "csv" | "xlsx") {
@@ -495,7 +453,7 @@ export default function ActivityLogPage() {
 
     } catch (e) {
 
-      setError(String(e));
+      setError(normalizeError(e));
 
     }
 
@@ -579,32 +537,24 @@ export default function ActivityLogPage() {
 
 
   async function openContextByEmail(email: string, context: FocusContext) {
-    const requestSeq = ++contextRequestSeqRef.current;
-
     const normalized = email.trim().toLowerCase();
 
     if (!normalized) return;
 
     setDrawerOpen(true);
 
-    setDrawerLoading(true);
-
-    setDrawerError("");
-
     setDrawerData(null);
 
     setDrawerAvailableActions([]);
 
     setFocusContext(context);
-
-    try {
-
+    await runDrawerContextTask(async ({ isCurrent, setError }) => {
       const contextUser = await loadUserContextByEmail(normalized);
-      if (requestSeq !== contextRequestSeqRef.current) return;
+      if (!isCurrent()) return;
 
       if (!contextUser) {
 
-        setDrawerError("Пользователь не найден в БД.");
+        setError("Пользователь не найден в БД.");
 
         return;
 
@@ -613,18 +563,7 @@ export default function ActivityLogPage() {
       setDrawerData(contextUser.details);
 
       setDrawerAvailableActions(contextUser.availableActions);
-
-    } catch (e) {
-      if (requestSeq !== contextRequestSeqRef.current) return;
-
-      setDrawerError(String(e));
-
-    } finally {
-      if (requestSeq === contextRequestSeqRef.current) {
-        setDrawerLoading(false);
-      }
-
-    }
+    });
 
   }
 
@@ -652,7 +591,7 @@ export default function ActivityLogPage() {
 
     setAction(actionValue);
 
-    setTimeout(() => resetAndLoad(), 0);
+    scheduleResetAndLoad();
 
     setDrawerOpen(false);
 
@@ -666,7 +605,7 @@ export default function ActivityLogPage() {
 
     setTargetEmail(email);
 
-    setTimeout(() => resetAndLoad(), 0);
+    scheduleResetAndLoad();
 
     setDrawerOpen(false);
 
@@ -680,7 +619,7 @@ export default function ActivityLogPage() {
 
     setIpFilter(ip || "");
 
-    setTimeout(() => resetAndLoad(), 0);
+    scheduleResetAndLoad();
 
     setDrawerOpen(false);
 
@@ -1038,7 +977,7 @@ export default function ActivityLogPage() {
 
                               setAction(a.action);
 
-                              setTimeout(() => resetAndLoad(), 0);
+                              scheduleResetAndLoad();
 
                             }}
 
@@ -1070,7 +1009,7 @@ export default function ActivityLogPage() {
 
                               setActorEmail(a.actor_email);
 
-                              setTimeout(() => resetAndLoad(), 0);
+                              scheduleResetAndLoad();
 
                             }}
 
@@ -1096,7 +1035,7 @@ export default function ActivityLogPage() {
 
                               setTargetEmail(a.target_email);
 
-                              setTimeout(() => resetAndLoad(), 0);
+                              scheduleResetAndLoad();
 
                             }}
 
@@ -1128,7 +1067,7 @@ export default function ActivityLogPage() {
 
                               setIpFilter(a.ip || "");
 
-                              setTimeout(() => resetAndLoad(), 0);
+                              scheduleResetAndLoad();
 
                             }}
 
@@ -1242,7 +1181,7 @@ export default function ActivityLogPage() {
 
                               setTargetEmail(r.email);
 
-                              setTimeout(() => resetAndLoad(), 0);
+                              scheduleResetAndLoad();
 
                             }}
 
@@ -1274,7 +1213,7 @@ export default function ActivityLogPage() {
 
                               setSourceFilter(r.source);
 
-                              setTimeout(() => resetAndLoad(), 0);
+                              scheduleResetAndLoad();
 
                             }}
 
@@ -1306,7 +1245,7 @@ export default function ActivityLogPage() {
 
                               setIpFilter(r.ip || "");
 
-                              setTimeout(() => resetAndLoad(), 0);
+                              scheduleResetAndLoad();
 
                             }}
 
@@ -1406,8 +1345,6 @@ export default function ActivityLogPage() {
                   <UserStatusPills
 
                     user={drawerData.user.is_approved ? drawerData.user : { ...drawerData.user, role: null }}
-
-                    showApproveWhenFalse={false}
 
                     showBlockedWhenFalse={false}
 
@@ -1563,6 +1500,8 @@ export default function ActivityLogPage() {
   );
 
 }
+
+
 
 
 

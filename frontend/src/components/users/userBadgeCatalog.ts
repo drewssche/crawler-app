@@ -8,19 +8,13 @@ export type UserBadgeKey =
   | "role.root-admin"
   | "relevance.self"
   | "relevance.selected"
-  | "status.approve"
   | "status.blocked"
   | "status.deleted"
   | "status.pending"
   | "trust.standard"
   | "trust.strict"
   | "trust.extended"
-  | "trust.permanent"
-  | "time.expires"
-  | "time.device.ok"
-  | "time.device.soon"
-  | "time.device.expired"
-  | "time.device.permanent";
+  | "trust.permanent";
 
 export type UserBadgeStyle = {
   color: string;
@@ -43,7 +37,6 @@ const USER_BADGE_CATALOG: Record<UserBadgeKey, UserBadgeMeta> = {
   "relevance.self": { label: "Вы", priority: 2, color: "#78a6ff", bg: "rgba(120,166,255,0.14)" },
   "relevance.selected": { label: "Выбранный пользователь", priority: 2, color: "#9ea7b3", bg: "rgba(158,167,179,0.14)" },
   // status-group: доступ/блок/удаление.
-  "status.approve": { label: "доступ подтверждён", priority: 20, color: "#58c5d8", bg: "rgba(88,197,216,0.16)" },
   "status.blocked": { label: "заблокирован", priority: 10, color: "#e67f7f", bg: "rgba(230,127,127,0.14)" },
   "status.deleted": { label: "удалён", priority: 5, color: "#f0a85e", bg: "rgba(240,168,94,0.14)" },
   "status.pending": { label: "ожидает подтверждения", priority: 30, color: "#d8b05d", bg: "rgba(216,176,93,0.18)" },
@@ -52,12 +45,6 @@ const USER_BADGE_CATALOG: Record<UserBadgeKey, UserBadgeMeta> = {
   "trust.strict": { label: "доверие: строгое", priority: 40, color: "#ac8fff", bg: "rgba(172,143,255,0.16)" },
   "trust.extended": { label: "доверие: расширенное", priority: 40, color: "#b68ef0", bg: "rgba(182,142,240,0.15)" },
   "trust.permanent": { label: "доверие: бессрочное", priority: 40, color: "#a983f4", bg: "rgba(169,131,244,0.16)" },
-  // time-group: срок доверия/состояние устройства.
-  "time.expires": { label: "срок доверия", priority: 50, color: "#8b8ee7", bg: "rgba(139,142,231,0.14)" },
-  "time.device.ok": { label: "статус устройства", priority: 60, color: "#78a6ff", bg: "rgba(120,166,255,0.14)" },
-  "time.device.soon": { label: "статус устройства", priority: 60, color: "#f0a85e", bg: "rgba(240,168,94,0.14)" },
-  "time.device.expired": { label: "статус устройства", priority: 60, color: "#e67f7f", bg: "rgba(230,127,127,0.14)" },
-  "time.device.permanent": { label: "статус устройства", priority: 60, color: "#8b8ee7", bg: "rgba(139,142,231,0.14)" },
 };
 
 const TRUST_POLICY_HINTS: Record<TrustPolicyKey, string> = {
