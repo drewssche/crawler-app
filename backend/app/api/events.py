@@ -50,14 +50,25 @@ def _fetch_events_with_state(
     channel: str | None = None,
     include_dismissed: bool = False,
     security_only: bool = False,
+    only_unread: bool = False,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[dict], int]:
     q = db.query(EventFeed)
+    state_join = and_(
+        EventUserState.event_id == EventFeed.id,
+        EventUserState.user_id == current_user.id,
+    )
+    q = q.outerjoin(EventUserState, state_join)
     if channel:
         q = q.filter(EventFeed.channel == channel)
     if security_only:
         q = q.filter(EventFeed.severity.in_(["warning", "danger"]))
+    if not include_dismissed:
+        q = q.filter(or_(EventUserState.id.is_(None), EventUserState.is_dismissed.is_(False)))
+    if only_unread:
+        q = q.filter(or_(EventUserState.id.is_(None), EventUserState.is_read.is_(False)))
+        q = q.filter(or_(EventFeed.actor_user_id.is_(None), EventFeed.actor_user_id != current_user.id))
 
     q = q.order_by(EventFeed.created_at.desc(), EventFeed.id.desc())
     total = q.count()
@@ -183,11 +194,10 @@ def get_events_feed(
         channel=ch,
         include_dismissed=include_dismissed,
         security_only=security_only,
+        only_unread=only_unread,
         page=safe_page,
         page_size=safe_page_size,
     )
-    if only_unread:
-        items = [x for x in items if not x["is_read"]]
     db.commit()
     return success_response_payload(
         request,
@@ -271,26 +281,25 @@ def read_all(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("events.view")),
 ):
-    q = db.query(EventFeed.id)
+    q = db.query(EventUserState).filter(EventUserState.user_id == current_user.id)
+    q = q.join(EventFeed, EventFeed.id == EventUserState.event_id)
     if payload.channel != "all":
         q = q.filter(EventFeed.channel == payload.channel)
     if payload.security_only:
         q = q.filter(EventFeed.severity.in_(["warning", "danger"]))
-    event_ids = [row[0] for row in q.all()]
-    if not event_ids:
-        return success_response_payload(request, data={"updated": 0})
-
-    states = ensure_event_states(db, user_id=current_user.id, event_ids=event_ids)
+    q = q.filter(EventUserState.is_read.is_(False))
     now = utc_now_naive()
-    updated = 0
-    for event_id in event_ids:
-        st = states[event_id]
-        if st.is_read:
-            continue
-        st.is_read = True
-        st.read_at = now
-        st.updated_at = now
-        updated += 1
+    updated = (
+        q.update(
+            {
+                EventUserState.is_read: True,
+                EventUserState.read_at: now,
+                EventUserState.updated_at: now,
+            },
+            synchronize_session=False,
+        )
+        or 0
+    )
     db.commit()
     increment_counter("events_read_total", state="bulk")
     log_business_event(

@@ -2,6 +2,7 @@ import os
 import re
 from dataclasses import dataclass
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
@@ -45,11 +46,21 @@ class AdminSyncResult:
 def sync_admin_users(db: Session, admin_emails: list[str], admin_password: str | None) -> AdminSyncResult:
     result = AdminSyncResult()
     target = set(admin_emails)
+    target_lower = {normalize_email(email) for email in admin_emails}
 
-    all_users = db.query(User).all()
-    by_email = {u.email.lower(): u for u in all_users}
+    candidates = (
+        db.query(User)
+        .filter(
+            or_(
+                User.is_admin.is_(True),
+                func.lower(User.email).in_(target_lower),
+            )
+        )
+        .all()
+    )
+    by_email = {normalize_email(u.email): u for u in candidates if u.email}
 
-    for user in all_users:
+    for user in candidates:
         if user.is_admin and user.email.lower() not in target:
             user.is_admin = False
             user.is_blocked = False

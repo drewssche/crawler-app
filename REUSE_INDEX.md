@@ -170,7 +170,8 @@
   для `UsersPage` и `RootAdminsPage`.
 
 - `frontend/src/components/users/UserListSessionMeta.tsx`
-  Единая компактная строка сессии для списков (`IP • устройство • активность`).
+  Единая компактная строка сессии для списков:
+  `сессия: <дата> • IP: <ip> • UA: <браузер> (браузер) • <ОС> (ОС) • устройств: <N>`.
   Подключено в `UsersPage` и `RootAdminsPage`.
 
 - `frontend/src/utils/eventTime.ts`

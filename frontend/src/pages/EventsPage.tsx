@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { markAllEventsRead, markEventRead, setEventDismissed, setEventHandled, type EventItem } from "../api/events";
 import { useAuth } from "../hooks/auth";

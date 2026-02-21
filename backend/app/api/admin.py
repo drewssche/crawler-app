@@ -7,7 +7,7 @@ from typing import Any, Literal
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, aliased
 
 from app.core.admin_sync import (
@@ -344,10 +344,18 @@ def _build_last_login_map(db: Session, user_ids: list[int]) -> dict[int, LoginHi
     last_login_by_user_id: dict[int, LoginHistory] = {}
     if not user_ids:
         return last_login_by_user_id
+    subq = (
+        db.query(
+            LoginHistory.user_id.label("user_id"),
+            func.max(LoginHistory.id).label("max_id"),
+        )
+        .filter(LoginHistory.user_id.in_(user_ids))
+        .group_by(LoginHistory.user_id)
+        .subquery()
+    )
     rows = (
         db.query(LoginHistory)
-        .filter(LoginHistory.user_id.in_(user_ids))
-        .order_by(LoginHistory.created_at.desc(), LoginHistory.id.desc())
+        .join(subq, and_(LoginHistory.user_id == subq.c.user_id, LoginHistory.id == subq.c.max_id))
         .all()
     )
     for row in rows:
@@ -544,46 +552,18 @@ def _collect_login_history_items(
     date_to: str,
     sort_dir: Literal["desc", "asc"],
 ) -> list[dict]:
-    query = db.query(LoginHistory)
-    if user_id is not None:
-        query = query.filter(LoginHistory.user_id == user_id)
-    if email.strip():
-        query = query.filter(LoginHistory.email.ilike(f"%{email.strip()}%"))
-    if ip.strip():
-        query = query.filter(LoginHistory.ip.ilike(f"%{ip.strip()}%"))
-    if result.strip():
-        query = query.filter(LoginHistory.result == result.strip())
-    if source.strip():
-        query = query.filter(LoginHistory.source == source.strip())
-    if date_from.strip():
-        try:
-            from_dt = datetime.fromisoformat(date_from.strip())
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid date_from format (use ISO)") from exc
-        query = query.filter(LoginHistory.created_at >= from_dt)
-    if date_to.strip():
-        try:
-            to_dt = datetime.fromisoformat(date_to.strip())
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid date_to format (use ISO)") from exc
-        query = query.filter(LoginHistory.created_at <= to_dt)
-
-    order_created = LoginHistory.created_at.desc() if sort_dir == "desc" else LoginHistory.created_at.asc()
-    order_id = LoginHistory.id.desc() if sort_dir == "desc" else LoginHistory.id.asc()
-    rows = query.order_by(order_created, order_id).all()
-    return [
-        {
-            "id": row.id,
-            "user_id": row.user_id,
-            "email": row.email,
-            "ip": row.ip,
-            "user_agent": row.user_agent,
-            "result": row.result,
-            "source": row.source,
-            "created_at": row.created_at.isoformat(),
-        }
-        for row in rows
-    ]
+    query = _build_login_history_query(
+        db=db,
+        user_id=user_id,
+        email=email,
+        ip=ip,
+        result=result,
+        source=source,
+        date_from=date_from,
+        date_to=date_to,
+        sort_dir=sort_dir,
+    )
+    return _serialize_login_history_rows(query.all())
 
 
 def _collect_audit_items(
@@ -596,60 +576,17 @@ def _collect_audit_items(
     date_to: str,
     sort_dir: Literal["desc", "asc"],
 ) -> list[dict]:
-    logs = db.query(AdminAuditLog).order_by(AdminAuditLog.created_at.desc(), AdminAuditLog.id.desc()).all()
-    users = db.query(User).all()
-    id_to_email = {u.id: u.email for u in users}
-
-    actor_filter = actor_email.strip().lower()
-    target_filter = target_email.strip().lower()
-    action_filter = action.strip().lower()
-    from_dt = None
-    to_dt = None
-    if date_from.strip():
-        try:
-            from_dt = datetime.fromisoformat(date_from.strip())
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid date_from format (use ISO)") from exc
-    if date_to.strip():
-        try:
-            to_dt = datetime.fromisoformat(date_to.strip())
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid date_to format (use ISO)") from exc
-
-    result = []
-
-    for log in logs:
-        actor = id_to_email.get(log.actor_user_id, "system") if log.actor_user_id else "system"
-        target = id_to_email.get(log.target_user_id, "-") if log.target_user_id else "-"
-        log_action = log.action or ""
-
-        if security_only and log_action not in SECURITY_ACTIONS:
-            continue
-        if action_filter and action_filter not in log_action.lower():
-            continue
-        if actor_filter and actor_filter not in actor.lower():
-            continue
-        if target_filter and target_filter not in target.lower():
-            continue
-        if from_dt and log.created_at < from_dt:
-            continue
-        if to_dt and log.created_at > to_dt:
-            continue
-
-        result.append(
-            {
-                "id": log.id,
-                "created_at": log.created_at.isoformat(),
-                "action": log_action,
-                "actor_email": actor,
-                "target_email": target,
-                "ip": log.ip,
-                "meta": log.meta_json,
-            }
-        )
-    if sort_dir == "asc":
-        result.reverse()
-    return result
+    query = _build_audit_rows_query(
+        db=db,
+        action=action,
+        actor_email=actor_email,
+        target_email=target_email,
+        security_only=security_only,
+        date_from=date_from,
+        date_to=date_to,
+        sort_dir=sort_dir,
+    )
+    return _serialize_audit_rows(query.all())
 
 
 def _build_login_history_query(
@@ -704,6 +641,21 @@ def _serialize_login_history_rows(rows: list[LoginHistory]) -> list[dict]:
             "result": row.result,
             "source": row.source,
             "created_at": row.created_at.isoformat(),
+        }
+        for row in rows
+    ]
+
+
+def _serialize_audit_rows(rows) -> list[dict]:
+    return [
+        {
+            "id": row.id,
+            "created_at": row.created_at.isoformat(),
+            "action": row.action or "",
+            "actor_email": row.actor_email,
+            "target_email": row.target_email,
+            "ip": row.ip,
+            "meta": row.meta,
         }
         for row in rows
     ]
@@ -815,10 +767,29 @@ def list_users(
         users = query.all()
 
     user_emails = [u.email for u in users if (u.email or "").strip()]
-    attempts_query = db.query(AuthAttempt).filter(AuthAttempt.action == "request_access")
-    if user_emails:
-        attempts_query = attempts_query.filter(AuthAttempt.email.in_(user_emails))
-    attempts = attempts_query.order_by(AuthAttempt.created_at.desc(), AuthAttempt.id.desc()).all()
+    lower_emails = [email.strip().lower() for email in user_emails if email.strip()]
+    attempts = []
+    if lower_emails:
+        attempts_subq = (
+            db.query(
+                func.lower(AuthAttempt.email).label("email"),
+                func.max(AuthAttempt.id).label("max_id"),
+            )
+            .filter(AuthAttempt.action == "request_access", func.lower(AuthAttempt.email).in_(lower_emails))
+            .group_by(func.lower(AuthAttempt.email))
+            .subquery()
+        )
+        attempts = (
+            db.query(AuthAttempt)
+            .join(
+                attempts_subq,
+                and_(
+                    func.lower(AuthAttempt.email) == attempts_subq.c.email,
+                    AuthAttempt.id == attempts_subq.c.max_id,
+                ),
+            )
+            .all()
+        )
     pending_requested_at_by_email: dict[str, str] = {}
     for at in attempts:
         email_key = (at.email or "").strip().lower()
@@ -832,10 +803,27 @@ def list_users(
     pending_unread_by_user_id: dict[int, bool] = {}
     pending_event_id_by_user_id: dict[int, int | None] = {}
     if user_ids:
+        pending_events_subq = (
+            db.query(
+                EventFeed.target_user_id.label("user_id"),
+                func.max(EventFeed.id).label("max_id"),
+            )
+            .filter(
+                EventFeed.event_type == "auth.request_access",
+                EventFeed.target_user_id.in_(user_ids),
+            )
+            .group_by(EventFeed.target_user_id)
+            .subquery()
+        )
         pending_events = (
             db.query(EventFeed)
-            .filter(EventFeed.event_type == "auth.request_access", EventFeed.target_user_id.in_(user_ids))
-            .order_by(EventFeed.created_at.desc(), EventFeed.id.desc())
+            .join(
+                pending_events_subq,
+                and_(
+                    EventFeed.target_user_id == pending_events_subq.c.user_id,
+                    EventFeed.id == pending_events_subq.c.max_id,
+                ),
+            )
             .all()
         )
         if pending_events:
@@ -1336,9 +1324,10 @@ def get_admin_emails_settings(
 
     db_profiles: dict[str, dict] = {}
     if page_emails:
+        lower_emails = [email.strip().lower() for email in page_emails if email.strip()]
         users_by_email = {
             (u.email or "").lower(): u
-            for u in db.query(User).filter(User.email.in_(page_emails)).all()
+            for u in db.query(User).filter(func.lower(User.email).in_(lower_emails)).all()
             if (u.email or "").strip()
         }
         user_ids = [u.id for u in users_by_email.values()]
@@ -1377,8 +1366,8 @@ def get_admin_emails_settings(
             },
         )
 
-    db_admin_rows = db.query(User).filter(User.is_admin.is_(True)).order_by(User.email.asc()).all()
-    db_admins = [u.email for u in db_admin_rows]
+    db_admin_rows = db.query(User.email).filter(User.is_admin.is_(True)).order_by(User.email.asc()).all()
+    db_admins = [row[0] for row in db_admin_rows if row and row[0]]
     return success_response_payload(
         request,
         data={
@@ -1470,20 +1459,8 @@ def list_audit_logs(
     )
     total = query.count()
     start = (safe_page - 1) * safe_page_size
-    end = start + safe_page_size
     rows = query.offset(start).limit(safe_page_size).all()
-    items = [
-        {
-            "id": row.id,
-            "created_at": row.created_at.isoformat(),
-            "action": row.action or "",
-            "actor_email": row.actor_email,
-            "target_email": row.target_email,
-            "ip": row.ip,
-            "meta": row.meta,
-        }
-        for row in rows
-    ]
+    items = _serialize_audit_rows(rows)
     return success_response_payload(request, data={
         "items": items,
         "total": total,

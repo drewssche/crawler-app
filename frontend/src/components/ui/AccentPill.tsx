@@ -23,6 +23,8 @@ export default function AccentPill({ children, tone = "neutral", style, ...rest 
       style={{
         ...TONE_STYLES[tone],
         padding: "2px 8px",
+        fontSize: 12,
+        lineHeight: 1.2,
         borderRadius: 999,
         fontWeight: 700,
         display: "inline-flex",

@@ -60,6 +60,7 @@ type UserLookupRow = {
   is_deleted?: boolean;
   trust_policy?: string;
   trusted_days_left?: number | null;
+  trusted_devices_count?: number | null;
   last_activity_at?: string | null;
   last_ip?: string | null;
   last_user_agent?: string | null;
@@ -466,6 +467,7 @@ export default function RootAdminsPage() {
                       lastIp={profile.last_ip}
                       lastUserAgent={profile.last_user_agent}
                       lastActivityAt={profile.last_activity_at}
+                      trustedDevicesCount={profile.trusted_devices_count ?? null}
                     />
                   ) : null
                 }

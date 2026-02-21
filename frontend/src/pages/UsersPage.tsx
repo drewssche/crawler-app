@@ -693,11 +693,14 @@ const UsersListRow = memo(
                 {row.pending_unread ? <span>{hasUnreadRequestLabel}</span> : null}
               </div>
             ) : null}
-            <UserListSessionMeta
-              lastIp={row.last_ip}
-              lastUserAgent={row.last_user_agent}
-              lastActivityAt={row.last_activity_at}
-            />
+            {row.is_approved ? (
+              <UserListSessionMeta
+                lastIp={row.last_ip}
+                lastUserAgent={row.last_user_agent}
+                lastActivityAt={row.last_activity_at}
+                trustedDevicesCount={row.trusted_devices_count ?? null}
+              />
+            ) : null}
           </div>
         }
         onOpen={() => {

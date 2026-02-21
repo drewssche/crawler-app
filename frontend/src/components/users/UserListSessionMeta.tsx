@@ -1,32 +1,41 @@
-import { formatApiDateTime } from "../../utils/datetime";
-import { UI_BULLET } from "../../utils/uiText";
-import { shortUserAgent } from "../../utils/userAgent";
+﻿import { formatApiDateTime } from "../../utils/datetime";
+import { UA_TOOLTIP_PREFIX, UI_BULLET } from "../../utils/uiText";
+import { parseUserAgentParts } from "../../utils/userAgent";
 
 type Props = {
   lastIp?: string | null;
   lastUserAgent?: string | null;
   lastActivityAt?: string | null;
-  ipLabel?: string;
-  deviceLabel?: string;
-  activityLabel?: string;
+  trustedDevicesCount?: number | null;
 };
 
 export default function UserListSessionMeta({
   lastIp,
   lastUserAgent,
   lastActivityAt,
-  ipLabel = "IP",
-  deviceLabel = "устройство",
-  activityLabel = "активность",
+  trustedDevicesCount,
 }: Props) {
   const ip = lastIp || "-";
-  const device = lastUserAgent ? shortUserAgent(lastUserAgent) : "-";
-  const activity = lastActivityAt ? formatApiDateTime(lastActivityAt) : "-";
-  const parts = [`${ipLabel}: ${ip}`, `${deviceLabel}: ${device}`, `${activityLabel}: ${activity}`];
+  const session = lastActivityAt ? formatApiDateTime(lastActivityAt) : "-";
+  const parts = parseUserAgentParts(lastUserAgent);
+  const uaLabel =
+    parts.browser === "-" && parts.os === "-"
+      ? "UA: -"
+      : `UA: ${parts.browser} (браузер)${UI_BULLET}${parts.os} (ОС)`;
+  const devices = typeof trustedDevicesCount === "number" ? String(trustedDevicesCount) : "-";
+  const lineParts = [
+    `сессия: ${session}`,
+    `IP: ${ip}`,
+    uaLabel,
+    `устройств: ${devices}`,
+  ];
 
   return (
-    <div style={{ fontSize: 12, opacity: 0.76 }} title={lastUserAgent || undefined}>
-      {parts.join(UI_BULLET)}
+    <div
+      style={{ fontSize: 12, opacity: 0.76 }}
+      title={lastUserAgent ? `${UA_TOOLTIP_PREFIX}${lastUserAgent}` : undefined}
+    >
+      {lineParts.join(UI_BULLET)}
     </div>
   );
 }
