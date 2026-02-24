@@ -1,10 +1,25 @@
 import csv
 import io
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any
 
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from openpyxl import Workbook
+
+
+def _iter_csv_chunks(header: list[str], rows: Iterable[Iterable[Any]]) -> Iterator[str]:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(header)
+    yield buffer.getvalue()
+    buffer.seek(0)
+    buffer.truncate(0)
+
+    for row in rows:
+        writer.writerow(list(row))
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
 
 
 def csv_attachment_response(
@@ -13,13 +28,8 @@ def csv_attachment_response(
     header: list[str],
     rows: Iterable[Iterable[Any]],
 ) -> Response:
-    out = io.StringIO()
-    writer = csv.writer(out)
-    writer.writerow(header)
-    for row in rows:
-        writer.writerow(list(row))
-    return Response(
-        content=out.getvalue(),
+    return StreamingResponse(
+        _iter_csv_chunks(header, rows),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )

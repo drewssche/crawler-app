@@ -1,4 +1,4 @@
-﻿# REUSE_INDEX
+# REUSE_INDEX
 
 Точечная карта реюзов и кандидатов на дедупликацию.
 
@@ -191,6 +191,38 @@
   `IdEmail`, `PagedResponse<T>`.
 
 
+## Каталог реюза по категориям
+
+### UI компоненты
+- `frontend/src/components/ui/Button.tsx`, `frontend/src/components/ui/SegmentedControl.tsx`, `frontend/src/components/ui/UiSelect.tsx`, `frontend/src/components/ui/ClearableInput.tsx`
+- `frontend/src/components/ui/SelectableListRow.tsx`, `frontend/src/components/ui/EventMetaPills.tsx`, `frontend/src/components/ui/ContextQuickActions.tsx`
+- `frontend/src/components/ui/RoleBadge.tsx`, `frontend/src/components/ui/RolePermissionsHint.tsx`
+
+### UI доменные блоки
+- `frontend/src/components/users/UserActionPanel.tsx`
+- `frontend/src/components/users/UserStatusPills.tsx`, `frontend/src/components/users/UserTrustPills.tsx`, `frontend/src/components/users/UserBadgeGroups.tsx`, `frontend/src/components/users/IdentityBadgeRow.tsx`
+- `frontend/src/components/users/TrustPolicyDetailsCard.tsx`, `frontend/src/components/users/TrustPolicyDetailChips.tsx`
+- `frontend/src/components/users/SessionSummaryCard.tsx`, `frontend/src/components/users/DeviceSummaryCard.tsx`, `frontend/src/components/users/UserListSessionMeta.tsx`, `frontend/src/components/users/CompactActionCard.tsx`
+
+### Хуки и lifecycle
+- `frontend/src/hooks/useIncrementalPager.ts`
+- `frontend/src/hooks/useUsersList.ts`, `frontend/src/hooks/useEventFeed.ts`, `frontend/src/hooks/useActivityFeed.ts`
+- `frontend/src/hooks/useWorkspaceInfiniteScroll.ts`, `frontend/src/hooks/useGuardedAsyncState.ts`
+
+### Data/cache/transport
+- `frontend/src/utils/catalogCache.ts`, `frontend/src/utils/settingsStatsCache.ts`, `frontend/src/utils/profileListCache.ts`, `frontend/src/utils/permissionsMatrixCache.ts`
+- `frontend/src/utils/eventCenterUnreadStore.ts`, `frontend/src/utils/eventCenterPollingManager.ts`
+- `frontend/src/utils/userContext.ts`, `frontend/src/utils/monitoringContext.ts`
+
+### Сетевые и служебные утилиты
+- `frontend/src/api/client.ts` (`signal`, `isAbortError`, `apiDownload`)
+- `frontend/src/utils/download.ts`, `frontend/src/utils/errors.ts`
+- `frontend/src/utils/datetime.ts`, `frontend/src/utils/eventTime.ts`, `frontend/src/utils/eventLabels.ts`, `frontend/src/utils/eventRouting.ts`, `frontend/src/utils/eventPrimaryAction.ts`
+- `frontend/src/utils/userAgent.ts`, `frontend/src/utils/uiText.ts`
+
+### Типы и контракты
+- `frontend/src/types/catalog.ts`, `frontend/src/types/common.ts`
+- `frontend/src/components/users/userBadgeCatalog.ts`, `BADGE_INDEX.md`
 ## Кандидаты на реюз (аудит)
 
 1. Monitoring drawer context duplicated (закрыто)
@@ -221,12 +253,12 @@
   - `frontend/src/pages/EventsPage.tsx` (drawer)
   - `frontend/src/components/layout/SidebarRight.tsx` (drawer)
 
-5. Direct `fetch` bypassing api client (средний приоритет)
-- Найдено:
+5. Direct `fetch` bypassing api client (закрыто)
+- Закрыто реюзом:
+  - `frontend/src/utils/download.ts` (`downloadBlobFile` на базе `apiDownload`)
+- Подключено в:
   - `frontend/src/pages/MonitoringPage.tsx` (экспорт)
   - `frontend/src/pages/ActivityLogPage.tsx` (экспорт)
-- Рекомендация:
-  добавить в `api/client.ts` общий `apiDownload(path)` и использовать его.
 
 6. Action/Trust catalog response types duplicated (закрыто)
 - Закрыто реюзом:
@@ -240,11 +272,10 @@
 
 ## Быстрый план внедрения
 
-1. Вынести `shortUserAgent` в `utils/userAgent.ts` и заменить все локальные реализации.
-2. Добавить `apiDownload` в `api/client.ts` и убрать прямой `fetch` из страниц экспорта.
+1. (Закрыто) Вынести `shortUserAgent` в `utils/userAgent.ts` и заменить все локальные реализации.
+2. (Закрыто) Добавить `apiDownload` в `api/client.ts` и убрать прямой `fetch` из страниц экспорта.
 3. (Закрыто) Вынести общие типы каталогов в `types/catalog.ts`.
 4. (Закрыто) Вынести `EventMetaPills` для `EventsPage` + `SidebarRight` (чтобы channel/severity/read/handled рендерились из одного компонента).
-
 ## Ограничение на изменения
 
 - Не ломать текущий сценарий monitoring-context:
@@ -253,3 +284,28 @@
 - `frontend/src/utils/userAgent.ts`
   Единый short-form для User-Agent:
   `shortUserAgent` используется в Users/Activity/UserDetails/Session/Device.
+
+### Backend service reuse
+- `backend/app/services/admin_actions.py`: includes shared `require_reason` and `send_login_code_for_user` helpers (used by admin routes and bulk-action path).
+- `backend/app/services/admin_queries.py`: includes trusted-devices query loaders (`load_recent_login_history_for_user`, `load_trusted_devices_for_user`).
+- `backend/app/services/admin_serializers.py`: includes trusted-devices serializer (`serialize_trusted_devices`) and UA/device label normalization helpers.
+- `app.core.events.utc_now_naive`: reused in `backend/app/api/admin.py` and `backend/app/services/admin_queries.py` to avoid local time-helper duplicates.
+- `backend/app/services/admin_queries.py`: now also hosts `build_last_login_map` and `build_trust_summary_map` (single query source for user list/admin-email snapshots).
+- `backend/app/services/admin_serializers.py`: now also hosts `build_user_profile_snapshot` (single snapshot serializer source).
+- `backend/app/services/admin_serializers.py`: shared login/audit row serializers and iter serializers.
+- `backend/app/services/admin_serializers.py`: shared export row iterators (`iter_login_history_export_rows`, `iter_audit_export_rows`) for CSV/XLSX routes in `admin.py`.
+- `backend/app/services/admin_queries.py`: shared query-builders for login history and audit rows.
+- `backend/app/services/admin_actions.py`: shared actor/target permission checks for bulk admin actions.
+- `backend/app/services/admin_actions.py`: also hosts shared admin action logging/event emission helper (`log_admin_action`) used by `admin.py`.
+- `backend/app/services/admin_monitoring.py`: shared monitoring settings and history/focus payload builders (with cache + Prometheus query helpers).
+
+
+- backend/app/services/admin_queries.py: shared load_recent_admin_audit_for_user for user-details audit context (admin route no longer builds this query inline).
+- backend/app/services/admin_queries.py: shared loaders for list/admin-email enrichment (load_latest_request_access_requested_at_by_email, load_latest_pending_access_events_for_users, load_users_by_email_map) replacing duplicated inline SQL in admin.py.
+- backend/app/services/admin_queries.py: shared active trusted-devices loader load_active_trusted_devices_for_user reused by revoke-except route in admin.py.
+- backend/app/services/admin_queries.py: shared anomaly counter helpers (`count_login_history_result_since`, `count_login_history_ip_occurrences`) reused by user-details flow in admin.py.
+- backend/app/services/admin_serializers.py: shared user-details serializers/anomaly builder (`serialize_user_details_login_history`, `serialize_user_details_admin_actions`, `build_user_details_anomalies`) replace inline route mappings in admin.py.
+
+
+- `backend/app/services/admin_queries.py` + `backend/app/services/admin_serializers.py`
+  Reused from `backend/app/api/admin.py` routes (`list_users`, `user_details`, `admin-emails`, trusted-devices revoke-except) to remove inline duplicate query/serialization blocks.

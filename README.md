@@ -46,6 +46,9 @@ docker compose --profile monitoring down -v
 Подробный свод механик, паттернов реюза, DoD и PR-checklist вынесен в:
 
 - `PATTERNS.md`
+- `REUSE_INDEX.md`
+- `RBAC_MAP.md`
+- `AUDIT_DISCOVERY_2026-02-24.md`
 
 Этот файл (`README.md`) оставляем кратким: запуск/эксплуатация/точки входа.
 

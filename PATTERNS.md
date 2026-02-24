@@ -1,4 +1,4 @@
-﻿# PATTERNS
+# PATTERNS
 
 Единый контракт разработки для проекта `crawler-app`.
 
@@ -43,6 +43,16 @@
 - UI показывает действия только для разрешенных ролей.
 - Хаб `Настройки` доступен только ролям с `users.manage` (admin/root-admin); для остальных скрывается и закрыт по роуту.
 
+### 3.1 RBAC Map (структура)
+
+- Source of truth по permissions: `backend/app/core/permissions.py` (`PERMISSIONS_BY_ROLE`, `Permission`, `permissions_matrix_payload`).
+- Runtime role-resolution: `backend/app/core/security.py` (`get_user_role` + runtime override через `ADMIN_EMAILS`).
+- Enforcement в API: `Depends(require_permission(...))` в `backend/app/api/*` и `backend/app/main.py`.
+- Публичный контракт матрицы: `GET /auth/permissions-matrix` в `backend/app/api/auth.py`.
+- Frontend permission-check: `frontend/src/utils/permissions.ts` (`hasPermission`) + route guard `frontend/src/components/RequirePermission.tsx` + guards в `frontend/src/App.tsx`.
+- UI role-отображение: `frontend/src/utils/roles.ts`, `frontend/src/components/ui/RoleBadge.tsx`, `frontend/src/components/ui/RolePermissionsHint.tsx`.
+- Anti-drift правило: при изменении ролей/permissions обновляем backend matrix, frontend checks, route guards и тесты (`backend/tests/test_permissions.py`, интеграционные RBAC-кейсы).
+- Перед merge обязательно запускать parity-check из корня репозитория: `python tools/check_rbac_parity.py` (backend vs frontend матрица прав).
 ## 4. Audit + Events + Monitoring (тройной след)
 
 Любая важная функция должна быть интегрирована сразу в три канала:
@@ -233,6 +243,7 @@
 ## 12. Миграции и совместимость
 
 - Изменения БД только через Alembic миграции.
+- Для индексных изменений: сначала workload-аудит, затем `EXPLAIN (ANALYZE, BUFFERS)` до/после на staging-данных.
 - Учитываем обратную совместимость и старые записи.
 
 ## 13. Кодировка и русский язык (обязательно)
@@ -328,3 +339,21 @@
 - Для каждой завершенной итерации (не только финала) применяем тот же формат отчета:
   `что было -> что стало -> как проверить -> вклад в цели`,
   чтобы прогресс по целям был сопоставим между волнами.
+
+## PowerShell Russian Text Rule (Encoding-safe)
+- Do not pass raw Cyrillic directly in PowerShell command arguments for file edits.
+- For Russian text edits, use `tools/utf8_edit.py` with escaped text (`\uXXXX`) and write UTF-8 files only.
+- Before commit for docs/text edits, run:
+  - `python tools/check_utf8.py <changed files>`
+  - `python tools/check_utf8.py --check-mojibake <changed files>`
+  - If mojibake is found, run: `python tools/fix_mojibake.py <changed files>` (or directory with `--recursive`).
+  - For suspected lossy lines with long `????????`, rely on full-file fix + recheck cycle, not manual per-line edits.
+
+## Backend Decomposition Pattern
+- Before commit for text/docs changes, run `python tools/check_utf8.py` (at minimum for changed files).
+- Before introducing a new reusable module/function, check existing service/helpers and prefer extending them to avoid reuse fragmentation.
+- Large API modules must be split by responsibility into service modules: `queries`, `serializers`, `actions`, `monitoring/settings`.
+- API route layer remains thin: validate input, call service, format response.
+- Split must be `no-regression`: keep route contracts and response schema unchanged.
+
+
