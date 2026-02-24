@@ -16,7 +16,7 @@ export function useIncrementalPager<T>({
   onError,
 }: UseIncrementalPagerOptions<T>) {
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
+  const [total, setTotal] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [hasMore, setHasMore] = useState(false);
 
@@ -90,7 +90,7 @@ export function useIncrementalPager<T>({
   const resetAndLoad = useCallback(() => {
     appendRequestedPageRef.current = null;
     setPage(1);
-    setTotal(0);
+    setTotal(null);
     setHasMore(false);
     onResetRef.current?.();
     void loadPage(1, false);

@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+﻿import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -9,6 +9,7 @@ import { useAuth } from "../hooks/auth";
 import { formatApiDateTime } from "../utils/datetime";
 import { downloadBlobFile } from "../utils/download";
 import { normalizeError } from "../utils/errors";
+import { buildActivityExportRequest } from "../utils/exportUrl";
 
 import { getAuditRelevance } from "../utils/relevance";
 
@@ -60,6 +61,7 @@ import {
 } from "../hooks/useActivityFeed";
 import { useGuardedAsyncState } from "../hooks/useGuardedAsyncState";
 import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll";
+import { useScheduledResetAndLoad } from "../hooks/useScheduledResetAndLoad";
 import type {
   AuditActionCatalogItem,
 } from "../types/catalog";
@@ -230,13 +232,14 @@ export default function ActivityLogPage() {
 
 
   const emailSuggestRequestSeqRef = useRef(0);
-  const reloadRafRef = useRef<number | null>(null);
 
   const lastScrolledTargetRef = useRef<string>("");
 
 
 
   const [exportFormat, setExportFormat] = useState<"csv" | "xlsx">("csv");
+  const [exportPending, setExportPending] = useState(false);
+  const [exportProgress, setExportProgress] = useState<number | null>(null);
 
   const [showFilters, setShowFilters] = useState(false);
 
@@ -281,6 +284,7 @@ export default function ActivityLogPage() {
   });
 
   const loadedCount = mode === "audit" ? auditRows.length : loginRows.length;
+  const { scheduleResetAndLoad } = useScheduledResetAndLoad(resetAndLoad);
 
 
 
@@ -380,80 +384,38 @@ export default function ActivityLogPage() {
 
   }, [mode, resetAndLoad]);
 
-  const scheduleResetAndLoad = useCallback(() => {
-    if (reloadRafRef.current !== null) {
-      window.cancelAnimationFrame(reloadRafRef.current);
-    }
-    reloadRafRef.current = window.requestAnimationFrame(() => {
-      reloadRafRef.current = null;
-      resetAndLoad();
-    });
-  }, [resetAndLoad]);
-
-  useEffect(() => {
-    return () => {
-      if (reloadRafRef.current !== null) {
-        window.cancelAnimationFrame(reloadRafRef.current);
-        reloadRafRef.current = null;
-      }
-    };
-  }, []);
-
-
-
   async function exportLogs(ext: "csv" | "xlsx") {
-
-    const p = new URLSearchParams({
-
-      date_from: dateFrom,
-
-      date_to: dateTo,
-
-      sort_dir: sortDir,
-
+    if (exportPending) return;
+    setExportPending(true);
+    setExportProgress(null);
+    const { url, filename } = buildActivityExportRequest({
+      mode,
+      format: ext,
+      dateFrom,
+      dateTo,
+      sortDir,
+      action,
+      actorEmail,
+      targetEmail,
+      securityOnly,
+      ipFilter,
+      resultFilter,
+      sourceFilter,
     });
-
-    let url = "";
-
-    let filename = "";
-
-    if (mode === "audit") {
-
-      p.set("action", action.trim());
-
-      p.set("actor_email", actorEmail.trim());
-
-      p.set("target_email", targetEmail.trim());
-
-      p.set("security_only", String(securityOnly));
-
-      url = `/admin/audit/export.${ext}?${p.toString()}`;
-
-      filename = `admin_audit_logs.${ext}`;
-
-    } else {
-
-      p.set("email", targetEmail.trim());
-
-      p.set("ip", ipFilter.trim());
-
-      p.set("result", resultFilter.trim());
-
-      p.set("source", sourceFilter.trim());
-
-      url = `/admin/login-history/export.${ext}?${p.toString()}`;
-
-      filename = `login_history.${ext}`;
-
-    }
 
     try {
 
-      await downloadBlobFile(url, filename);
+      await downloadBlobFile(url, filename, {
+        onProgress: (progress) => setExportProgress(progress.percent),
+      });
 
     } catch (e) {
 
       setError(normalizeError(e));
+
+    } finally {
+      setExportPending(false);
+      setExportProgress(null);
 
     }
 
@@ -721,8 +683,10 @@ export default function ActivityLogPage() {
 
             </UiSelect>
 
-            <Button variant="secondary" onClick={() => exportLogs(exportFormat)}>
-              Экспорт {mode === "audit" ? "аудита" : "входов"}
+            <Button variant="secondary" onClick={() => exportLogs(exportFormat)} disabled={exportPending}>
+              {exportPending
+                ? `Экспорт${exportProgress != null ? ` ${exportProgress}%` : "..."}`
+                : `Экспорт ${mode === "audit" ? "аудита" : "входов"}`}
             </Button>
 
           </div>
@@ -874,7 +838,7 @@ export default function ActivityLogPage() {
 
 
 
-      <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>Загружено: {loadedCount} из {total}</div>
+      <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>Загружено: {loadedCount} из {total ?? "—"}</div>
       {showFilters && isEmailSuggestLoading && (
         <div style={{ marginTop: 4, fontSize: 12, opacity: 0.72 }}>Подсказки email: загрузка...</div>
       )}
@@ -1289,7 +1253,7 @@ export default function ActivityLogPage() {
 
         )}
 
-        {isFeedLoading && <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>Загружено: {loadedCount} из {total}</div>}
+        {isFeedLoading && <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>Загружено: {loadedCount} из {total ?? "—"}</div>}
 
         </div>
 
@@ -1500,6 +1464,7 @@ export default function ActivityLogPage() {
   );
 
 }
+
 
 
 

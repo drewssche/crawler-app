@@ -23,6 +23,7 @@ import { UserStatusPills, UserTrustPills } from "../components/users/UserStatusP
 import { useAuth } from "../hooks/auth";
 import { useUsersList } from "../hooks/useUsersList";
 import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll";
+import { useScheduledResetAndLoad } from "../hooks/useScheduledResetAndLoad";
 import type { AvailableActionsResponse } from "../types/catalog";
 import { getUserAndTrustCatalogsCached } from "../utils/catalogCache";
 import { formatApiDateTime } from "../utils/datetime";
@@ -95,80 +96,6 @@ const TAB_OPTIONS: Array<{ value: UsersTab; label: string }> = [
   { value: "deleted", label: TXT.tabDeleted },
 ];
 
-function isActionApplicable(
-  user: UserRow,
-  action: BulkAction,
-  options: { actorIsRoot: boolean; actorEmail: string; targetRole?: UserRole },
-): boolean {
-  const isSelf = user.email.toLowerCase() === options.actorEmail;
-  const rootAdminAllowedForAdminUser = new Set<BulkAction>([
-    "remove_approve",
-    "block",
-    "unblock",
-    "revoke_sessions",
-    "revoke_trusted_devices",
-    "send_code",
-    "set_trust_policy",
-    "set_role",
-    "delete_soft",
-    "restore",
-    "delete_hard",
-  ]);
-
-  if (action === "delete_hard") {
-    if (!options.actorIsRoot) return false;
-    if (user.is_root_admin) return false;
-    if (isSelf) return false;
-    return true;
-  }
-
-  if (action === "set_role") {
-    if (!user.is_approved || user.is_deleted) return false;
-    if (user.is_root_admin) return false;
-    if (isSelf && (options.targetRole === "viewer" || options.targetRole === "editor")) return false;
-    if (user.is_admin && !options.actorIsRoot) return false;
-    if (options.targetRole === "admin" && !options.actorIsRoot) return false;
-    return true;
-  }
-
-  if (action === "approve" && options.targetRole === "admin" && !options.actorIsRoot) {
-    return false;
-  }
-
-  if (user.is_admin) {
-    if (user.is_root_admin) return false;
-    if (!options.actorIsRoot) return false;
-    if (!rootAdminAllowedForAdminUser.has(action)) return false;
-    if (action === "remove_approve") return user.is_approved;
-    if (action === "block") return !user.is_blocked;
-    if (action === "unblock") return user.is_blocked;
-    if (action === "send_code") return user.is_approved && !user.is_blocked && !user.is_deleted;
-    if (action === "set_trust_policy" || action === "revoke_sessions" || action === "revoke_trusted_devices") {
-      return !user.is_deleted;
-    }
-    if (action === "delete_soft") return !user.is_deleted;
-    if (action === "restore") return user.is_deleted;
-    return true;
-  }
-
-  if (user.is_deleted) {
-    return action === "restore";
-  }
-
-  if (action === "approve") return !user.is_approved;
-  if (action === "remove_approve") return user.is_approved;
-  if (action === "block") return !user.is_blocked;
-  if (action === "unblock") return user.is_blocked;
-  if (action === "revoke_sessions") return true;
-  if (action === "revoke_trusted_devices") return true;
-  if (action === "send_code") return user.is_approved && !user.is_blocked;
-  if (action === "set_trust_policy") return true;
-  if (action === "delete_soft") return true;
-  if (action === "restore") return false;
-
-  return false;
-}
-
 export default function UsersPage() {
   const { user } = useAuth();
   const location = useLocation();
@@ -202,7 +129,7 @@ export default function UsersPage() {
   const queryRef = useRef(query);
 
   const actorEmail = (user?.email || "").toLowerCase();
-  const actorIsRoot = user?.role === "root-admin";
+  const [applicableUserIdsByAction, setApplicableUserIdsByAction] = useState<Partial<Record<BulkAction, number[]>>>({});
 
   const {
     rows: users,
@@ -219,6 +146,7 @@ export default function UsersPage() {
     onReset: () => setError(""),
     onError: (e) => setError(normalizeError(e)),
   });
+  const { scheduleResetAndLoad } = useScheduledResetAndLoad(resetAndLoad);
 
   const selectedUsers = useMemo(() => {
     if (selectedIds.length === 0) return [];
@@ -235,16 +163,10 @@ export default function UsersPage() {
   const applicableCountByAction = useMemo(() => {
     const out: Partial<Record<BulkAction, number>> = {};
     for (const action of availableActions) {
-      out[action] = selectedUsers.filter((row) =>
-        isActionApplicable(row, action, {
-          actorIsRoot,
-          actorEmail,
-          targetRole: action === "approve" || action === "set_role" ? "viewer" : undefined,
-        }),
-      ).length;
+      out[action] = (applicableUserIdsByAction[action] || []).length;
     }
     return out;
-  }, [availableActions, selectedUsers, actorEmail, actorIsRoot]);
+  }, [availableActions, applicableUserIdsByAction]);
 
   function resetUsersList(options?: { nextTab?: UsersTab; nextQuery?: string; keepSelection?: boolean }) {
     const nextTab = options?.nextTab ?? tabRef.current;
@@ -255,7 +177,7 @@ export default function UsersPage() {
     tabRef.current = nextTab;
     queryRef.current = nextQuery;
     keepSelectionOnResetRef.current = Boolean(options?.keepSelection);
-    resetAndLoad();
+    scheduleResetAndLoad();
   }
 
   async function refreshDrawerContext(userId: number) {
@@ -300,15 +222,7 @@ export default function UsersPage() {
       throw new Error(TXT.chooseUsersFirst);
     }
 
-    const applicableIds = selectedUsers
-      .filter((row) =>
-        isActionApplicable(row, payload.action, {
-          actorIsRoot,
-          actorEmail,
-          targetRole: payload.role,
-        }),
-      )
-      .map((row) => row.id);
+    const applicableIds = applicableUserIdsByAction[payload.action] || [];
 
     if (applicableIds.length === 0) {
       throw new Error(TXT.noApplicable);
@@ -405,6 +319,7 @@ export default function UsersPage() {
   useEffect(() => {
     if (selectedIds.length === 0) {
       setAvailableActions([]);
+      setApplicableUserIdsByAction({});
       setAvailableLoading(false);
       availableAbortRef.current?.abort();
       availableAbortRef.current = null;
@@ -426,6 +341,7 @@ export default function UsersPage() {
           { signal: controller.signal },
         );
         setAvailableActions(data.actions || []);
+        setApplicableUserIdsByAction((data.applicable_by_action || {}) as Partial<Record<BulkAction, number[]>>);
       } catch (e) {
         if (isAbortError(e)) return;
         setError(normalizeError(e));
@@ -568,7 +484,7 @@ export default function UsersPage() {
 
           {hasMore && (
             <div style={{ fontSize: 12, opacity: 0.72 }}>
-              {TXT.shown}: {users.length} {"\u0438\u0437"} {total}
+              {TXT.shown}: {users.length} {"\u0438\u0437"} {total ?? "—"}
             </div>
           )}
         </div>

@@ -133,6 +133,13 @@ async def request_context_middleware(request: Request, call_next):
             path=request.url.path,
             status=str(response.status_code),
         )
+        if response.status_code >= 400:
+            increment_counter(
+                "http_errors_total",
+                method=request.method.upper(),
+                path=request.url.path,
+                status=str(response.status_code),
+            )
     logger.info(
         "http_request request_id=%s method=%s path=%s status=%s duration_ms=%.2f",
         request_id,
@@ -148,12 +155,6 @@ async def request_context_middleware(request: Request, call_next):
 async def http_exception_handler(request: Request, exc: HTTPException):
     detail = exc.detail
     message = detail if isinstance(detail, str) else "Request failed"
-    increment_counter(
-        "http_errors_total",
-        code=str(exc.status_code),
-        path=request.url.path,
-        method=request.method.upper(),
-    )
     return JSONResponse(
         status_code=exc.status_code,
         content=error_response_payload(
@@ -167,12 +168,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    increment_counter(
-        "http_errors_total",
-        code="422",
-        path=request.url.path,
-        method=request.method.upper(),
-    )
     return JSONResponse(
         status_code=422,
         content=error_response_payload(
@@ -186,12 +181,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    increment_counter(
-        "http_errors_total",
-        code="500",
-        path=request.url.path,
-        method=request.method.upper(),
-    )
     logger.exception("Unhandled error request_id=%s", get_request_id(request), exc_info=exc)
     return JSONResponse(
         status_code=500,

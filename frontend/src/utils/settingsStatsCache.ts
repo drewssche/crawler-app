@@ -1,38 +1,22 @@
-import { apiGet } from "../api/client";
+﻿import { apiGet } from "../api/client";
 
-type AdminUserRow = {
-  id: number;
-  email: string;
-  role: string;
-  is_approved: boolean;
-  is_deleted: boolean;
+export type MonitoringState = "стабильно" | "внимание" | "критично" | "нет данных";
+
+export type SettingsSummary = {
+  pendingUsers: { value: number | null; sourceOk: boolean };
+  rootAdmins: { value: number | null; sourceOk: boolean };
+  eventsUnread: { value: number | null; sourceOk: boolean };
+  audit24h: { value: number | null; sourceOk: boolean };
+  monitoring: { state: MonitoringState; sourceOk: boolean };
 };
 
-type AdminEmailsResponse = {
-  admin_emails: string[];
-  db_admins: string[];
+type SettingsSummaryResponse = {
+  pending_users?: { value?: number | null; source_ok?: boolean };
+  root_admins?: { value?: number | null; source_ok?: boolean };
+  events_unread?: { value?: number | null; source_ok?: boolean };
+  audit24h?: { value?: number | null; source_ok?: boolean };
+  monitoring?: { state?: MonitoringState; source_ok?: boolean };
 };
-
-type AuditResponse = {
-  items: Array<Record<string, unknown>>;
-  total: number;
-  page: number;
-  page_size: number;
-};
-
-type MonitoringHistoryResponse = {
-  enabled: boolean;
-  series: Record<string, Array<{ ts: number; value: number }>>;
-};
-
-type MonitoringSettings = {
-  warn_error_delta: number;
-  warn_error_rate: number;
-  crit_error_delta: number;
-  crit_error_rate: number;
-};
-
-type MonitoringState = "стабильно" | "внимание" | "критично" | "нет данных";
 
 const TTL_MS = 30_000;
 
@@ -46,27 +30,31 @@ function createEntry<T>(): CacheEntry<T> {
   return { value: null, expiresAt: 0, inFlight: null };
 }
 
-const pendingCountEntry = createEntry<number>();
-const rootAdminsCountEntry = createEntry<number>();
-const audit24hEntry = createEntry<number>();
-const monitoringStateEntry = createEntry<MonitoringState>();
+const summaryEntry = createEntry<SettingsSummary>();
 
-function latest(points?: Array<{ ts: number; value: number }>) {
-  if (!points?.length) return 0;
-  return Number(points[points.length - 1]?.value || 0);
-}
-
-function prev(points?: Array<{ ts: number; value: number }>) {
-  if (!points || points.length < 2) return 0;
-  return Number(points[points.length - 2]?.value || 0);
-}
-
-function since24hIso() {
-  return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().replace("Z", "");
-}
-
-function nowIsoNaive() {
-  return new Date().toISOString().replace("Z", "");
+function normalizeSummary(raw: SettingsSummaryResponse | null | undefined): SettingsSummary {
+  return {
+    pendingUsers: {
+      value: typeof raw?.pending_users?.value === "number" ? raw.pending_users.value : null,
+      sourceOk: raw?.pending_users?.source_ok !== false,
+    },
+    rootAdmins: {
+      value: typeof raw?.root_admins?.value === "number" ? raw.root_admins.value : null,
+      sourceOk: raw?.root_admins?.source_ok !== false,
+    },
+    eventsUnread: {
+      value: typeof raw?.events_unread?.value === "number" ? raw.events_unread.value : null,
+      sourceOk: raw?.events_unread?.source_ok !== false,
+    },
+    audit24h: {
+      value: typeof raw?.audit24h?.value === "number" ? raw.audit24h.value : null,
+      sourceOk: raw?.audit24h?.source_ok !== false,
+    },
+    monitoring: {
+      state: raw?.monitoring?.state || "нет данных",
+      sourceOk: raw?.monitoring?.source_ok !== false,
+    },
+  };
 }
 
 async function loadWithCache<T>(entry: CacheEntry<T>, loader: () => Promise<T>, force = false): Promise<T> {
@@ -87,58 +75,33 @@ async function loadWithCache<T>(entry: CacheEntry<T>, loader: () => Promise<T>, 
   return entry.inFlight;
 }
 
-export async function getPendingUsersCountCached(force = false): Promise<number> {
+export async function getSettingsSummaryCached(force = false): Promise<SettingsSummary> {
   return loadWithCache(
-    pendingCountEntry,
+    summaryEntry,
     async () => {
-      const pending = await apiGet<AdminUserRow[]>("/admin/users?status=pending");
-      return pending.length;
+      const data = await apiGet<SettingsSummaryResponse>("/admin/settings/summary");
+      return normalizeSummary(data);
     },
     force,
   );
+}
+
+export async function getPendingUsersCountCached(force = false): Promise<number> {
+  const summary = await getSettingsSummaryCached(force);
+  return summary.pendingUsers.value ?? 0;
 }
 
 export async function getRootAdminsCountCached(force = false): Promise<number> {
-  return loadWithCache(
-    rootAdminsCountEntry,
-    async () => {
-      const res = await apiGet<AdminEmailsResponse>("/admin/settings/admin-emails");
-      return (res.admin_emails || []).length;
-    },
-    force,
-  );
+  const summary = await getSettingsSummaryCached(force);
+  return summary.rootAdmins.value ?? 0;
 }
 
 export async function getAudit24hCountCached(force = false): Promise<number> {
-  return loadWithCache(
-    audit24hEntry,
-    async () => {
-      const audit = await apiGet<AuditResponse>(
-        `/admin/audit?page=1&page_size=1&date_from=${encodeURIComponent(since24hIso())}&date_to=${encodeURIComponent(nowIsoNaive())}`,
-      );
-      return audit.total || 0;
-    },
-    force,
-  );
+  const summary = await getSettingsSummaryCached(force);
+  return summary.audit24h.value ?? 0;
 }
 
 export async function getMonitoringStateCached(force = false): Promise<MonitoringState> {
-  return loadWithCache(
-    monitoringStateEntry,
-    async () => {
-      const [history, settings] = await Promise.all([
-        apiGet<MonitoringHistoryResponse>("/admin/monitoring/history?range_minutes=15&step_seconds=30"),
-        apiGet<MonitoringSettings>("/admin/monitoring/settings"),
-      ]);
-      if (!history.enabled) return "нет данных";
-      const reqDelta = Math.max(0, latest(history.series?.http_requests) - prev(history.series?.http_requests));
-      const errDelta = Math.max(0, latest(history.series?.http_errors) - prev(history.series?.http_errors));
-      const rate = reqDelta > 0 ? (errDelta / reqDelta) * 100 : 0;
-      if (errDelta >= settings.crit_error_delta || rate >= settings.crit_error_rate) return "критично";
-      if (errDelta >= settings.warn_error_delta || rate >= settings.warn_error_rate) return "внимание";
-      return "стабильно";
-    },
-    force,
-  );
+  const summary = await getSettingsSummaryCached(force);
+  return summary.monitoring.state;
 }
-

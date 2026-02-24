@@ -17,18 +17,19 @@ type MetricsResponse = { counters: Record<string, MetricItem[]> };
 
 export type MonitoringErrorRow = { labels: string; value: number };
 
-export function buildSparkPath(values: number[], w: number, h: number): string {
-  if (values.length < 2) return "";
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = Math.max(1, max - min);
-  return values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * (w - 8) + 4;
-      const y = h - 8 - ((v - min) / span) * (h - 16);
-      return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
+export function detectSpikeTimestamps(points: HistoryPoint[]): number[] {
+  if (points.length < 3) return [];
+  const values = points.map((p) => Number(p.value || 0));
+  const avg = values.reduce((acc, v) => acc + v, 0) / values.length;
+  const threshold = avg * 1.25;
+  const result: number[] = [];
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const current = values[i];
+    if (current > values[i - 1] && current > values[i + 1] && current >= threshold) {
+      result.push(points[i].ts);
+    }
+  }
+  return result;
 }
 
 export function computeMarkerX(

@@ -134,3 +134,4 @@
 - Update: Discovery-wave 1 profiling execution completed; see `AUDIT_API_QUERY_PROFILING_2026-02-24.md` for ranked hotspots and new prioritized backlog.
 
 
+- Update: HIGH reconciliation rerun completed across all pages; see `AUDIT_HIGH_REVALIDATION_2026-02-24.md` (no open HIGH residuals).

@@ -139,7 +139,8 @@ ACTION_CATALOG: dict[str, dict] = {
         "critical": True,
         "requires": {"role": True},
         "details": "Меняет роль уже подтвержденного пользователя.",
-        "reason_required": True,
+        "reason_required": False,
+        "reason_mode": "recommended",
         "reason_presets": [
             "Изменение зоны ответственности",
             "Корректировка уровня доступа",
@@ -199,6 +200,11 @@ def bulk_action_catalog_payload(*, include_admin_role: bool = False) -> dict:
                 "requires": meta.get("requires", {}),
                 "details": meta.get("details", ""),
                 "reason_required": bool(meta.get("reason_required", False)),
+                "reason_mode": (
+                    "required"
+                    if bool(meta.get("reason_required", False))
+                    else str(meta.get("reason_mode", "recommended"))
+                ),
                 "reason_presets": meta.get("reason_presets", []),
                 "approve_roles": role_meta if action in {"approve", "set_role"} else meta.get("approve_roles", {}),
             }
@@ -331,9 +337,6 @@ def _handle_set_role(*, user: User, payload: BulkActionPayload, log_action: Call
         return {"ok": False, "detail": "Role is required"}
     if not user.is_approved or user.is_deleted:
         return {"ok": False, "detail": "Role can be changed only for active approved users"}
-    if not (payload.reason or "").strip():
-        return {"ok": False, "detail": "Reason is required"}
-
     old_role = user.role
     user.role = payload.role
     user.is_admin = payload.role == "admin"

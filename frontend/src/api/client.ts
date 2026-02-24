@@ -115,3 +115,46 @@ export async function apiDownload(path: string, options?: { signal?: AbortSignal
   }
   return res.blob();
 }
+
+export async function apiDownloadWithProgress(
+  path: string,
+  options?: { signal?: AbortSignal; onProgress?: (receivedBytes: number, totalBytes: number | null) => void },
+): Promise<Blob> {
+  const token = getToken();
+  const headers = new Headers();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  headers.set("X-Request-ID", buildRequestId());
+
+  const res = await fetch(`${API_BASE}${path}`, { method: "GET", headers, signal: options?.signal });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+
+  const totalHeader = res.headers.get("content-length");
+  const total = totalHeader ? Number(totalHeader) : null;
+  const body = res.body;
+  if (!body) {
+    const blob = await res.blob();
+    options?.onProgress?.(blob.size, total);
+    return blob;
+  }
+
+  const reader = body.getReader();
+  const chunks: ArrayBuffer[] = [];
+  let received = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    chunks.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+    received += value.length;
+    options?.onProgress?.(received, total);
+  }
+
+  options?.onProgress?.(received, total);
+  return new Blob(chunks);
+}

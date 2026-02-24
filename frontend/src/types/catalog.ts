@@ -12,6 +12,8 @@ export type AuditActionCatalogResponse = {
 
 export type AvailableActionsResponse = {
   actions: BulkAction[];
+  applicable_by_action?: Partial<Record<BulkAction, number[]>>;
+  applicable_by_user?: Record<number, BulkAction[]>;
 };
 
 export type ActionCatalogResponse = {
@@ -21,4 +23,3 @@ export type ActionCatalogResponse = {
 export type TrustPolicyCatalogResponse = {
   policies: TrustPolicyCatalogItem[];
 };
-

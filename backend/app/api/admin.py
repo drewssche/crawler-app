@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.admin_sync import (
@@ -27,6 +28,9 @@ from app.core.security import (
 )
 from app.core.trust_policies import trust_policy_catalog_payload
 from app.db.models.login_history import LoginHistory
+from app.db.models.admin_audit_log import AdminAuditLog
+from app.db.models.event_feed import EventFeed
+from app.db.models.event_user_state import EventUserState
 from app.db.models.trusted_device import TrustedDevice
 from app.db.models.user import User
 from app.db.session import get_db
@@ -76,6 +80,11 @@ from app.services.admin_serializers import (
     serialize_user_details_admin_actions,
     serialize_user_details_login_history,
 )
+from app.services.reason_policy import (
+    admin_emails_reason_policy_payload,
+    normalize_reason_text,
+    resolve_admin_emails_reason_mode,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger(__name__)
@@ -112,7 +121,7 @@ class BulkUsersIn(BaseModel):
 
 class AdminEmailsIn(BaseModel):
     emails: list[str]
-    reason: str
+    reason: str | None = None
 
 
 class AvailableActionsIn(BaseModel):
@@ -386,19 +395,38 @@ def users_actions_available(
     admin: User = Depends(require_permission("users.manage")),
 ):
     if not payload.user_ids:
-        return success_response_payload(request, data={"actions": []})
+        return success_response_payload(
+            request,
+            data={"actions": [], "applicable_by_action": {}, "applicable_by_user": {}},
+        )
     users = db.query(User).filter(User.id.in_(payload.user_ids)).all()
-    actions = []
-    for action in available_actions_for_users(users):
-        for user in users:
-            allowed_set = available_actions_for_user(user)
+    available_candidates = available_actions_for_users(users)
+    applicable_by_action: dict[str, list[int]] = {action: [] for action in available_candidates}
+    applicable_by_user: dict[int, list[str]] = {}
+
+    for user in users:
+        user_actions: list[str] = []
+        allowed_set = available_actions_for_user(user)
+        for action in available_candidates:
             if action not in allowed_set:
                 continue
             can_apply, _ = is_bulk_action_allowed_for_actor(actor=admin, user=user, action=action)
-            if can_apply:
-                actions.append(action)
-                break
-    return success_response_payload(request, data={"actions": actions})
+            if not can_apply:
+                continue
+            user_actions.append(action)
+            applicable_by_action[action].append(user.id)
+        applicable_by_user[user.id] = user_actions
+
+    actions = [action for action, user_ids in applicable_by_action.items() if user_ids]
+    filtered_by_action = {action: user_ids for action, user_ids in applicable_by_action.items() if user_ids}
+    return success_response_payload(
+        request,
+        data={
+            "actions": actions,
+            "applicable_by_action": filtered_by_action,
+            "applicable_by_user": applicable_by_user,
+        },
+    )
 
 
 @router.get("/users/{user_id}/details")
@@ -627,7 +655,6 @@ def get_admin_emails_settings(
                 last_login=last_login_by_user_id.get(hit.id),
                 trust_summary=trust_summary_by_user_id.get(hit.id),
             )
-            snap.pop("trusted_devices_count", None)
             db_profiles[email] = snap
     if page is not None:
         items = [
@@ -647,6 +674,7 @@ def get_admin_emails_settings(
                 "page": safe_page,
                 "page_size": safe_page_size,
                 "is_root_admin": True,
+                "reason_policy": admin_emails_reason_policy_payload(),
             },
         )
 
@@ -659,6 +687,213 @@ def get_admin_emails_settings(
             "db_admins": db_admins,
             "db_profiles": db_profiles,
             "is_root_admin": True,
+            "reason_policy": admin_emails_reason_policy_payload(),
+        },
+    )
+
+
+@router.get("/settings/summary")
+def get_settings_summary(
+    request: Request,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_permission("users.manage")),
+):
+    now = _utc_now_naive()
+    since_24h = now - timedelta(hours=24)
+
+    pending_value: int | None = None
+    pending_ok = True
+    try:
+        pending_value = int(
+            db.query(User)
+            .filter(User.is_approved.is_(False), User.is_deleted.is_(False))
+            .count()
+        )
+    except Exception:
+        pending_ok = False
+
+    root_admins_value: int | None = None
+    root_admins_ok = True
+    try:
+        root_admins_value = len(get_runtime_admin_emails())
+    except Exception:
+        root_admins_ok = False
+
+    audit24h_value: int | None = None
+    audit24h_ok = True
+    try:
+        audit24h_value = int(
+            db.query(AdminAuditLog)
+            .filter(AdminAuditLog.created_at >= since_24h)
+            .count()
+        )
+    except Exception:
+        audit24h_ok = False
+
+    monitoring_state = "нет данных"
+    monitoring_ok = True
+    try:
+        settings = get_monitoring_settings_payload()
+        history = get_monitoring_history_payload(
+            range_minutes=15,
+            step_seconds=30,
+            force_refresh=False,
+        )
+        if not history.get("enabled", False):
+            monitoring_ok = False
+        else:
+            series = history.get("series", {}) if isinstance(history, dict) else {}
+
+            def _latest(name: str) -> float:
+                points = series.get(name, []) if isinstance(series, dict) else []
+                if not points:
+                    return 0.0
+                return float((points[-1] or {}).get("value", 0) or 0)
+
+            def _prev(name: str) -> float:
+                points = series.get(name, []) if isinstance(series, dict) else []
+                if len(points) < 2:
+                    return 0.0
+                return float((points[-2] or {}).get("value", 0) or 0)
+
+            req_delta = max(0.0, _latest("http_requests") - _prev("http_requests"))
+            err_delta = max(0.0, _latest("http_errors") - _prev("http_errors"))
+            rate = (err_delta / req_delta) * 100.0 if req_delta > 0 else 0.0
+            if err_delta >= float(settings.get("crit_error_delta", 0)) or rate >= float(settings.get("crit_error_rate", 0)):
+                monitoring_state = "критично"
+            elif err_delta >= float(settings.get("warn_error_delta", 0)) or rate >= float(settings.get("warn_error_rate", 0)):
+                monitoring_state = "внимание"
+            else:
+                monitoring_state = "стабильно"
+    except Exception:
+        monitoring_ok = False
+        monitoring_state = "нет данных"
+
+    events_unread_value: int | None = None
+    events_unread_ok = True
+    try:
+        notifications_unread = int(
+            db.query(func.count(EventFeed.id))
+            .outerjoin(
+                EventUserState,
+                and_(EventUserState.event_id == EventFeed.id, EventUserState.user_id == _admin.id),
+            )
+            .filter(EventFeed.channel == "notification")
+            .filter(or_(EventFeed.actor_user_id.is_(None), EventFeed.actor_user_id != _admin.id))
+            .filter(or_(EventUserState.id.is_(None), EventUserState.is_dismissed.is_(False)))
+            .filter(or_(EventUserState.id.is_(None), EventUserState.is_read.is_(False)))
+            .scalar()
+            or 0
+        )
+        actions_unread = int(
+            db.query(func.count(EventFeed.id))
+            .outerjoin(
+                EventUserState,
+                and_(EventUserState.event_id == EventFeed.id, EventUserState.user_id == _admin.id),
+            )
+            .filter(EventFeed.channel == "action")
+            .filter(or_(EventFeed.actor_user_id.is_(None), EventFeed.actor_user_id != _admin.id))
+            .filter(or_(EventUserState.id.is_(None), EventUserState.is_dismissed.is_(False)))
+            .filter(or_(EventUserState.id.is_(None), EventUserState.is_read.is_(False)))
+            .scalar()
+            or 0
+        )
+        events_unread_value = notifications_unread + actions_unread
+    except Exception:
+        events_unread_ok = False
+
+    return success_response_payload(
+        request,
+        data={
+            "pending_users": {"value": pending_value, "source_ok": pending_ok},
+            "root_admins": {"value": root_admins_value, "source_ok": root_admins_ok},
+            "events_unread": {"value": events_unread_value, "source_ok": events_unread_ok},
+            "audit24h": {"value": audit24h_value, "source_ok": audit24h_ok},
+            "monitoring": {"state": monitoring_state, "source_ok": monitoring_ok},
+        },
+    )
+
+
+@router.get("/users/{user_id}/sanity")
+def user_data_sanity(
+    user_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_permission("users.manage")),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    last_login_map = build_last_login_map(db, [user.id])
+    trust_summary_map = build_trust_summary_map(db, [user.id])
+    snapshot = build_user_profile_snapshot(
+        user=user,
+        last_login=last_login_map.get(user.id),
+        trust_summary=trust_summary_map.get(user.id),
+    )
+
+    active_devices_count = int(
+        db.query(TrustedDevice)
+        .filter(TrustedDevice.user_id == user.id, TrustedDevice.revoked_at.is_(None))
+        .count()
+    )
+    revoked_devices_count = int(
+        db.query(TrustedDevice)
+        .filter(TrustedDevice.user_id == user.id, TrustedDevice.revoked_at.is_not(None))
+        .count()
+    )
+    total_devices_count = int(
+        db.query(TrustedDevice)
+        .filter(TrustedDevice.user_id == user.id)
+        .count()
+    )
+
+    latest_login = (
+        db.query(LoginHistory)
+        .filter(LoginHistory.user_id == user.id)
+        .order_by(LoginHistory.created_at.desc(), LoginHistory.id.desc())
+        .first()
+    )
+
+    latest_login_at = latest_login.created_at.isoformat() if latest_login else None
+    latest_login_ip = latest_login.ip if latest_login else None
+    latest_login_ua = latest_login.user_agent if latest_login else None
+    login_history_total = int(
+        db.query(LoginHistory)
+        .filter(LoginHistory.user_id == user.id)
+        .count()
+    )
+
+    matches = {
+        "trusted_devices_count": int(snapshot.get("trusted_devices_count") or 0) == active_devices_count,
+        "last_activity_at": snapshot.get("last_activity_at") == latest_login_at,
+        "last_ip": (snapshot.get("last_ip") or None) == (latest_login_ip or None),
+        "last_user_agent": (snapshot.get("last_user_agent") or None) == (latest_login_ua or None),
+    }
+
+    return success_response_payload(
+        request,
+        data={
+            "user_id": user.id,
+            "email": user.email,
+            "snapshot": {
+                "trusted_devices_count": int(snapshot.get("trusted_devices_count") or 0),
+                "last_activity_at": snapshot.get("last_activity_at"),
+                "last_ip": snapshot.get("last_ip"),
+                "last_user_agent": snapshot.get("last_user_agent"),
+            },
+            "sources": {
+                "trusted_devices_active_count": active_devices_count,
+                "trusted_devices_revoked_count": revoked_devices_count,
+                "trusted_devices_total_count": total_devices_count,
+                "latest_login_at": latest_login_at,
+                "latest_login_ip": latest_login_ip,
+                "latest_login_user_agent": latest_login_ua,
+                "login_history_total": login_history_total,
+            },
+            "matches": matches,
+            "ok": all(matches.values()),
         },
     )
 
@@ -674,11 +909,15 @@ def update_admin_emails_settings(
     if not normalized:
         raise HTTPException(status_code=400, detail="At least one admin email is required")
     validate_admin_emails(normalized)
-    reason = require_reason(payload.reason)
-
     current_runtime = get_runtime_admin_emails()
     if admin.email.lower() not in set(normalized):
         raise HTTPException(status_code=400, detail="You cannot remove your own root-admin email")
+    reason_mode = resolve_admin_emails_reason_mode(
+        current_runtime_emails=current_runtime,
+        next_runtime_emails=normalized,
+        actor_email=admin.email,
+    )
+    reason = require_reason(payload.reason) if reason_mode == "required" else normalize_reason_text(payload.reason)
 
     write_admin_emails_to_env_file(normalized)
     sync_result = sync_admin_users(db, normalized, admin_password=os.getenv("ADMIN_PASSWORD"))
@@ -697,6 +936,7 @@ def update_admin_emails_settings(
             "demoted": sync_result.demoted,
             "skipped_create_without_password": sync_result.skipped_create_without_password,
             "reason": reason,
+            "reason_mode": reason_mode,
         },
     )
     db.commit()
@@ -711,6 +951,7 @@ def update_admin_emails_settings(
             "skipped_create_without_password": sync_result.skipped_create_without_password,
         },
         "note": "New admin emails are saved to .env and synced immediately.",
+        "reason_mode": reason_mode,
     })
 
 
@@ -743,7 +984,7 @@ def list_audit_logs(
         sort_dir=sort_dir,
         security_actions=SECURITY_ACTIONS,
     )
-    total = query.count()
+    total = query.count() if include_total else None
     start = (safe_page - 1) * safe_page_size
     rows = query.offset(start).limit(safe_page_size).all()
     items = serialize_audit_rows(rows)

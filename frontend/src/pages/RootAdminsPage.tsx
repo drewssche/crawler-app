@@ -17,8 +17,17 @@ import TrustPolicyDetailsCard from "../components/users/TrustPolicyDetailsCard";
 import { UserStatusPills } from "../components/users/UserStatusPills";
 import { useAuth } from "../hooks/auth";
 import { useIncrementalPager } from "../hooks/useIncrementalPager";
+import { useScheduledResetAndLoad } from "../hooks/useScheduledResetAndLoad";
 import { getTrustPolicyCatalogCached } from "../utils/catalogCache";
 import { normalizeError } from "../utils/errors";
+import {
+  DEFAULT_ADMIN_EMAILS_REASON_CONTRACT,
+  getReasonPlaceholder,
+  getReasonRequiredError,
+  mergeAdminEmailsReasonContract,
+  resolveAdminEmailsReasonMode,
+  type AdminEmailsReasonContract,
+} from "../utils/reasonPolicy";
 import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll";
 import type { PagedResponse } from "../types/common";
 
@@ -27,6 +36,7 @@ type AdminSettingsResponse = {
   db_admins: string[];
   db_profiles?: Record<string, UserLookupRow>;
   is_root_admin: boolean;
+  reason_policy?: Partial<AdminEmailsReasonContract>;
 };
 
 type AdminPageRow = {
@@ -37,6 +47,7 @@ type AdminPageRow = {
 
 type AdminPageResponse = PagedResponse<AdminPageRow> & {
   total_all?: number;
+  reason_policy?: Partial<AdminEmailsReasonContract>;
 };
 
 type SaveAdminEmailsResponse = {
@@ -78,8 +89,6 @@ const TXT = {
   noRows: "\u0412 \u0441\u043f\u0438\u0441\u043a\u0435 \u043f\u043e\u043a\u0430 \u043d\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u0435\u0439.",
   actions: "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044f \u0434\u043b\u044f \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445",
   removeSelected: "\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445",
-  reasonRequired: "\u041f\u0440\u0438\u0447\u0438\u043d\u0430 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u0441\u043f\u0438\u0441\u043a\u0430 (\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e)",
-  reasonHint: "\u041f\u0440\u0438\u0447\u0438\u043d\u0430 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u0430 \u0438 \u043f\u043e\u043f\u0430\u0434\u0435\u0442 \u0432 \u0430\u0443\u0434\u0438\u0442-\u043b\u043e\u0433.",
   addModalTitle: "\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0441\u0438\u0441\u0442\u0435\u043c\u043d\u043e\u0433\u043e \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u0430",
   cancel: "\u041e\u0442\u043c\u0435\u043d\u0430",
   drawerTitle: "\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0439 \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440",
@@ -108,19 +117,6 @@ const TXT = {
 };
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const ADD_REASON_PRESETS = [
-  "\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043d\u0438\u0435 \u043a\u043e\u043c\u0430\u043d\u0434\u044b \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f",
-  "\u0420\u0435\u0437\u0435\u0440\u0432\u043d\u044b\u0439 root-admin \u043d\u0430 \u0441\u043b\u0443\u0447\u0430\u0439 \u0438\u043d\u0446\u0438\u0434\u0435\u043d\u0442\u0430",
-  "\u0414\u0435\u043b\u0435\u0433\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0441\u0442\u0438",
-  "\u0412\u0440\u0435\u043c\u0435\u043d\u043d\u043e\u0435 \u043d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 \u043d\u0430 \u043f\u0435\u0440\u0438\u043e\u0434 \u043f\u0440\u043e\u0435\u043a\u0442\u0430",
-];
-
-const REMOVE_REASON_PRESETS = [
-  "\u0420\u043e\u0442\u0430\u0446\u0438\u044f \u0434\u043e\u0441\u0442\u0443\u043f\u0430",
-  "\u0423\u0447\u0435\u0442\u043d\u0430\u044f \u0437\u0430\u043f\u0438\u0441\u044c \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442\u0441\u044f",
-  "\u0421\u043d\u0438\u0436\u0435\u043d\u0438\u0435 \u043f\u0440\u0438\u0432\u0438\u043b\u0435\u0433\u0438\u0439 \u043f\u043e \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0435 \u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u0438",
-  "\u0417\u0430\u043f\u0440\u043e\u0441 \u0432\u043b\u0430\u0434\u0435\u043b\u044c\u0446\u0430 \u0441\u0438\u0441\u0442\u0435\u043c\u044b",
-];
 const BASE_ROWS = 20;
 
 function isTrustPolicy(value: string | null | undefined): value is TrustPolicy {
@@ -150,6 +146,7 @@ export default function RootAdminsPage() {
   const [trustPolicyCatalog, setTrustPolicyCatalog] = useState<Record<TrustPolicy, TrustPolicyCatalogItem>>({} as Record<TrustPolicy, TrustPolicyCatalogItem>);
   const [drawerReason, setDrawerReason] = useState("");
   const [drawerActionLoading, setDrawerActionLoading] = useState(false);
+  const [adminReasonContract, setAdminReasonContract] = useState<AdminEmailsReasonContract>(DEFAULT_ADMIN_EMAILS_REASON_CONTRACT);
   const [confirmState, setConfirmState] = useState<{ open: boolean; scope: "bulk" | "drawer"; email?: string }>({
     open: false,
     scope: "bulk",
@@ -170,6 +167,7 @@ export default function RootAdminsPage() {
     applyPage: (data, append) => {
       const ext = data as AdminPageResponse;
       setAdminCount(ext.total_all ?? data.total ?? 0);
+      if (ext.reason_policy) setAdminReasonContract(mergeAdminEmailsReasonContract(ext.reason_policy));
       const items = data.items || [];
       if (append) {
         setRows((prev) => {
@@ -197,13 +195,14 @@ export default function RootAdminsPage() {
       setError(normalizeError(e));
     },
   });
+  const { scheduleResetAndLoad } = useScheduledResetAndLoad(resetAndLoad);
 
   function resetRootAdminsList(options?: { nextQuery?: string; keepSelection?: boolean }) {
     const nextQuery = options?.nextQuery ?? searchRef.current;
     if (nextQuery !== search) setSearch(nextQuery);
     searchRef.current = nextQuery;
     keepSelectionOnResetRef.current = Boolean(options?.keepSelection);
-    resetAndLoad();
+    scheduleResetAndLoad();
   }
 
   useEffect(() => {
@@ -248,6 +247,7 @@ export default function RootAdminsPage() {
 
   async function fetchAllAdminEmails() {
     const data = await apiGet<AdminSettingsResponse>("/admin/settings/admin-emails");
+    if (data.reason_policy) setAdminReasonContract(mergeAdminEmailsReasonContract(data.reason_policy));
     return data.admin_emails || [];
   }
 
@@ -258,16 +258,23 @@ export default function RootAdminsPage() {
       setError(TXT.badEmail);
       return;
     }
-    if (!reasonText) {
-      setError(TXT.needReason);
+    const full = await fetchAllAdminEmails();
+    const nextEmails = [...full, normalized];
+    const mode = resolveAdminEmailsReasonMode({
+      currentEmails: full,
+      nextEmails,
+      actorEmail: selfEmail,
+      policy: adminReasonContract.modes,
+    });
+    if (mode === "required" && !reasonText) {
+      setError(getReasonRequiredError(mode) || TXT.needReason);
       return;
     }
-    const full = await fetchAllAdminEmails();
     if (full.includes(normalized)) {
       setError(TXT.exists);
       return;
     }
-    await saveList([...full, normalized], reasonText);
+    await saveList(nextEmails, reasonText);
     setModalOpen(false);
     setNewEmail("");
     setAddReason("");
@@ -303,16 +310,24 @@ export default function RootAdminsPage() {
 
   async function removeSelected() {
     const reasonText = bulkReason.trim();
-    if (!reasonText) {
-      setError(TXT.needReason);
-      return;
-    }
     if (selected.length === 0) {
       setError(TXT.chooseRows);
       return;
     }
     if (!canBulkRemove) {
       setError(TXT.cannotForSelected);
+      return;
+    }
+    const full = await fetchAllAdminEmails();
+    const nextEmails = full.filter((x) => !removableSelected.includes(x));
+    const mode = resolveAdminEmailsReasonMode({
+      currentEmails: full,
+      nextEmails,
+      actorEmail: selfEmail,
+      policy: adminReasonContract.modes,
+    });
+    if (mode === "required" && !reasonText) {
+      setError(getReasonRequiredError(mode) || TXT.needReason);
       return;
     }
 
@@ -358,12 +373,34 @@ export default function RootAdminsPage() {
   const isDrawerSelf = drawerEmail.toLowerCase() === selfEmail;
   const isLastRootAdmin = adminCount <= 1;
   const canRemoveFromDrawer = !isDrawerSelf && !isLastRootAdmin;
+  const addReasonMode = adminReasonContract.modes.add_root_admin;
+  const removeReasonMode = adminReasonContract.modes.remove_other_root_admin;
+  const addReasonPlaceholder = getReasonPlaceholder(
+    addReasonMode,
+    "Причина изменения списка (необязательно, но рекомендуется)",
+  );
+  const removeReasonPlaceholder = getReasonPlaceholder(
+    removeReasonMode,
+    "Причина изменения списка (необязательно, но рекомендуется)",
+  );
+  const removeReasonHintText = adminReasonContract.hints[removeReasonMode];
+  const addReasonHintText = adminReasonContract.hints[addReasonMode];
+  const addReasonPresets = adminReasonContract.presets.add_root_admin || [];
+  const removeReasonPresets = adminReasonContract.presets.remove_other_root_admin || [];
 
   async function removeFromDrawer() {
     if (!canRemoveFromDrawer) return;
     const reasonText = drawerReason.trim();
-    if (!reasonText) {
-      setError(TXT.needReason);
+    const full = await fetchAllAdminEmails();
+    const nextEmails = full.filter((x) => x !== drawerEmail);
+    const mode = resolveAdminEmailsReasonMode({
+      currentEmails: full,
+      nextEmails,
+      actorEmail: selfEmail,
+      policy: adminReasonContract.modes,
+    });
+    if (mode === "required" && !reasonText) {
+      setError(getReasonRequiredError(mode) || TXT.needReason);
       return;
     }
     setConfirmState({ open: true, scope: "drawer", email: drawerEmail });
@@ -478,7 +515,7 @@ export default function RootAdminsPage() {
           })}
 
           {!isListLoading && rows.length === 0 && <div style={{ opacity: 0.75 }}>{TXT.noRows}</div>}
-          {hasMore && <div style={{ fontSize: 12, opacity: 0.72 }}>Показано: {rows.length} из {total}</div>}
+          {hasMore && <div style={{ fontSize: 12, opacity: 0.72 }}>Показано: {rows.length} из {total ?? "—"}</div>}
         </div>
       </Card>
 
@@ -499,17 +536,17 @@ export default function RootAdminsPage() {
                 <input
                   value={bulkReason}
                   onChange={(e) => setBulkReason(e.target.value)}
-                  placeholder={TXT.reasonRequired}
+                  placeholder={removeReasonPlaceholder}
                   style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
                 />
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {REMOVE_REASON_PRESETS.map((p) => (
+                  {removeReasonPresets.map((p) => (
                     <Button key={p} size="sm" variant="ghost" onClick={() => setBulkReason(p)} style={{ borderRadius: 999 }}>
                       {p}
                     </Button>
                   ))}
                 </div>
-                <div style={{ fontSize: 12, opacity: 0.78 }}>{TXT.reasonHint}</div>
+                <div style={{ fontSize: 12, opacity: 0.78 }}>{removeReasonHintText}</div>
               </>
             ) : (
               <>
@@ -529,12 +566,13 @@ export default function RootAdminsPage() {
           <Card style={{ width: 420, maxWidth: "92vw", padding: 14, background: "#1a1a1a" }}>
             <h3 style={{ marginTop: 0 }}>{TXT.addModalTitle}</h3>
             <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@company.com" style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10, marginBottom: 10 }} />
-            <input value={addReason} onChange={(e) => setAddReason(e.target.value)} placeholder={TXT.reasonRequired} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10, marginBottom: 10 }} />
+            <input value={addReason} onChange={(e) => setAddReason(e.target.value)} placeholder={addReasonPlaceholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10, marginBottom: 10 }} />
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-              {ADD_REASON_PRESETS.map((p) => (
+              {addReasonPresets.map((p) => (
                 <Button key={p} size="sm" variant="ghost" onClick={() => setAddReason(p)} style={{ borderRadius: 999 }}>{p}</Button>
               ))}
             </div>
+            <div style={{ fontSize: 12, opacity: 0.78, marginBottom: 10 }}>{addReasonHintText}</div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <Button variant="ghost" size="sm" onClick={() => setModalOpen(false)}>{TXT.cancel}</Button>
               <Button variant="primary" size="sm" onClick={addEmail}>OK</Button>
@@ -611,9 +649,9 @@ export default function RootAdminsPage() {
                 <div style={{ display: "grid", gap: 8 }}>
                   {canRemoveFromDrawer ? (
                     <>
-                      <input value={drawerReason} onChange={(e) => setDrawerReason(e.target.value)} placeholder={TXT.reasonRequired} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
+                      <input value={drawerReason} onChange={(e) => setDrawerReason(e.target.value)} placeholder={removeReasonPlaceholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {REMOVE_REASON_PRESETS.map((p) => (
+                        {removeReasonPresets.map((p) => (
                           <Button key={p} size="sm" variant="ghost" onClick={() => setDrawerReason(p)} style={{ borderRadius: 999 }}>{p}</Button>
                         ))}
                       </div>
@@ -622,7 +660,7 @@ export default function RootAdminsPage() {
                           {drawerActionLoading ? TXT.removing : TXT.removeOne}
                         </Button>
                       </div>
-                      <div style={{ fontSize: 12, opacity: 0.78 }}>{TXT.reasonHint}</div>
+                      <div style={{ fontSize: 12, opacity: 0.78 }}>{removeReasonHintText}</div>
                     </>
                   ) : (
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

@@ -1,4 +1,4 @@
-﻿import { parseApiDate } from "./datetime";
+﻿import { formatLocalDateTimeWithOffset, parseApiDate } from "./datetime";
 
 function parseNumericTimestamp(raw: number): number {
   // Accept both seconds and milliseconds epoch.
@@ -32,14 +32,12 @@ export function formatEventMarkerTime(raw: unknown): string | null {
   const seconds = toEventTimestampSeconds(raw);
   if (seconds === null) return null;
   const date = new Date(seconds * 1000);
-  const local = date.toLocaleString("ru-RU");
-  const utc = date.toISOString().replace("T", " ").replace("Z", " UTC");
-  return `Момент события: ${local} (локальное), ${utc}`;
+  return `Момент события: ${formatLocalDateTimeWithOffset(date, { locale: "ru-RU", includeDate: true, includeSeconds: true })}`;
 }
 
 export function formatEventMarkerLocalShort(raw: unknown): string | null {
   const seconds = toEventTimestampSeconds(raw);
   if (seconds === null) return null;
   const date = new Date(seconds * 1000);
-  return date.toLocaleString("ru-RU");
+  return formatLocalDateTimeWithOffset(date, { locale: "ru-RU", includeDate: false, includeSeconds: true });
 }

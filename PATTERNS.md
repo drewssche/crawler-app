@@ -237,6 +237,17 @@
 - reason сохраняется в audit-log.
 - Если действие заведомо неприменимо (self / последний админ / нарушает инвариант), control скрывается и заменяется поясняющим статусом, а не просто `disabled`.
 - Для полей `reason` в admin-операциях используем пресеты причин (чипы) + ручной ввод.
+- Source of truth для политики reason в bulk-действиях: backend action-catalog (`reason_mode`: `required/recommended/optional`); frontend рендер/валидация поля reason не должны хардкодить обязательность вне этого контракта.
+- Для управления списком системных администраторов (`/admin/settings/admin-emails`) reason-mode определяется backend policy по критичности изменения:
+  удаление другого root-admin -> `required`,
+  добавление root-admin -> `required`,
+  no-op изменение -> `optional`.
+  UI не хардкодит обязательность и следует backend policy-контракту.
+- Presets и hint-тексты для `reason` также backend-driven: frontend не хранит локальные списки пресетов для `admin-emails`,
+  а использует контракт `reason_policy` (`modes + presets + hints`) из API.
+- Для `Users`/context drawers (`Events`, `Activity`, `SidebarRight`) reason/presets/details берутся только из backend action catalog.
+- Applicability действий для выборки пользователей также backend-driven: frontend не вычисляет локально `isActionApplicable`,
+  а использует payload `/admin/users/actions/available` (`actions`, `applicable_by_action`, `applicable_by_user`).
 - В drawer-панелях блоки действий рендерятся компактно по контенту; избегаем пустого вертикального растяжения карточек.
 - Кнопки-линки внутри drawer (`Открыть...`) используем компактные (`size=sm`) и выравниваем по контенту (`fit-content`).
 
@@ -367,3 +378,70 @@
 ### Infinite-Scroll Optimization Sweep (required)
 - When count-less append is introduced for one feed, run the same review for all pages that use `useIncrementalPager`, and record plan/status in `TODO.md`.
 - For each page, document: before/after, UI counter contract, and regression verification.
+- For `FUTURE re-audit` waves, produce an explicit cross-page HIGH reconciliation matrix (`done + open`) with PATTERNS/REUSE linkage and page-level applicability (`applied / not applicable / gap`).
+
+## Active Intake Playbook (2026-02-24)
+- Keep `TODO.md` section `Next` as a single source for open items; do not append new open tasks to file tail.
+- For intake issues spanning pages (Monitoring/Activity/Users/Settings), implement in this order:
+  1. source-of-truth alignment (backend contract),
+  2. shared reusable helper/hook,
+  3. caller migration,
+  4. regression check and docs sync (`TODO.md`, `REUSE_INDEX.md`).
+- Extension rule for new features: `extend existing reusable > create new module`.
+- Mandatory acceptance checks for this intake wave:
+  - monitoring error visibility includes real 4xx/404 paths,
+  - export UX has pending state and no disruptive navigation,
+  - time rendering follows `local + UTC offset` contract across pages,
+  - Users/RootAdmins session-device metadata stays parity-consistent.
+
+## Time Presentation Contract
+- Default for operational UI (`Events`, `Activity`, `Monitoring`, `Sidebar`, drawers, cards):
+  render local user time with seconds and explicit offset: `HH:mm:ss (UTC±offset)` or full `DD.MM.YYYY, HH:mm:ss (UTC±offset)`.
+- Scheduling/planning screens (future feature): render dual time `local + UTC` to avoid timezone ambiguity.
+- Source of truth: shared datetime helpers in `frontend/src/utils/datetime.ts`; avoid local `toLocaleString/toLocaleTimeString` in page code.
+
+## Cross-Module Feature Extension Checklist
+- Scope first: define affected modules (`Monitoring`, `Events`, `Audit`, `RBAC`, `Settings`) and expected contract deltas.
+- Extend existing contract before new module:
+  - backend: reuse existing catalog/service (`admin_bulk`, `reason_policy`, `admin_monitoring`, summary endpoints);
+  - frontend: reuse existing hooks/utils (`catalogCache`, `settingsStatsCache`, `useIncrementalPager`, `useScheduledResetAndLoad`, `reasonPolicy`, `datetime`).
+- Add/adjust source-of-truth endpoint payload first, then migrate callers.
+- Keep route/page layer thin:
+  - no business rules in page components;
+  - UI uses backend-driven applicability/reason/labels/status.
+- Verification minimum for each extension:
+  - API contract check (payload shape + required fields),
+  - UI smoke route (`куда зайти -> что нажать -> что должно измениться`),
+  - no-regression checks (`tsc`, targeted tests where available).
+- Documentation sync is mandatory:
+  - update `TODO.md` (`что было/что стало/как проверить/вклад`),
+  - update `REUSE_INDEX.md` with concrete file refs for new/extended reusable blocks.
+
+## Monitoring Chart Interaction Contract
+- Use one shared interactive chart component (`frontend/src/components/monitoring/InteractiveLineChart.tsx`) for Monitoring page and drawer contexts.
+- Hover behavior is area-based by X-position:
+  - active point snaps to line under cursor X even if pointer is above/below line;
+  - crosshair (X/Y) appears with hover, no always-on point cloud in compact charts.
+- Render explicit time ticks under chart (not tooltip-only).
+- Click-to-zoom contract:
+  - compact card click opens enlarged in-page chart;
+  - enlarged chart closes by click on enlarged area (toggle, no extra caption/button).
+- Event-context charts (drawer) reuse the same component and may add marker lines:
+  - event timestamp marker;
+  - optional local spike markers from shared helper (`detectSpikeTimestamps`).
+
+## Monitoring Range Control Contract
+- Default range control uses quick presets (`15m/1h/6h/24h`) to keep interaction lightweight.
+- Optional precise mode uses slider `1..24h` (step `1h`) and must not replace quick presets.
+- Effective range is single source in page-state (`preset OR precise-slider`), reused by all monitoring history/focus loaders.
+
+## Monitoring Chart Config Contract
+- Chart titles/colors/keys are stored in shared config (`frontend/src/utils/monitoringChartConfig.ts`), not duplicated in page literals.
+- Default visible monitoring charts are scoped to operational pair (`http_requests`, `http_errors`);
+  extra series stay accessible via metrics table/export instead of always-on cards.
+
+## Hint Card Contract
+- Informational UI hints (tables/help blocks) use shared `HintCard` (`frontend/src/components/ui/HintCard.tsx`) for consistent accent style.
+- Reuse `HintCard` in both Settings/Users and Monitoring contexts to avoid page-level style drift.
+- Do not force accent style on surrounding functional containers (status/forms); accent applies only to hint content block.
+- Table-heavy hints should use shared `HintTable` (`frontend/src/components/ui/HintTable.tsx`) instead of local `<table>` markup.

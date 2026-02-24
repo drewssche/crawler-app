@@ -334,7 +334,7 @@ export default function EventsPage() {
       </FiltersBar>
 
       <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>
-        Загружено: {rows.length} из {total}
+        Загружено: {rows.length} из {total ?? "—"}
         {similar.trim() ? `${UI_BULLET}по фильтру: ${visibleRows.length}` : ""}
       </div>
 

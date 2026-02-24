@@ -1,12 +1,22 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet, apiPost, isAbortError } from "../api/client";
+import { formatLocalDateTimeWithOffset } from "../utils/datetime";
 import { downloadBlobFile } from "../utils/download";
 import { normalizeError } from "../utils/errors";
+import { buildMonitoringExportRequest } from "../utils/exportUrl";
+import {
+  MONITORING_PRIMARY_CHARTS,
+  MONITORING_STATUS_TOKENS,
+  type MonitoringPrimaryChartKey,
+} from "../utils/monitoringChartConfig";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import ClearableInput from "../components/ui/ClearableInput";
 import EmptyState from "../components/ui/EmptyState";
+import HintCard from "../components/ui/HintCard";
+import HintTable from "../components/ui/HintTable";
+import InteractiveLineChart from "../components/monitoring/InteractiveLineChart";
 import SegmentedControl from "../components/ui/SegmentedControl";
 import UiSelect from "../components/ui/UiSelect";
 import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll";
@@ -15,7 +25,6 @@ type MetricItem = { labels: Record<string, string>; value: number };
 type MetricsResponse = { counters: Record<string, MetricItem[]> };
 type HistoryPoint = { ts: number; value: number };
 type Group = "all" | "http" | "auth" | "admin" | "events";
-type HistoryRange = 15 | 60 | 360 | 1440;
 
 type MonitoringHistoryResponse = {
   enabled: boolean;
@@ -45,9 +54,6 @@ type HighlightKey =
   | "summary"
   | "http_requests"
   | "http_errors"
-  | "auth_starts"
-  | "admin_actions"
-  | "events_center"
   | "table"
   | "top_endpoints"
   | null;
@@ -97,38 +103,25 @@ function highlightStyle(active: boolean) {
     : {};
 }
 
-function buildPath(values: number[], w: number, h: number): string {
-  if (values.length < 2) return "";
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = Math.max(1, max - min);
-  return values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * (w - 8) + 4;
-      const y = h - 8 - ((v - min) / span) * (h - 16);
-      return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
-}
-
 function SmallHistoryCard({
   title,
   points,
   color,
   highlighted,
+  onZoom,
 }: {
   title: string;
   points?: HistoryPoint[];
   color: string;
   highlighted?: boolean;
+  onZoom?: () => void;
 }) {
   const values = (points || []).map((p) => Number(p.value || 0));
   const current = values.length ? values[values.length - 1] : 0;
   const delta = values.length > 1 ? values[values.length - 1] - values[0] : 0;
-  const path = buildPath(values, 280, 84);
 
   return (
-    <Card style={highlightStyle(Boolean(highlighted))}>
+    <Card style={highlightStyle(Boolean(highlighted))} className={onZoom ? "interactive-row" : undefined} onClick={onZoom}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
         <div style={{ fontWeight: 700 }}>{title}</div>
         <div style={{ fontSize: 12, opacity: 0.8 }}>текущее: {current.toFixed(0)}</div>
@@ -138,9 +131,12 @@ function SmallHistoryCard({
       ) : (
         <>
           <div style={{ marginTop: 6 }}>
-            <svg width="100%" height="84" viewBox="0 0 280 84" preserveAspectRatio="none">
-              <path d={path} fill="none" stroke={color} strokeWidth="2" />
-            </svg>
+            <InteractiveLineChart
+              points={points || []}
+              color={color}
+              label={title}
+              minTickSpacingPx={108}
+            />
           </div>
           <div style={{ fontSize: 12, opacity: 0.75 }}>Δ: {delta >= 0 ? "+" : ""}{delta.toFixed(0)}</div>
         </>
@@ -161,7 +157,6 @@ function BigChart({
   highlighted?: boolean;
 }) {
   const values = (points || []).map((p) => Number(p.value || 0));
-  const w = 620;
   const h = 180;
   if (values.length < 2) {
     return (
@@ -174,20 +169,7 @@ function BigChart({
 
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const mid = min + (max - min) / 2;
-  const span = Math.max(1, max - min);
-  const pointsData = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * (w - 80) + 50;
-      const y = h - 20 - ((v - min) / span) * (h - 40);
-      return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
-  const ticks = [max, mid, min];
-  const t1 = new Date((points?.[0]?.ts || 0) * 1000).toLocaleTimeString("ru-RU");
-  const t2 = new Date((points?.[points.length - 1]?.ts || 0) * 1000).toLocaleTimeString("ru-RU");
   const d = values[values.length - 1] - values[0];
-  const y = (v: number) => h - 20 - ((v - min) / span) * (h - 40);
 
   return (
     <Card style={highlightStyle(Boolean(highlighted))}>
@@ -198,22 +180,16 @@ function BigChart({
           {d.toFixed(0)}
         </div>
       </div>
-      <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-        {ticks.map((tick) => (
-          <g key={tick}>
-            <line x1={50} y1={y(tick)} x2={w - 10} y2={y(tick)} stroke="#3335" strokeWidth="1" />
-            <text x={4} y={y(tick) + 4} fill="#bbb" fontSize="11">
-              {tick.toFixed(0)}
-            </text>
-          </g>
-        ))}
-        <line x1={50} y1={20} x2={50} y2={h - 20} stroke="#3337" strokeWidth="1" />
-        <path d={pointsData} fill="none" stroke={color} strokeWidth="2.2" />
-      </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, opacity: 0.7 }}>
-        <span>{t1}</span>
-        <span>{t2}</span>
-      </div>
+      <InteractiveLineChart
+        points={points || []}
+        color={color}
+        label={title}
+        height={h}
+        chartWidth={760}
+        showYAxis
+        tickCount={5}
+        minTickSpacingPx={140}
+      />
     </Card>
   );
 }
@@ -231,13 +207,17 @@ export default function MonitoringPage() {
   const [lastUpdated, setLastUpdated] = useState("");
   const [editingThresholds, setEditingThresholds] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showServiceCharts, setShowServiceCharts] = useState(false);
+  const [zoomSeries, setZoomSeries] = useState<MonitoringPrimaryChartKey | null>(null);
+  const [customRangeEnabled, setCustomRangeEnabled] = useState(false);
+  const [customRangeHours, setCustomRangeHours] = useState(1);
 
   const [group, setGroup] = useState<Group>((params.get("group") as Group) || "all");
   const [query, setQuery] = useState(params.get("query") || "");
-  const [historyRange, setHistoryRange] = useState<HistoryRange>(60);
+  const [historyRangePreset, setHistoryRangePreset] = useState(60);
   const [rowsVisible, setRowsVisible] = useState(BASE_ROWS);
   const [exportFormat, setExportFormat] = useState<"csv" | "xlsx">("csv");
+  const [exportPending, setExportPending] = useState(false);
+  const [exportProgress, setExportProgress] = useState<number | null>(null);
   const tableCardRef = useRef<HTMLDivElement | null>(null);
   const metricsAbortRef = useRef<AbortController | null>(null);
   const settingsAbortRef = useRef<AbortController | null>(null);
@@ -247,6 +227,7 @@ export default function MonitoringPage() {
   const focusMetric = params.get("focus_metric") || "";
   const focusPath = params.get("focus_path") || "";
   const hasEventContext = Boolean(highlightKey || focusMetric || focusPath);
+  const historyRange = customRangeEnabled ? customRangeHours * 60 : historyRangePreset;
 
   function clearEventContext() {
     setGroup("all");
@@ -273,7 +254,7 @@ export default function MonitoringPage() {
       if (metricsAbortRef.current !== controller) return;
       setMetrics(m.counters || {});
       setHistory(h);
-      setLastUpdated(new Date().toLocaleTimeString("ru-RU"));
+      setLastUpdated(formatLocalDateTimeWithOffset(new Date(), { locale: "ru-RU", includeDate: false, includeSeconds: true }));
     } catch (e) {
       if (isAbortError(e)) return;
       setError(normalizeError(e));
@@ -364,11 +345,58 @@ export default function MonitoringPage() {
     () => ({
       req: sumMetric(metrics.http_requests_total),
       err: sumMetric(metrics.http_errors_total),
-      auth: sumMetric(metrics.auth_start_total),
-      admin: sumMetric(metrics.admin_action_total),
     }),
     [metrics],
   );
+
+  const zoomConfig = useMemo(() => {
+    const hit = MONITORING_PRIMARY_CHARTS.find((c) => c.key === zoomSeries);
+    if (!hit) return null;
+    const points = hit.key === "http_requests" ? history?.series?.http_requests || [] : history?.series?.http_errors || [];
+    return { title: `Увеличенный график: ${hit.title}`, color: hit.color, points };
+  }, [history?.series?.http_errors, history?.series?.http_requests, zoomSeries]);
+
+  const chartSeries = useMemo(
+    () =>
+      MONITORING_PRIMARY_CHARTS.map((c) => ({
+        ...c,
+        points: c.key === "http_requests" ? history?.series?.http_requests || [] : history?.series?.http_errors || [],
+      })),
+    [history?.series?.http_errors, history?.series?.http_requests],
+  );
+
+  const thresholdHints = useMemo(
+    () => ({
+      warnDelta: "Сколько новых ошибок за шаг графика нужно для warning.",
+      warnRate: "Доля ошибок (%) за шаг графика, после которой включается warning.",
+      critDelta: "Сколько новых ошибок за шаг графика нужно для критичного статуса.",
+      critRate: "Доля ошибок (%) за шаг графика, после которой включается критичный статус.",
+    }),
+    [],
+  );
+
+  function applyPresetRange(minutes: number) {
+    setCustomRangeEnabled(false);
+    setHistoryRangePreset(minutes);
+  }
+
+  function toggleZoom(next: MonitoringPrimaryChartKey) {
+    setZoomSeries((prev) => (prev === next ? null : next));
+  }
+
+  function resetThresholdsToRecommended() {
+    setSettings((prev) =>
+      prev
+        ? {
+            ...prev,
+            warn_error_delta: 1,
+            warn_error_rate: 3,
+            crit_error_delta: 3,
+            crit_error_rate: 10,
+          }
+        : prev,
+    );
+  }
 
   const summary = useMemo(() => {
     const reqDelta = Math.max(0, latest(history?.series?.http_requests) - prev(history?.series?.http_requests));
@@ -393,6 +421,14 @@ export default function MonitoringPage() {
     return { level, title, reqDelta, errDelta, invalid, rate };
   }, [history, settings]);
 
+  const statusLabel = useMemo(() => `Статус: ${summary.title}`, [summary.title]);
+  const statusTone = MONITORING_STATUS_TOKENS[summary.level];
+
+  const lastUpdatedLabel = useMemo(() => {
+    if (!lastUpdated) return "Последнее обновление: —";
+    return `Последнее обновление: ${lastUpdated}`;
+  }, [lastUpdated]);
+
   async function saveThresholds() {
     if (!settings) return;
     setError("");
@@ -414,13 +450,23 @@ export default function MonitoringPage() {
   }
 
   async function exportMetrics() {
+    if (exportPending) return;
+    setExportPending(true);
+    setExportProgress(null);
     try {
-      const qp = new URLSearchParams({ group, query });
-      const ext = exportFormat;
-      const url = `/metrics/export.${ext}?${qp.toString()}`;
-      await downloadBlobFile(url, `metrics.${ext}`);
+      const req = buildMonitoringExportRequest({
+        format: exportFormat,
+        group,
+        query,
+      });
+      await downloadBlobFile(req.url, req.filename, {
+        onProgress: (progress) => setExportProgress(progress.percent),
+      });
     } catch (e) {
       setError(normalizeError(e));
+    } finally {
+      setExportPending(false);
+      setExportProgress(null);
     }
   }
 
@@ -486,22 +532,35 @@ export default function MonitoringPage() {
         <h2 style={{ marginTop: 0, marginBottom: 4 }}>Мониторинг</h2>
       </div>
 
-      <Card style={highlightStyle(highlightKey === "summary")}>
-        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr auto auto", gap: 10, alignItems: "center", marginBottom: 10 }}>
-          <div style={{ fontSize: 28, fontWeight: 800, color: summary.level === "crit" ? "#ff8f8f" : summary.level === "warn" ? "#ffcf8a" : "#d8e9ff" }}>
-            {summary.title}
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gap: 2 }}>
+            <div
+              style={{
+                fontSize: 24,
+                fontWeight: 800,
+                whiteSpace: "nowrap",
+                color: statusTone.titleColor,
+              }}
+            >
+              {statusLabel}
+            </div>
+            <div style={{ opacity: 0.88, fontSize: 13 }}>{lastUpdatedLabel}</div>
+            <div style={{ opacity: 0.88, fontSize: 13 }}>
+              За интервал: errors +{summary.errDelta.toFixed(0)}, requests +{summary.reqDelta.toFixed(0)}, error-rate {summary.rate.toFixed(1)}%
+            </div>
           </div>
-          <div style={{ opacity: 0.85, fontSize: 13 }}>
-            за последнее обновление: errors +{summary.errDelta.toFixed(0)}, requests +{summary.reqDelta.toFixed(0)}, error-rate {summary.rate.toFixed(1)}%
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ opacity: 0.85, fontSize: 13 }}>invalid_code: {summary.invalid.toFixed(0)}</div>
+            <Button onClick={() => setEditingThresholds((v) => !v)}>
+              {editingThresholds ? "Скрыть пороги" : "Настроить пороги"}
+            </Button>
           </div>
-          <div style={{ opacity: 0.85, fontSize: 13 }}>invalid_code total: {summary.invalid.toFixed(0)}</div>
-          <Button onClick={() => setEditingThresholds((v) => !v)}>
-            {editingThresholds ? "Скрыть пороги" : "Настроить пороги"}
-          </Button>
         </div>
 
         {editingThresholds && settings && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(140px, 1fr)) auto", gap: 8, alignItems: "end" }}>
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(140px, 1fr)) auto auto", gap: 8, alignItems: "end" }}>
             <label style={{ display: "grid", gap: 4 }}>
               <span style={{ fontSize: 12, opacity: 0.8 }}>warn: delta</span>
               <input type="number" min={0} step={0.1} value={settings.warn_error_delta} onChange={(e) => setSettings((p) => (p ? { ...p, warn_error_delta: Number(e.target.value) } : p))} style={{ padding: "8px 10px", borderRadius: 10 }} />
@@ -521,14 +580,33 @@ export default function MonitoringPage() {
             <Button onClick={saveThresholds} variant="primary">
               Сохранить
             </Button>
+            <Button onClick={resetThresholdsToRecommended} variant="secondary">
+              Рекомендованные
+            </Button>
+            </div>
+            <HintCard title="Подсказка по порогам" style={{ padding: 10 }}>
+              <HintTable
+                columns={[
+                  { key: "threshold", label: "Порог", align: "left" },
+                  { key: "meaning", label: "Что означает", align: "left" },
+                ]}
+                rows={[
+                  { id: "warn-delta", cells: { threshold: "warn: delta", meaning: thresholdHints.warnDelta } },
+                  { id: "warn-rate", cells: { threshold: "warn: rate %", meaning: thresholdHints.warnRate } },
+                  { id: "crit-delta", cells: { threshold: "crit: delta", meaning: thresholdHints.critDelta } },
+                  { id: "crit-rate", cells: { threshold: "crit: rate %", meaning: thresholdHints.critRate } },
+                ]}
+                fontSize={12}
+                cellPadding="6px 4px"
+              />
+              <div style={{ opacity: 0.74, fontSize: 12 }}>Пример: 5 ошибок из 100 запросов = 5%.</div>
+            </HintCard>
           </div>
         )}
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, marginTop: 10 }}>
           <Card className="interactive-row" style={{ ...highlightStyle(highlightKey === "http_requests"), cursor: "pointer" }} onClick={() => focusOnMetric("http", "http_requests_total")}><div style={{ fontSize: 12, opacity: 0.75 }}>HTTP запросы</div><div style={{ fontSize: 30, fontWeight: 700 }}>{kpi.req}</div></Card>
           <Card className="interactive-row" style={{ ...highlightStyle(highlightKey === "http_errors"), cursor: "pointer" }} onClick={() => focusOnMetric("http", "http_errors_total")}><div style={{ fontSize: 12, opacity: 0.75 }}>HTTP ошибки</div><div style={{ fontSize: 30, fontWeight: 700 }}>{kpi.err}</div></Card>
-          <Card className="interactive-row" style={{ ...highlightStyle(highlightKey === "auth_starts"), cursor: "pointer" }} onClick={() => focusOnMetric("auth", "auth_start_total")}><div style={{ fontSize: 12, opacity: 0.75 }}>Старт авторизации</div><div style={{ fontSize: 30, fontWeight: 700 }}>{kpi.auth}</div></Card>
-          <Card className="interactive-row" style={{ ...highlightStyle(highlightKey === "admin_actions"), cursor: "pointer" }} onClick={() => focusOnMetric("admin", "admin_action_total")}><div style={{ fontSize: 12, opacity: 0.75 }}>Admin действия</div><div style={{ fontSize: 30, fontWeight: 700 }}>{kpi.admin}</div></Card>
         </div>
       </Card>
 
@@ -540,31 +618,75 @@ export default function MonitoringPage() {
           highlighted
         />
       )}
+      {zoomConfig && (
+        <Card className="interactive-row" style={{ ...highlightStyle(true), display: "grid", gap: 8, cursor: "pointer" }} onClick={() => setZoomSeries(null)}>
+          <div style={{ fontWeight: 700 }}>{zoomConfig.title}</div>
+          <InteractiveLineChart
+            points={zoomConfig.points}
+            color={zoomConfig.color}
+            label={zoomConfig.title}
+            height={220}
+            chartWidth={760}
+            showYAxis
+            tickCount={6}
+            minTickSpacingPx={180}
+            smoothHover
+          />
+        </Card>
+      )}
 
       <Card>
         <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
           <div style={{ fontWeight: 700 }}>Исторические графики (Prometheus)</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <UiSelect value={historyRange} onChange={(e) => setHistoryRange(Number(e.target.value) as HistoryRange)}>
-              <option value={15}>15 минут</option>
-              <option value={60}>1 час</option>
-              <option value={360}>6 часов</option>
-              <option value={1440}>24 часа</option>
-            </UiSelect>
-            <Button onClick={refreshMonitoring} variant="secondary">Обновить графики</Button>
-            <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13, opacity: 0.85 }}>
-              <input type="checkbox" checked={showServiceCharts} onChange={(e) => setShowServiceCharts(e.target.checked)} />
-              Показать служебные
-            </label>
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {[
+                { label: "15м", value: 15 },
+                { label: "1ч", value: 60 },
+                { label: "6ч", value: 360 },
+                { label: "24ч", value: 1440 },
+              ].map((preset) => (
+                <Button
+                  key={preset.value}
+                  size="sm"
+                  variant={!customRangeEnabled && historyRangePreset === preset.value ? "primary" : "ghost"}
+                  onClick={() => applyPresetRange(preset.value)}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+              <Button size="sm" variant={customRangeEnabled ? "primary" : "ghost"} onClick={() => setCustomRangeEnabled((v) => !v)}>
+                Точный (1-24ч)
+              </Button>
+            <Button onClick={refreshMonitoring} variant="secondary">Обновить сейчас</Button>
+            </div>
+            {customRangeEnabled && (
+              <div style={{ display: "grid", gap: 4 }}>
+                <input
+                  type="range"
+                  min={1}
+                  max={24}
+                  step={1}
+                  value={customRangeHours}
+                  onChange={(e) => setCustomRangeHours(Number(e.target.value))}
+                />
+                <div style={{ fontSize: 12, opacity: 0.78 }}>Окно графика: {customRangeHours} ч ({customRangeHours * 60} минут)</div>
+              </div>
+            )}
           </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8, marginTop: 8 }}>
-          <SmallHistoryCard title="HTTP запросы" points={history?.series?.http_requests} color="#78a8ff" highlighted={highlightKey === "http_requests"} />
-          <SmallHistoryCard title="HTTP ошибки" points={history?.series?.http_errors} color="#f08f8f" highlighted={highlightKey === "http_errors"} />
-          <SmallHistoryCard title="Старт авторизации" points={history?.series?.auth_starts} color="#8dded6" highlighted={highlightKey === "auth_starts"} />
-          <SmallHistoryCard title="Admin действия" points={history?.series?.admin_actions} color="#ffb56a" highlighted={highlightKey === "admin_actions"} />
-          {showServiceCharts && <SmallHistoryCard title="Центр событий" points={history?.series?.events_center} color="#9d8fff" highlighted={highlightKey === "events_center"} />}
+          {chartSeries.map((chart) => (
+            <SmallHistoryCard
+              key={chart.key}
+              title={chart.title}
+              points={chart.points}
+              color={chart.color}
+              highlighted={highlightKey === chart.highlightKey}
+              onZoom={() => toggleZoom(chart.key)}
+            />
+          ))}
         </div>
       </Card>
 
@@ -639,7 +761,9 @@ export default function MonitoringPage() {
               <option value="csv">CSV</option>
               <option value="xlsx">XLSX</option>
             </UiSelect>
-            <Button onClick={exportMetrics} variant="secondary">Экспорт</Button>
+            <Button onClick={exportMetrics} variant="secondary" disabled={exportPending}>
+              {exportPending ? `Экспорт${exportProgress != null ? ` ${exportProgress}%` : "..."}` : "Экспорт"}
+            </Button>
           </div>
         </div>
 

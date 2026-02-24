@@ -4,13 +4,13 @@ import { markEventRead, setEventDismissed, setEventHandled, type EventItem } fro
 import { apiPost } from "../../api/client";
 import { useAuth } from "../../hooks/auth";
 import { runEventPrimaryAction } from "../../utils/eventPrimaryAction";
-import { formatApiTime } from "../../utils/datetime";
+import { formatApiTime, formatLocalDateTimeWithOffset } from "../../utils/datetime";
 import { UI_BULLET } from "../../utils/uiText";
 import { getEventRelevance } from "../../utils/relevance";
 import { getMonitoringFocusMeta, loadMonitoringContext, type FocusHistoryResponse } from "../../utils/monitoringContext";
 import { getAuditActionCatalogCached, getUserAndTrustCatalogsCached } from "../../utils/catalogCache";
 import { loadUserContextByEmail, loadUserContextById } from "../../utils/userContext";
-import { refreshEventCenterPollingNow, subscribeEventCenterPolling } from "../../utils/eventCenterPollingManager";
+import { subscribeEventCenterPolling } from "../../utils/eventCenterPollingManager";
 import { useGuardedAsyncState } from "../../hooks/useGuardedAsyncState";
 import Button from "../ui/Button";
 import Card from "../ui/Card";
@@ -427,7 +427,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
     }
     if (notificationsChanged || actionsChanged || error) {
       setError("");
-      setLastUpdated(new Date().toLocaleTimeString());
+      setLastUpdated(formatLocalDateTimeWithOffset(new Date(), { locale: "ru-RU", includeDate: false, includeSeconds: true }));
     }
 
     const topNotification = data.notifications[0];
@@ -635,19 +635,21 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   const sectionHeader = useMemo(
     () => (
       <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between", fontSize: 12, opacity: 0.85 }}>
-        <Button
-          onClick={() => {
-            refreshEventCenterPollingNow().catch(() => {
-              setError("Центр событий недоступен (только для администратора).");
-            });
-          }}
-          size="sm"
-          variant="secondary"
-        >
-          Обновить
-        </Button>
         <Button onClick={() => navigate("/events")} size="sm" variant="ghost">Показать все</Button>
-        <span>{lastUpdated ? `обновлено: ${lastUpdated}` : ""}</span>
+        <span
+          title={lastUpdated ? `Обновлено: ${lastUpdated}` : ""}
+          style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+          aria-label={lastUpdated ? `Обновлено: ${lastUpdated}` : "Не обновлялось"}
+        >
+          {lastUpdated ? (
+            <>
+              <span aria-hidden="true" style={{ opacity: 0.75 }}>↻</span>
+              <span>{lastUpdated}</span>
+            </>
+          ) : (
+            ""
+          )}
+        </span>
       </div>
     ),
     [lastUpdated, navigate],

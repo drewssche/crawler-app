@@ -5,6 +5,7 @@ import ConfirmDialog from "../ui/ConfirmDialog";
 import RoleBadge from "../ui/RoleBadge";
 import UiSelect from "../ui/UiSelect";
 import TrustPolicyDetailChips from "./TrustPolicyDetailChips";
+import { getReasonMode, getReasonPlaceholder, getReasonRequiredError, type ReasonMode } from "../../utils/reasonPolicy";
 
 export type TrustPolicy = "strict" | "standard" | "extended" | "permanent";
 export type UserRole = "viewer" | "editor" | "admin";
@@ -28,6 +29,7 @@ export type ActionCatalogItem = {
   critical: boolean;
   details?: string;
   reason_required?: boolean;
+  reason_mode?: ReasonMode;
   reason_presets?: string[];
   approve_roles?: Record<string, string>;
 };
@@ -140,6 +142,7 @@ export default function UserActionPanel({
   }, [action, filteredAvailableActions]);
 
   const meta = effectiveAction ? actionCatalog[effectiveAction] : undefined;
+  const reasonMode = getReasonMode(meta);
   const trustMeta = trustPolicyCatalog[trustPolicy];
   const applicableCount =
     effectiveAction && applicableCountByAction ? (applicableCountByAction[effectiveAction] ?? selectedCount) : selectedCount;
@@ -182,8 +185,8 @@ export default function UserActionPanel({
       setError("Для выбранного действия нет подходящих пользователей.");
       return;
     }
-    if (meta?.reason_required && !reason.trim()) {
-      setError("Для этого действия требуется причина.");
+    if (reasonMode === "required" && !reason.trim()) {
+      setError(getReasonRequiredError(reasonMode));
       return;
     }
     const payload = {
@@ -327,7 +330,7 @@ export default function UserActionPanel({
             <input
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder={meta?.reason_required ? "Причина действия (обязательно)" : reasonOptionalPlaceholder}
+              placeholder={getReasonPlaceholder(reasonMode, reasonOptionalPlaceholder)}
               style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8 }}
             />
 

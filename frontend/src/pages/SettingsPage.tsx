@@ -4,14 +4,9 @@ import Card from "../components/ui/Card";
 import { useAuth } from "../hooks/auth";
 import { hasPermission } from "../utils/permissions";
 import {
-  getAudit24hCountCached,
-  getMonitoringStateCached,
-  getPendingUsersCountCached,
-  getRootAdminsCountCached,
+  getSettingsSummaryCached,
 } from "../utils/settingsStatsCache";
 import {
-  getEventCenterUnreadShared,
-  getEventCenterUnreadSnapshot,
   subscribeEventCenterUnread,
 } from "../utils/eventCenterUnreadStore";
 
@@ -104,88 +99,50 @@ export default function SettingsPage() {
     async function loadStats() {
       const tasks: Array<Promise<void>> = [];
 
-      if (canManageUsers) {
+      if (canManageUsers || canManageRootAdmins || canViewEvents || canViewAudit) {
         tasks.push(
-          getPendingUsersCountCached()
-            .then((count) => {
+          getSettingsSummaryCached(true)
+            .then((summary) => {
               if (cancelled) return;
-              setPendingCount(count);
-              setDiagUsersOk(true);
+              if (canManageUsers) {
+                setPendingCount(summary.pendingUsers.value);
+                setDiagUsersOk(summary.pendingUsers.sourceOk);
+              }
+              if (canManageRootAdmins) {
+                setRootAdminsCount(summary.rootAdmins.value);
+                setDiagRootAdminsOk(summary.rootAdmins.sourceOk);
+              }
+              if (canViewEvents) {
+                setEventsUnread(summary.eventsUnread.value);
+                setDiagEventsOk(summary.eventsUnread.sourceOk);
+              }
+              if (canViewAudit) {
+                setAudit24h(summary.audit24h.value);
+                setDiagAuditOk(summary.audit24h.sourceOk);
+                setMonitoringState(summary.monitoring.state);
+                setDiagMonitoringOk(summary.monitoring.sourceOk);
+              }
             })
             .catch(() => {
               if (cancelled) return;
-              setPendingCount(null);
-              setDiagUsersOk(false);
-            }),
-        );
-      }
-
-      if (canManageRootAdmins) {
-        tasks.push(
-          getRootAdminsCountCached()
-            .then((count) => {
-              if (cancelled) return;
-              setRootAdminsCount(count);
-              setDiagRootAdminsOk(true);
-            })
-            .catch(() => {
-              if (cancelled) return;
-              setRootAdminsCount(null);
-              setDiagRootAdminsOk(false);
-            }),
-        );
-      }
-
-      if (canViewEvents) {
-        tasks.push(
-          (async () => {
-            const local = getEventCenterUnreadSnapshot();
-            if (local) {
-              if (cancelled) return;
-              setEventsUnread(local.totalUnread);
-              setDiagEventsOk(true);
-              return;
-            }
-            try {
-              const shared = await getEventCenterUnreadShared();
-              if (cancelled) return;
-              setEventsUnread(shared.totalUnread);
-              setDiagEventsOk(true);
-            } catch {
-              if (cancelled) return;
-              setEventsUnread(null);
-              setDiagEventsOk(false);
-            }
-          })(),
-        );
-      }
-
-      if (canViewAudit) {
-        tasks.push(
-          getAudit24hCountCached()
-            .then((count) => {
-              if (cancelled) return;
-              setAudit24h(count);
-              setDiagAuditOk(true);
-            })
-            .catch(() => {
-              if (cancelled) return;
-              setAudit24h(null);
-              setDiagAuditOk(false);
-            }),
-        );
-
-        tasks.push(
-          getMonitoringStateCached()
-            .then((state) => {
-              if (cancelled) return;
-              setMonitoringState(state);
-              setDiagMonitoringOk(true);
-            })
-            .catch(() => {
-              if (cancelled) return;
-              setMonitoringState("нет данных");
-              setDiagMonitoringOk(false);
+              if (canManageUsers) {
+                setPendingCount(null);
+                setDiagUsersOk(false);
+              }
+              if (canManageRootAdmins) {
+                setRootAdminsCount(null);
+                setDiagRootAdminsOk(false);
+              }
+              if (canViewEvents) {
+                setEventsUnread(null);
+                setDiagEventsOk(false);
+              }
+              if (canViewAudit) {
+                setAudit24h(null);
+                setDiagAuditOk(false);
+                setMonitoringState("нет данных");
+                setDiagMonitoringOk(false);
+              }
             }),
         );
       }

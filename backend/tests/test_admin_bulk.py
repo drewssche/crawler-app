@@ -7,6 +7,7 @@ from app.services.admin_bulk import (
     BulkActionPayload,
     available_actions_for_user,
     available_actions_for_users,
+    bulk_action_catalog_payload,
     execute_bulk_action_for_user,
 )
 
@@ -160,3 +161,12 @@ def test_execute_revoke_trusted_devices_updates_rows_and_reason(db_session):
     assert result["action"] == "revoke_trusted_devices"
     assert logs[0][1]["reason"] == "Сброс устройств"
     assert logs[0][1]["revoked_count"] == 2
+
+
+def test_bulk_action_catalog_reason_mode_is_consistent():
+    catalog = bulk_action_catalog_payload(include_admin_role=True)
+    actions = {item["action"]: item for item in catalog["actions"]}
+
+    assert actions["set_role"]["reason_mode"] in {"recommended", "optional"}
+    assert actions["delete_hard"]["reason_mode"] == "required"
+    assert actions["approve"]["reason_mode"] in {"recommended", "optional"}

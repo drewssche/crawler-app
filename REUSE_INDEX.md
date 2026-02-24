@@ -13,6 +13,14 @@
 - `frontend/src/components/ui/UiSelect.tsx`
   Единый `select`-паттерн (стиль + стрелка + focus/hover).
 
+- `frontend/src/components/ui/HintCard.tsx`
+  Единый визуальный паттерн подсказок (accent-card с заголовком/описанием/контентом).
+  Используется в `RolePermissionsHint` и в подсказке порогов `MonitoringPage`.
+
+- `frontend/src/components/ui/HintTable.tsx`
+  Единый табличный паттерн для hint-блоков (колонки/строки/align/padding).
+  Используется в `RolePermissionsHint` и в подсказке порогов `MonitoringPage`.
+
 - `frontend/src/components/ui/ClearableInput.tsx`
   Поисковые поля с очисткой `×`.
 
@@ -113,8 +121,12 @@
   Убирает повторные загрузки при повторных маунтах hint-компонента.
 
 - `frontend/src/utils/download.ts`
-  Единый download-flow для export-сценариев (`apiDownload + objectURL + revoke`) через `downloadBlobFile(path, filename)`.
-  Подключен в `MonitoringPage` и `ActivityLogPage`.
+  Единый download-flow для export-сценариев (`apiDownloadWithProgress + objectURL + revoke`) через
+  `downloadBlobFile(path, filename, { onProgress })`.
+  Подключен в `MonitoringPage` и `ActivityLogPage` (pending/progress без навигации).
+
+- `frontend/src/utils/exportUrl.ts`
+  Единый builder export URL для `ActivityLogPage` (`audit/login`) и `MonitoringPage` (`metrics`) с синхронизацией фильтров.
 
 - `frontend/src/utils/errors.ts`
   Единая нормализация ошибок UI (`normalizeError(error)`), чтобы не дублировать `String(e)`/локальные функции.
@@ -178,6 +190,12 @@
   Единый парсинг/формат времени события:
   `eventTimestampFromMetaOrCreatedAt`, `formatEventMarkerTime`, `formatEventMarkerLocalShort`.
 
+- `frontend/src/utils/datetime.ts`
+  Единый контракт отображения времени в operational UI:
+  `formatApiDateTime` -> `DD.MM.YYYY, HH:mm:ss (UTC±offset)`,
+  `formatApiTime` -> `HH:mm:ss (UTC±offset)`,
+  плюс shared helpers для timezone offset.
+
 - `frontend/src/utils/eventLabels.ts`
   Единый mapping сырых event-enum значений в UI-лейблы:
   `eventChannelLabel`, `eventSeverityLabel`, `eventReadStatusLabel`, `eventHandledStatusLabel`.
@@ -215,7 +233,7 @@
 - `frontend/src/utils/userContext.ts`, `frontend/src/utils/monitoringContext.ts`
 
 ### Сетевые и служебные утилиты
-- `frontend/src/api/client.ts` (`signal`, `isAbortError`, `apiDownload`)
+- `frontend/src/api/client.ts` (`signal`, `isAbortError`, `apiDownload`, `apiDownloadWithProgress`)
 - `frontend/src/utils/download.ts`, `frontend/src/utils/errors.ts`
 - `frontend/src/utils/datetime.ts`, `frontend/src/utils/eventTime.ts`, `frontend/src/utils/eventLabels.ts`, `frontend/src/utils/eventRouting.ts`, `frontend/src/utils/eventPrimaryAction.ts`
 - `frontend/src/utils/userAgent.ts`, `frontend/src/utils/uiText.ts`
@@ -307,6 +325,11 @@
 - backend/app/services/admin_serializers.py: shared user-details serializers/anomaly builder (`serialize_user_details_login_history`, `serialize_user_details_admin_actions`, `build_user_details_anomalies`) replace inline route mappings in admin.py.
 - backend/app/api/admin.py export routes now reuse iterator chain `iter_serialized_* -> iter_*_export_rows` with `yield_per`, removing eager materialization (`query.all()`) in audit/login-history export paths.
 - backend/app/core/export_utils.py: existing `xlsx_attachment_response` extended to `Workbook(write_only=True)` for lower export memory footprint (module reused, no new export module).
+- backend/app/services/admin_bulk.py + frontend/src/components/users/UserActionPanel.tsx: shared reason-policy contract via catalog field `reason_mode` (`required/recommended/optional`), UI reason validation/placeholder now follows backend source-of-truth.
+- backend/app/services/reason_policy.py + frontend/src/utils/reasonPolicy.ts: unified reason-policy contract for `/admin/settings/admin-emails` (`add/remove-other -> required`, `no-op -> optional`) reused by backend enforcement and frontend UX.
+- backend `reason_policy` contract extended to `modes + presets + hints`; `RootAdminsPage` consumes this payload and no longer stores local presets/hints.
+- backend `/admin/users/actions/available` now serves applicability matrix (`applicable_by_action`, `applicable_by_user`); `UsersPage` reuses backend matrix and removed local `isActionApplicable` rule duplication.
+- backend/tests/test_api_integration.py + backend/tests/test_admin_bulk.py: reason-policy parity checks added for required/non-required flows (`set_role`, `remove_approve`, `/admin/settings/admin-emails`).
 
 
 - `backend/app/services/admin_queries.py` + `backend/app/services/admin_serializers.py`
@@ -326,3 +349,29 @@
 - `useActivityFeed` now reuses count-less append contract (`include_total` only for page 1) for both `/admin/audit` and `/admin/login-history`, paired with shared `useIncrementalPager` fallback total/hasMore behavior.
 
 - `useUsersList` now reuses count-less append contract (`include_total` only for page 1) for `/admin/users`, aligned with shared `useIncrementalPager` total/hasMore fallback behavior.
+
+- Governance check: cross-page HIGH reconciliation completed (`AUDIT_HIGH_REVALIDATION_2026-02-24.md`), reuse/pattern coverage confirmed for current infinite-scroll and export hot paths.
+- Governance update (re-audit pass 2): cross-page HIGH reconciliation matrix refreshed (`AUDIT_HIGH_REVALIDATION_2026-02-24.md`) with done+open coverage and explicit page applicability.
+- Backend alignment fix: `/admin/audit` list route now respects `include_total`, so `useActivityFeed` count-less append contract is now fully effective for both `/admin/audit` and `/admin/login-history`.
+
+## Active Reuse Targets (intake wave)
+- `frontend/src/utils/reasonPolicy.ts`: единый модуль reason-policy (`required/recommended/optional`, placeholder/validation helpers), подключен в `UserActionPanel` и `RootAdminsPage` для консистентного поведения поля причины.
+- `frontend/src/utils/download.ts`: extend to shared export runner state (`pending/success/error`) and keep non-navigating download behavior for all callers.
+- `frontend/src/utils/datetime.ts` + `frontend/src/utils/eventTime.ts`: converge to single `local + UTC` rendering contract for cards, drawers, lists, charts.
+- `frontend/src/components/users/UserListSessionMeta.tsx`: keep single session/device renderer shared by `UsersPage` and `RootAdminsPage`; parity regressions fixed only through this reusable path.
+- `frontend/src/hooks/useIncrementalPager.ts` + domain hooks (`useEventFeed`, `useUsersList`, `useActivityFeed`): staging-scale counter recheck must preserve one total-contract implementation.
+- `frontend/src/utils/exportUrl.ts`: maintain one export URL builder entry-point for `ActivityLogPage` + `MonitoringPage`; new export callers should be added here first.
+
+- `frontend/src/components/monitoring/InteractiveLineChart.tsx`
+  Shared interactive chart renderer for monitoring contexts:
+  `area-hover (X-snap to line) + smooth active point + crosshair X/Y + time ticks + click-to-zoom hooks + marker lines`.
+  Reused in `MonitoringPage` (mini + zoom charts) and `MonitoringContextCard` (drawer/event context).
+
+- `frontend/src/utils/monitoringContext.ts`
+  Extended with `detectSpikeTimestamps(points)` for reusable local spike markers in context charts.
+
+- `frontend/src/utils/monitoringChartConfig.ts`
+  Shared monitoring chart config (`key/title/color/highlight`) used by `MonitoringPage` to avoid page-level chart literals.
+
+- `MonitoringPage` range control reuse contract:
+  quick presets (`15m/1h/6h/24h`) + optional precise slider (`1..24h`) with one effective range-state for all history/focus loaders.
