@@ -305,7 +305,24 @@
 - backend/app/services/admin_queries.py: shared active trusted-devices loader load_active_trusted_devices_for_user reused by revoke-except route in admin.py.
 - backend/app/services/admin_queries.py: shared anomaly counter helpers (`count_login_history_result_since`, `count_login_history_ip_occurrences`) reused by user-details flow in admin.py.
 - backend/app/services/admin_serializers.py: shared user-details serializers/anomaly builder (`serialize_user_details_login_history`, `serialize_user_details_admin_actions`, `build_user_details_anomalies`) replace inline route mappings in admin.py.
+- backend/app/api/admin.py export routes now reuse iterator chain `iter_serialized_* -> iter_*_export_rows` with `yield_per`, removing eager materialization (`query.all()`) in audit/login-history export paths.
+- backend/app/core/export_utils.py: existing `xlsx_attachment_response` extended to `Workbook(write_only=True)` for lower export memory footprint (module reused, no new export module).
 
 
 - `backend/app/services/admin_queries.py` + `backend/app/services/admin_serializers.py`
   Reused from `backend/app/api/admin.py` routes (`list_users`, `user_details`, `admin-emails`, trusted-devices revoke-except) to remove inline duplicate query/serialization blocks.
+
+
+## Reuse Gate (cross-module)
+- Scan related modules before extraction: `api -> services -> core -> frontend hooks/utils` for same-domain logic.
+- Prefer `extend existing helper` over `new helper/module` to avoid reuse fragmentation.
+- After extraction, keep thin route/page layer and call shared helper from all relevant modules.
+- Every merge-first reuse step must be reflected in `TODO.md` and linked with file refs.
+
+- `useIncrementalPager` extended for count-less append pages (`total` optional + hasMore fallback), reused by `useEventFeed` with `includeTotal` only on first page to reduce backend count load.
+
+- `backend/app/api/admin.py` (`user_details`) now reuses one loaded login-history dataset (`limit=200`) for both summary list and trusted-device enrichment, removing duplicated loader call.
+
+- `useActivityFeed` now reuses count-less append contract (`include_total` only for page 1) for both `/admin/audit` and `/admin/login-history`, paired with shared `useIncrementalPager` fallback total/hasMore behavior.
+
+- `useUsersList` now reuses count-less append contract (`include_total` only for page 1) for `/admin/users`, aligned with shared `useIncrementalPager` total/hasMore fallback behavior.

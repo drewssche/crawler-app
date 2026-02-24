@@ -30,7 +30,7 @@ export type CenterEventsResponse = {
 
 export type EventFeedResponse = {
   items: EventItem[];
-  total: number;
+  total?: number | null;
   page: number;
   page_size: number;
 };
@@ -54,6 +54,7 @@ export async function getEventsFeed(params: {
   securityOnly: boolean;
   page: number;
   pageSize: number;
+  includeTotal?: boolean;
   signal?: AbortSignal;
 }) {
   const qs = new URLSearchParams({
@@ -63,6 +64,7 @@ export async function getEventsFeed(params: {
     security_only: String(params.securityOnly),
     page: String(params.page),
     page_size: String(params.pageSize),
+    include_total: String(params.includeTotal ?? true),
   });
   return apiGet<EventFeedResponse>(`/events/feed?${qs.toString()}`, { signal: params.signal });
 }

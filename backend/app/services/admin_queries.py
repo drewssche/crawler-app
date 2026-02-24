@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, aliased
 
-from app.core.events import utc_now_naive
+from app.core.events import ensure_event_states, utc_now_naive
 from app.db.models.auth_attempt import AuthAttempt
 from app.db.models.admin_audit_log import AdminAuditLog
 from app.db.models.event_feed import EventFeed
@@ -321,6 +321,46 @@ def load_latest_pending_access_events_for_users(db: Session, user_ids: list[int]
         )
         .all()
     )
+
+
+def build_pending_access_flags_for_users(
+    db: Session,
+    *,
+    admin_user_id: int,
+    users: list[User],
+) -> tuple[dict[int, bool], dict[int, int | None]]:
+    """Build pending-unread and latest-pending-event maps for candidate users.
+
+    Reuse-first helper: centralizes pending event/state enrichment for list routes
+    and avoids scanning users that cannot have pending access requests.
+    """
+    candidate_user_ids = [
+        user.id
+        for user in users
+        if (not user.is_approved) and (not user.is_deleted)
+    ]
+    if not candidate_user_ids:
+        return {}, {}
+
+    pending_events = load_latest_pending_access_events_for_users(db, candidate_user_ids)
+    if not pending_events:
+        return {}, {}
+
+    state_map = ensure_event_states(db, user_id=admin_user_id, event_ids=[event.id for event in pending_events])
+    pending_unread_by_user_id: dict[int, bool] = {}
+    pending_event_id_by_user_id: dict[int, int | None] = {}
+
+    for event in pending_events:
+        target_user_id = event.target_user_id
+        if target_user_id is None:
+            continue
+        if target_user_id not in pending_event_id_by_user_id:
+            pending_event_id_by_user_id[target_user_id] = event.id
+        state = state_map.get(event.id)
+        if state and (not state.is_read) and (not state.is_dismissed):
+            pending_unread_by_user_id[target_user_id] = True
+
+    return pending_unread_by_user_id, pending_event_id_by_user_id
 
 
 def load_users_by_email_map(db: Session, emails: list[str]) -> dict[str, User]:

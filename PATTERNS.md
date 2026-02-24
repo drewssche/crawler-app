@@ -351,9 +351,19 @@
 
 ## Backend Decomposition Pattern
 - Before commit for text/docs changes, run `python tools/check_utf8.py` (at minimum for changed files).
-- Before introducing a new reusable module/function, check existing service/helpers and prefer extending them to avoid reuse fragmentation.
+- Before introducing a new reusable module/function, run cross-module reuse scan in related layers (api/services/core/hooks/utils) and prefer extending existing helpers first.
+- Reuse gate: `extend > create`; create new module only when at least 2 call-sites are confirmed or boundary isolation is required.
+- When extraction is done, replace local duplicates with calls to shared helper and sync `REUSE_INDEX.md` + `TODO.md`.
 - Large API modules must be split by responsibility into service modules: `queries`, `serializers`, `actions`, `monitoring/settings`.
 - API route layer remains thin: validate input, call service, format response.
 - Split must be `no-regression`: keep route contracts and response schema unchanged.
 
 
+
+- For infinite-scroll feeds use the `count-less append` pattern: first page uses `include_total=true`, pages `page>1` use `include_total=false`, so `count()` is not executed on every append request.
+- Keep UI counter contract `Loaded: N of M` by using total from page 1; for append pages without total use `hasMore` fallback (full page implies possible next page).
+- Apply this pattern to all relevant server-paginated feeds (`events`, `activity`, `users`, `root-admins`) unless there is an explicit realtime-total requirement.
+
+### Infinite-Scroll Optimization Sweep (required)
+- When count-less append is introduced for one feed, run the same review for all pages that use `useIncrementalPager`, and record plan/status in `TODO.md`.
+- For each page, document: before/after, UI counter contract, and regression verification.

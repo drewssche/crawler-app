@@ -67,6 +67,7 @@ export function useActivityFeed({
       const qp = new URLSearchParams({
         page: String(nextPage),
         page_size: String(pageSize),
+        include_total: String(nextPage === 1),
         date_from: dateFrom,
         date_to: dateTo,
         sort_dir: sortDir,

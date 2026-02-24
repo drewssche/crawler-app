@@ -5,7 +5,7 @@ export type IdEmail = {
 
 export type PagedResponse<T> = {
   items: T[];
-  total: number;
+  total?: number | null;
   page: number;
   page_size: number;
 };

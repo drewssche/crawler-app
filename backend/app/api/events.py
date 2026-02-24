@@ -53,7 +53,8 @@ def _fetch_events_with_state(
     only_unread: bool = False,
     page: int = 1,
     page_size: int = 20,
-) -> tuple[list[dict], int]:
+    include_total: bool = True,
+) -> tuple[list[dict], int | None]:
     q = db.query(EventFeed)
     state_join = and_(
         EventUserState.event_id == EventFeed.id,
@@ -71,7 +72,7 @@ def _fetch_events_with_state(
         q = q.filter(or_(EventFeed.actor_user_id.is_(None), EventFeed.actor_user_id != current_user.id))
 
     q = q.order_by(EventFeed.created_at.desc(), EventFeed.id.desc())
-    total = q.count()
+    total = q.count() if include_total else None
     events = q.offset((page - 1) * page_size).limit(page_size).all()
     event_ids = [e.id for e in events]
     states = ensure_event_states(db, user_id=current_user.id, event_ids=event_ids)
@@ -133,6 +134,7 @@ def get_center_events(
         include_dismissed=False,
         page=1,
         page_size=n_limit,
+        include_total=False,
     )
     actions, _ = _fetch_events_with_state(
         db,
@@ -142,6 +144,7 @@ def get_center_events(
         security_only=actions_security_only,
         page=1,
         page_size=a_limit,
+        include_total=False,
     )
     notifications_unread = _count_unread_events(
         db,
@@ -180,6 +183,7 @@ def get_events_feed(
     security_only: bool = False,
     page: int = 1,
     page_size: int = 30,
+    include_total: bool = True,
     request: Request = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("events.view")),
@@ -197,6 +201,7 @@ def get_events_feed(
         only_unread=only_unread,
         page=safe_page,
         page_size=safe_page_size,
+        include_total=include_total,
     )
     db.commit()
     return success_response_payload(

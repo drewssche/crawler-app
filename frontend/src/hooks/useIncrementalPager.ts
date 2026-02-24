@@ -58,9 +58,15 @@ export function useIncrementalPager<T>({
         const data = await fetchPageRef.current(nextPage, controller.signal);
         if (requestSeq !== requestSeqRef.current) return;
         applyPageRef.current(data, append);
-        setTotal(data.total);
+        const totalValue = typeof data.total === "number" ? data.total : null;
+        setTotal((prev) => (totalValue ?? prev));
         setPage(data.page);
-        setHasMore(data.page * data.page_size < data.total && data.items.length > 0);
+        if (totalValue !== null) {
+          setHasMore(data.page * data.page_size < totalValue && data.items.length > 0);
+        } else {
+          // Fallback path for count-less pages: full page implies potential next page.
+          setHasMore(data.items.length >= data.page_size);
+        }
       } catch (e) {
         if (requestSeq !== requestSeqRef.current) return;
         if (isAbortError(e)) return;

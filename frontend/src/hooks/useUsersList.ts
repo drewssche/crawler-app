@@ -27,7 +27,7 @@ export function useUsersList<T extends { id: number }>({
   const { total, isLoading, hasMore, resetAndLoad, requestNextPage } = useIncrementalPager<T>({
     fetchPage: (nextPage, signal) =>
       apiGet<PagedResponse<T>>(
-        `/admin/users?status=${statusRef.current}&q=${encodeURIComponent(queryRef.current.trim())}&page=${nextPage}&page_size=${pageSize}`,
+        `/admin/users?status=${statusRef.current}&q=${encodeURIComponent(queryRef.current.trim())}&page=${nextPage}&page_size=${pageSize}&include_total=${String(nextPage === 1)}`,
         { signal },
       ),
     applyPage: (data, append) => {

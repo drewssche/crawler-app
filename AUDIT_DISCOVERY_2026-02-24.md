@@ -1,4 +1,4 @@
-# AUDIT DISCOVERY 2026-02-24
+﻿# AUDIT DISCOVERY 2026-02-24
 
 ## Scope
 - System-wide discovery for backend/frontend structure.
@@ -131,3 +131,6 @@
 - Update: trusted-devices revoke-except path now also uses shared admin_queries loader (active devices list), reducing remaining inline query duplication in admin.py.
 - Update: user-details anomaly counters (`invalid_code_24h`, latest-ip novelty) moved to shared admin_queries helper layer, further reducing router-level inline SQL/count paths.
 - Update: user-details response mapping (login_history/admin_actions/anomalies) moved to shared admin_serializers helpers; admin route layer remains orchestration-only.
+- Update: Discovery-wave 1 profiling execution completed; see `AUDIT_API_QUERY_PROFILING_2026-02-24.md` for ranked hotspots and new prioritized backlog.
+
+

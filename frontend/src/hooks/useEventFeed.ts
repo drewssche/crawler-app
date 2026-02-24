@@ -32,6 +32,7 @@ export function useEventFeed({
         securityOnly,
         page: nextPage,
         pageSize,
+        includeTotal: nextPage === 1,
         signal,
       }),
     applyPage: (data, append) => {

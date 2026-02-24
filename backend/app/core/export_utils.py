@@ -42,9 +42,8 @@ def xlsx_attachment_response(
     header: list[str],
     rows: Iterable[Iterable[Any]],
 ) -> Response:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = sheet_name
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet(title=sheet_name)
     ws.append(header)
     for row in rows:
         ws.append(list(row))

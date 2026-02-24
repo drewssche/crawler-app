@@ -17,7 +17,6 @@ from app.core.admin_sync import (
 )
 from app.core.api_response import success_response_payload
 from app.core.event_catalog import SECURITY_ADMIN_ACTIONS, audit_action_catalog_payload
-from app.core.events import ensure_event_states
 from app.core.export_utils import csv_attachment_response, xlsx_attachment_response
 from app.core.metrics import increment_counter
 from app.core.monitoring_cache import invalidate_cache_prefix
@@ -58,7 +57,7 @@ from app.services.admin_queries import (
     count_login_history_ip_occurrences,
     count_login_history_result_since,
     load_active_trusted_devices_for_user,
-    load_latest_pending_access_events_for_users,
+    build_pending_access_flags_for_users,
     load_latest_request_access_requested_at_by_email,
     load_recent_admin_audit_for_user,
     load_recent_login_history_for_user,
@@ -69,6 +68,8 @@ from app.services.admin_serializers import (
     build_user_profile_snapshot,
     iter_audit_export_rows,
     iter_login_history_export_rows,
+    iter_serialized_audit_rows,
+    iter_serialized_login_history_rows,
     serialize_audit_rows,
     serialize_login_history_rows,
     serialize_trusted_devices,
@@ -197,6 +198,7 @@ def list_users(
     sort_dir: Literal["asc", "desc"] = "asc",
     page: int | None = None,
     page_size: int = 20,
+    include_total: bool = True,
     request: Request = None,
     db: Session = Depends(get_db),
     _admin: User = Depends(require_permission("users.manage")),
@@ -224,7 +226,7 @@ def list_users(
     order_expr = sort_field.desc() if sort_dir == "desc" else sort_field.asc()
     query = query.order_by(order_expr, User.id.asc())
 
-    total = query.count()
+    total = query.count() if (page is not None and include_total) else None
     safe_page = max(1, page or 1)
     safe_page_size = max(1, min(page_size, 200))
     if page is not None:
@@ -239,20 +241,11 @@ def list_users(
     last_login_by_user_id = build_last_login_map(db, user_ids)
     trust_summary_by_user_id = build_trust_summary_map(db, user_ids)
 
-    pending_unread_by_user_id: dict[int, bool] = {}
-    pending_event_id_by_user_id: dict[int, int | None] = {}
-    if user_ids:
-        pending_events = load_latest_pending_access_events_for_users(db, user_ids)
-        if pending_events:
-            state_map = ensure_event_states(db, user_id=_admin.id, event_ids=[e.id for e in pending_events])
-            for event in pending_events:
-                if event.target_user_id is None:
-                    continue
-                if event.target_user_id not in pending_event_id_by_user_id:
-                    pending_event_id_by_user_id[event.target_user_id] = event.id
-                state = state_map.get(event.id)
-                if state and (not state.is_read) and (not state.is_dismissed):
-                    pending_unread_by_user_id[event.target_user_id] = True
+    pending_unread_by_user_id, pending_event_id_by_user_id = build_pending_access_flags_for_users(
+        db,
+        admin_user_id=_admin.id,
+        users=users,
+    )
 
     items = []
     for u in users:
@@ -419,7 +412,8 @@ def user_details(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    login_rows = load_recent_login_history_for_user(db, user.id, limit=20)
+    login_history_rows = load_recent_login_history_for_user(db, user.id, limit=200)
+    login_rows = login_history_rows[:20]
     last_login = login_rows[0] if login_rows else None
     last_success_login = next((row for row in login_rows if row.result == "success"), None)
     estimated_jwt_expires_at, estimated_jwt_left_seconds = _estimate_jwt_expiry(last_success_login)
@@ -427,7 +421,7 @@ def user_details(
     admin_logs = load_recent_admin_audit_for_user(db, user.id, limit=10)
     trusted_devices = serialize_trusted_devices(
         devices=load_active_trusted_devices_for_user(db, user.id),
-        history_rows=load_recent_login_history_for_user(db, user.id, limit=200),
+        history_rows=login_history_rows,
         now=_utc_now_naive(),
     )
 
@@ -731,6 +725,7 @@ def list_audit_logs(
     date_from: str = "",
     date_to: str = "",
     sort_dir: Literal["desc", "asc"] = "desc",
+    include_total: bool = True,
     request: Request = None,
     db: Session = Depends(get_db),
     _admin: User = Depends(require_permission("audit.view")),
@@ -772,6 +767,7 @@ def list_login_history(
     sort_dir: Literal["desc", "asc"] = "desc",
     page: int = 1,
     page_size: int = 50,
+    include_total: bool = True,
     request: Request = None,
     db: Session = Depends(get_db),
     _admin: User = Depends(require_permission("audit.view")),
@@ -789,7 +785,7 @@ def list_login_history(
         date_to=date_to,
         sort_dir=sort_dir,
     )
-    total = query.count()
+    total = query.count() if include_total else None
     start = (safe_page - 1) * safe_page_size
     rows = query.offset(start).limit(safe_page_size).all()
     items = serialize_login_history_rows(rows)
@@ -828,11 +824,11 @@ def export_login_history_csv(
         date_to=date_to,
         sort_dir=sort_dir,
     )
-    items = serialize_login_history_rows(query.all())
+    rows_iter = query.yield_per(1000)
     return csv_attachment_response(
         filename="login_history.csv",
         header=["id", "created_at", "email", "result", "source", "ip", "user_agent"],
-        rows=iter_login_history_export_rows(items),
+        rows=iter_login_history_export_rows(iter_serialized_login_history_rows(rows_iter)),
     )
 
 
@@ -860,12 +856,12 @@ def export_login_history_xlsx(
         date_to=date_to,
         sort_dir=sort_dir,
     )
-    items = serialize_login_history_rows(query.all())
+    rows_iter = query.yield_per(1000)
     return xlsx_attachment_response(
         filename="login_history.xlsx",
         sheet_name="LoginHistory",
         header=["id", "created_at", "email", "result", "source", "ip", "user_agent"],
-        rows=iter_login_history_export_rows(items),
+        rows=iter_login_history_export_rows(iter_serialized_login_history_rows(rows_iter)),
     )
 
 
@@ -892,11 +888,11 @@ def export_audit_logs_csv(
         sort_dir=sort_dir,
         security_actions=SECURITY_ACTIONS,
     )
-    items = serialize_audit_rows(query.all())
+    rows_iter = query.yield_per(1000)
     return csv_attachment_response(
         filename="admin_audit_logs.csv",
         header=["id", "created_at", "action", "actor_email", "target_email", "ip", "reason"],
-        rows=iter_audit_export_rows(items),
+        rows=iter_audit_export_rows(iter_serialized_audit_rows(rows_iter)),
     )
 
 
@@ -923,12 +919,12 @@ def export_audit_logs_xlsx(
         sort_dir=sort_dir,
         security_actions=SECURITY_ACTIONS,
     )
-    items = serialize_audit_rows(query.all())
+    rows_iter = query.yield_per(1000)
     return xlsx_attachment_response(
         filename="admin_audit_logs.xlsx",
         sheet_name="Audit",
         header=["id", "created_at", "action", "actor_email", "target_email", "ip", "reason"],
-        rows=iter_audit_export_rows(items),
+        rows=iter_audit_export_rows(iter_serialized_audit_rows(rows_iter)),
     )
 
 
