@@ -3,7 +3,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -18,15 +17,10 @@ from app.core.admin_sync import (
 )
 from app.core.api_response import success_response_payload
 from app.core.event_catalog import SECURITY_ADMIN_ACTIONS, audit_action_catalog_payload
-from app.core.events import emit_event, ensure_event_states
+from app.core.events import ensure_event_states
 from app.core.export_utils import csv_attachment_response, xlsx_attachment_response
 from app.core.metrics import increment_counter
-from app.core.monitoring_cache import (
-    get_cached,
-    get_monitoring_history_ttl_seconds,
-    invalidate_cache_prefix,
-    set_cached,
-)
+from app.core.monitoring_cache import invalidate_cache_prefix
 from app.core.observability import log_business_event
 from app.core.security import (
     get_user_role,
@@ -51,10 +45,10 @@ from app.services.admin_monitoring import (
     update_monitoring_settings_payload,
 )
 from app.services.admin_actions import (
-    is_bulk_action_allowed_for_actor as svc_is_bulk_action_allowed_for_actor,
+    is_bulk_action_allowed_for_actor,
     log_admin_action as svc_log_admin_action,
-    require_reason as svc_require_reason,
-    send_login_code_for_user as svc_send_login_code_for_user,
+    require_reason,
+    send_login_code_for_user,
 )
 from app.services.admin_queries import (
     build_audit_rows_query,
@@ -140,26 +134,8 @@ class TrustedDeviceRevokeExceptIn(BaseModel):
     reason: str | None = None
 
 
-def _is_bulk_action_allowed_for_actor(
-    *,
-    actor: User,
-    user: User,
-    action: str,
-    role: str | None = None,
-) -> tuple[bool, str | None]:
-    return svc_is_bulk_action_allowed_for_actor(actor=actor, user=user, action=action, role=role)
-
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()[:64]
-    if request.client and request.client.host:
-        return request.client.host[:64]
-    return None
 
 
 def _log_admin_action(
@@ -182,12 +158,6 @@ def _log_admin_action(
         created_at=_utc_now_naive(),
     )
 
-def _require_reason(reason: str | None) -> str:
-    return svc_require_reason(reason)
-
-def _send_login_code_for_user(db: Session, user: User) -> dict:
-    return svc_send_login_code_for_user(db, user)
-
 def _calc_trusted_days_left(db: Session, user_id: int) -> float | None:
     now = _utc_now_naive()
     devices = (
@@ -209,27 +179,6 @@ def _calc_trusted_days_left(db: Session, user_id: int) -> float | None:
     return round(max(delta_days, 0), 1)
 
 
-def _build_last_login_map(db: Session, user_ids: list[int]) -> dict[int, LoginHistory]:
-    return build_last_login_map(db, user_ids)
-
-def _build_trust_summary_map(db: Session, user_ids: list[int]) -> dict[int, dict[str, float | int | None]]:
-    return build_trust_summary_map(db, user_ids)
-
-def _build_user_profile_snapshot(
-    *,
-    user: User,
-    last_login: LoginHistory | None,
-    trust_summary: dict[str, float | int | None] | None = None,
-) -> dict:
-    return build_user_profile_snapshot(user=user, last_login=last_login, trust_summary=trust_summary)
-
-def _serialize_trusted_devices(db: Session, user_id: int) -> list[dict]:
-    return serialize_trusted_devices(
-        devices=load_active_trusted_devices_for_user(db, user_id),
-        history_rows=load_recent_login_history_for_user(db, user_id, limit=200),
-        now=_utc_now_naive(),
-    )
-
 def _estimate_jwt_expiry(last_success_login: LoginHistory | None) -> tuple[str | None, int | None]:
     if not last_success_login:
         return None, None
@@ -239,108 +188,7 @@ def _estimate_jwt_expiry(last_success_login: LoginHistory | None) -> tuple[str |
     return exp_at.isoformat(), max(left_seconds, 0)
 
 
-def _collect_login_history_items(
-    db: Session,
-    *,
-    user_id: int | None,
-    email: str,
-    ip: str,
-    result: str,
-    source: str,
-    date_from: str,
-    date_to: str,
-    sort_dir: Literal["desc", "asc"],
-) -> list[dict]:
-    query = _build_login_history_query(
-        db=db,
-        user_id=user_id,
-        email=email,
-        ip=ip,
-        result=result,
-        source=source,
-        date_from=date_from,
-        date_to=date_to,
-        sort_dir=sort_dir,
-    )
-    return _serialize_login_history_rows(query.all())
-
-
-def _collect_audit_items(
-    db: Session,
-    action: str,
-    actor_email: str,
-    target_email: str,
-    security_only: bool,
-    date_from: str,
-    date_to: str,
-    sort_dir: Literal["desc", "asc"],
-) -> list[dict]:
-    query = _build_audit_rows_query(
-        db=db,
-        action=action,
-        actor_email=actor_email,
-        target_email=target_email,
-        security_only=security_only,
-        date_from=date_from,
-        date_to=date_to,
-        sort_dir=sort_dir,
-    )
-    return _serialize_audit_rows(query.all())
-
-
-def _build_login_history_query(
-    db: Session,
-    *,
-    user_id: int | None,
-    email: str,
-    ip: str,
-    result: str,
-    source: str,
-    date_from: str,
-    date_to: str,
-    sort_dir: Literal["desc", "asc"],
-):
-    return build_login_history_query(
-        db=db,
-        user_id=user_id,
-        email=email,
-        ip=ip,
-        result=result,
-        source=source,
-        date_from=date_from,
-        date_to=date_to,
-        sort_dir=sort_dir,
-    )
-
-def _serialize_login_history_rows(rows: list[LoginHistory]) -> list[dict]:
-    return serialize_login_history_rows(rows)
-
-def _serialize_audit_rows(rows) -> list[dict]:
-    return serialize_audit_rows(rows)
-
-def _build_audit_rows_query(
-    db: Session,
-    *,
-    action: str,
-    actor_email: str,
-    target_email: str,
-    security_only: bool,
-    date_from: str,
-    date_to: str,
-    sort_dir: Literal["desc", "asc"],
-):
-    return build_audit_rows_query(
-        db=db,
-        action=action,
-        actor_email=actor_email,
-        target_email=target_email,
-        security_only=security_only,
-        date_from=date_from,
-        date_to=date_to,
-        sort_dir=sort_dir,
-        security_actions=SECURITY_ACTIONS,
-    )
-
+@router.get("/users")
 def list_users(
     status: Literal["all", "pending", "approved", "deleted"] = "pending",
     q: str = "",
@@ -388,8 +236,8 @@ def list_users(
     pending_requested_at_by_email = load_latest_request_access_requested_at_by_email(db, user_emails)
 
     user_ids = [u.id for u in users]
-    last_login_by_user_id = _build_last_login_map(db, user_ids)
-    trust_summary_by_user_id = _build_trust_summary_map(db, user_ids)
+    last_login_by_user_id = build_last_login_map(db, user_ids)
+    trust_summary_by_user_id = build_trust_summary_map(db, user_ids)
 
     pending_unread_by_user_id: dict[int, bool] = {}
     pending_event_id_by_user_id: dict[int, int | None] = {}
@@ -408,7 +256,7 @@ def list_users(
 
     items = []
     for u in users:
-        base = _build_user_profile_snapshot(
+        base = build_user_profile_snapshot(
             user=u,
             last_login=last_login_by_user_id.get(u.id),
             trust_summary=trust_summary_by_user_id.get(u.id),
@@ -553,7 +401,7 @@ def users_actions_available(
             allowed_set = available_actions_for_user(user)
             if action not in allowed_set:
                 continue
-            can_apply, _ = _is_bulk_action_allowed_for_actor(actor=admin, user=user, action=action)
+            can_apply, _ = is_bulk_action_allowed_for_actor(actor=admin, user=user, action=action)
             if can_apply:
                 actions.append(action)
                 break
@@ -577,7 +425,11 @@ def user_details(
     estimated_jwt_expires_at, estimated_jwt_left_seconds = _estimate_jwt_expiry(last_success_login)
 
     admin_logs = load_recent_admin_audit_for_user(db, user.id, limit=10)
-    trusted_devices = _serialize_trusted_devices(db, user.id)
+    trusted_devices = serialize_trusted_devices(
+        devices=load_active_trusted_devices_for_user(db, user.id),
+        history_rows=load_recent_login_history_for_user(db, user.id, limit=200),
+        now=_utc_now_naive(),
+    )
 
     known_ips = sorted({row.ip for row in login_rows if row.ip})
     invalid_code_24h = count_login_history_result_since(
@@ -643,7 +495,7 @@ def revoke_trusted_device(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    can_apply, reason = _is_bulk_action_allowed_for_actor(actor=admin, user=user, action="revoke_trusted_devices")
+    can_apply, reason = is_bulk_action_allowed_for_actor(actor=admin, user=user, action="revoke_trusted_devices")
     if not can_apply:
         raise HTTPException(status_code=403, detail=reason or "Action is forbidden")
 
@@ -694,7 +546,7 @@ def revoke_trusted_devices_except_one(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    can_apply, reason = _is_bulk_action_allowed_for_actor(actor=admin, user=user, action="revoke_trusted_devices")
+    can_apply, reason = is_bulk_action_allowed_for_actor(actor=admin, user=user, action="revoke_trusted_devices")
     if not can_apply:
         raise HTTPException(status_code=403, detail=reason or "Action is forbidden")
 
@@ -769,14 +621,14 @@ def get_admin_emails_settings(
     if page_emails:
         users_by_email = load_users_by_email_map(db, page_emails)
         user_ids = [u.id for u in users_by_email.values()]
-        last_login_by_user_id = _build_last_login_map(db, user_ids)
-        trust_summary_by_user_id = _build_trust_summary_map(db, user_ids)
+        last_login_by_user_id = build_last_login_map(db, user_ids)
+        trust_summary_by_user_id = build_trust_summary_map(db, user_ids)
 
         for email in page_emails:
             hit = users_by_email.get((email or "").lower())
             if not hit:
                 continue
-            snap = _build_user_profile_snapshot(
+            snap = build_user_profile_snapshot(
                 user=hit,
                 last_login=last_login_by_user_id.get(hit.id),
                 trust_summary=trust_summary_by_user_id.get(hit.id),
@@ -828,7 +680,7 @@ def update_admin_emails_settings(
     if not normalized:
         raise HTTPException(status_code=400, detail="At least one admin email is required")
     validate_admin_emails(normalized)
-    reason = _require_reason(payload.reason)
+    reason = require_reason(payload.reason)
 
     current_runtime = get_runtime_admin_emails()
     if admin.email.lower() not in set(normalized):
@@ -885,7 +737,7 @@ def list_audit_logs(
 ):
     safe_page = max(1, page)
     safe_page_size = max(1, min(page_size, 200))
-    query = _build_audit_rows_query(
+    query = build_audit_rows_query(
         db=db,
         action=action,
         actor_email=actor_email,
@@ -894,11 +746,12 @@ def list_audit_logs(
         date_from=date_from,
         date_to=date_to,
         sort_dir=sort_dir,
+        security_actions=SECURITY_ACTIONS,
     )
     total = query.count()
     start = (safe_page - 1) * safe_page_size
     rows = query.offset(start).limit(safe_page_size).all()
-    items = _serialize_audit_rows(rows)
+    items = serialize_audit_rows(rows)
     return success_response_payload(request, data={
         "items": items,
         "total": total,
@@ -925,7 +778,7 @@ def list_login_history(
 ):
     safe_page = max(1, page)
     safe_page_size = max(1, min(page_size, 200))
-    query = _build_login_history_query(
+    query = build_login_history_query(
         db=db,
         user_id=user_id,
         email=email,
@@ -939,7 +792,7 @@ def list_login_history(
     total = query.count()
     start = (safe_page - 1) * safe_page_size
     rows = query.offset(start).limit(safe_page_size).all()
-    items = _serialize_login_history_rows(rows)
+    items = serialize_login_history_rows(rows)
     return success_response_payload(
         request,
         data={
@@ -964,8 +817,8 @@ def export_login_history_csv(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_permission("audit.view")),
 ):
-    items = _collect_login_history_items(
-        db,
+    query = build_login_history_query(
+        db=db,
         user_id=user_id,
         email=email,
         ip=ip,
@@ -975,21 +828,11 @@ def export_login_history_csv(
         date_to=date_to,
         sort_dir=sort_dir,
     )
+    items = serialize_login_history_rows(query.all())
     return csv_attachment_response(
         filename="login_history.csv",
         header=["id", "created_at", "email", "result", "source", "ip", "user_agent"],
-        rows=(
-            [
-                row.get("id"),
-                row.get("created_at"),
-                row.get("email"),
-                row.get("result"),
-                row.get("source"),
-                row.get("ip") or "",
-                row.get("user_agent") or "",
-            ]
-            for row in items
-        ),
+        rows=iter_login_history_export_rows(items),
     )
 
 
@@ -1006,8 +849,8 @@ def export_login_history_xlsx(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_permission("audit.view")),
 ):
-    items = _collect_login_history_items(
-        db,
+    query = build_login_history_query(
+        db=db,
         user_id=user_id,
         email=email,
         ip=ip,
@@ -1017,22 +860,12 @@ def export_login_history_xlsx(
         date_to=date_to,
         sort_dir=sort_dir,
     )
+    items = serialize_login_history_rows(query.all())
     return xlsx_attachment_response(
         filename="login_history.xlsx",
         sheet_name="LoginHistory",
         header=["id", "created_at", "email", "result", "source", "ip", "user_agent"],
-        rows=(
-            [
-                row.get("id"),
-                row.get("created_at"),
-                row.get("email"),
-                row.get("result"),
-                row.get("source"),
-                row.get("ip") or "",
-                row.get("user_agent") or "",
-            ]
-            for row in items
-        ),
+        rows=iter_login_history_export_rows(items),
     )
 
 
@@ -1048,7 +881,7 @@ def export_audit_logs_csv(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_permission("audit.view")),
 ):
-    items = _collect_audit_items(
+    query = build_audit_rows_query(
         db=db,
         action=action,
         actor_email=actor_email,
@@ -1057,22 +890,13 @@ def export_audit_logs_csv(
         date_from=date_from,
         date_to=date_to,
         sort_dir=sort_dir,
+        security_actions=SECURITY_ACTIONS,
     )
+    items = serialize_audit_rows(query.all())
     return csv_attachment_response(
         filename="admin_audit_logs.csv",
         header=["id", "created_at", "action", "actor_email", "target_email", "ip", "reason"],
-        rows=(
-            [
-                row.get("id"),
-                row.get("created_at"),
-                row.get("action"),
-                row.get("actor_email"),
-                row.get("target_email"),
-                row.get("ip") or "",
-                (row.get("meta") or {}).get("reason", "") if isinstance(row.get("meta"), dict) else "",
-            ]
-            for row in items
-        ),
+        rows=iter_audit_export_rows(items),
     )
 
 
@@ -1088,7 +912,7 @@ def export_audit_logs_xlsx(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_permission("audit.view")),
 ):
-    items = _collect_audit_items(
+    query = build_audit_rows_query(
         db=db,
         action=action,
         actor_email=actor_email,
@@ -1097,23 +921,14 @@ def export_audit_logs_xlsx(
         date_from=date_from,
         date_to=date_to,
         sort_dir=sort_dir,
+        security_actions=SECURITY_ACTIONS,
     )
+    items = serialize_audit_rows(query.all())
     return xlsx_attachment_response(
         filename="admin_audit_logs.xlsx",
         sheet_name="Audit",
         header=["id", "created_at", "action", "actor_email", "target_email", "ip", "reason"],
-        rows=(
-            [
-                row.get("id"),
-                row.get("created_at"),
-                row.get("action"),
-                row.get("actor_email"),
-                row.get("target_email"),
-                row.get("ip") or "",
-                (row.get("meta") or {}).get("reason", "") if isinstance(row.get("meta"), dict) else "",
-            ]
-            for row in items
-        ),
+        rows=iter_audit_export_rows(items),
     )
 
 
@@ -1189,7 +1004,7 @@ def bulk_users(
             results.append({"user_id": uid, "ok": False, "detail": f"Action {payload.action} is not applicable for this user"})
             continue
 
-        can_apply, reason = _is_bulk_action_allowed_for_actor(
+        can_apply, reason = is_bulk_action_allowed_for_actor(
             actor=admin,
             user=user,
             action=payload.action,
@@ -1211,7 +1026,7 @@ def bulk_users(
                 target_user_id=target_user.id,
                 meta_json=meta,
             ),
-            send_login_code=_send_login_code_for_user,
+            send_login_code=send_login_code_for_user,
         )
         if outcome.get("ok"):
             changed = True
@@ -1222,6 +1037,7 @@ def bulk_users(
     increment_counter("admin_bulk_result_total", action=payload.action, changed=str(changed).lower())
 
     return success_response_payload(request, data={"ok": True, "results": results})
+
 
 
 
