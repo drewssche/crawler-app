@@ -101,8 +101,8 @@ export default function MonitoringContextCard({
 
         <ContextQuickActions
           items={[
-            { key: "monitoring-focus", label: "Открыть фокус в Мониторинге", variant: "primary", onClick: onOpenFocus },
-            { key: "monitoring-similar", label: "Показать похожие события", variant: "secondary", onClick: onShowSimilar },
+            { key: "monitoring-focus", label: "Открыть фокус в Мониторинге", variant: "accent", onClick: onOpenFocus },
+            { key: "monitoring-similar", label: "Показать похожие события", variant: "accent", onClick: onShowSimilar },
             { key: "monitoring-handled", label: "Отметить как обработанное", variant: "ghost", onClick: onMarkHandled },
           ]}
         />

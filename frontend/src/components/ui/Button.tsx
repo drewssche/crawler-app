@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 
-type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+type ButtonVariant = "primary" | "accent" | "secondary" | "ghost" | "danger" | "export" | "panel-toggle";
 type ButtonSize = "sm" | "md";
 
 type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> & {
@@ -9,20 +9,34 @@ type Props = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> & {
   size?: ButtonSize;
   active?: boolean;
   fullWidth?: boolean;
+  exportProgress?: number | null;
 };
 
 function byVariant(variant: ButtonVariant, active: boolean): CSSProperties {
   if (variant === "primary") {
     return active
       ? {
-          background: "rgba(106,160,255,0.22)",
-          border: "1px solid rgba(106,160,255,0.7)",
-          color: "#dfe9ff",
+          background: "rgba(58,92,158,0.94)",
+          border: "1px solid rgba(136,178,240,0.78)",
+          color: "#f2f7ff",
         }
       : {
-          background: "rgba(106,160,255,0.13)",
-          border: "1px solid rgba(106,160,255,0.4)",
-          color: "#dfe9ff",
+          background: "rgba(33,48,74,0.92)",
+          border: "1px solid rgba(120,166,255,0.62)",
+          color: "#e8efff",
+        };
+  }
+  if (variant === "accent") {
+    return active
+      ? {
+          background: "rgba(68,76,88,0.95)",
+          border: "1px solid rgba(184,194,212,0.62)",
+          color: "#f0f3f9",
+        }
+      : {
+          background: "rgba(12,15,20,0.99)",
+          border: "1px solid rgba(255,255,255,0.22)",
+          color: "#e4e9f2",
         };
   }
   if (variant === "danger") {
@@ -49,6 +63,32 @@ function byVariant(variant: ButtonVariant, active: boolean): CSSProperties {
           background: "transparent",
           border: "1px solid #3333",
           color: "inherit",
+        };
+  }
+  if (variant === "panel-toggle") {
+    return active
+      ? {
+          background: "rgba(56,78,112,0.72)",
+          border: "1px solid rgba(120,166,255,0.66)",
+          color: "#e6efff",
+        }
+      : {
+          background: "rgba(255,255,255,0.06)",
+          border: "1px solid rgba(255,255,255,0.24)",
+          color: "#e4e8f3",
+        };
+  }
+  if (variant === "export") {
+    return active
+      ? {
+          background: "rgba(120,166,255,0.2)",
+          border: "1px solid rgba(120,166,255,0.68)",
+          color: "#e7efff",
+        }
+      : {
+          background: "rgba(120,166,255,0.1)",
+          border: "1px solid rgba(120,166,255,0.42)",
+          color: "#e7efff",
         };
   }
   return active
@@ -87,6 +127,7 @@ export default function Button({
   size = "md",
   active = false,
   fullWidth = false,
+  exportProgress,
   disabled,
   className,
   style,
@@ -94,6 +135,13 @@ export default function Button({
 }: Props) {
   const variantStyle = byVariant(variant, active);
   const sizeStyle = bySize(size);
+  const normalizedProgress =
+    exportProgress === undefined
+      ? null
+      : exportProgress == null
+        ? 36
+        : Math.max(0, Math.min(100, exportProgress));
+  const showExportProgress = variant === "export" && normalizedProgress != null;
   return (
     <button
       {...rest}
@@ -110,6 +158,8 @@ export default function Button({
       style={{
         ...variantStyle,
         ...sizeStyle,
+        position: "relative",
+        overflow: "hidden",
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -120,8 +170,23 @@ export default function Button({
         transition: "background-color 170ms ease, border-color 170ms ease, box-shadow 170ms ease, transform 170ms ease",
         ...(style || {}),
       }}
+      aria-busy={showExportProgress ? true : undefined}
     >
-      {children}
+      {showExportProgress && (
+        <span
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: `${normalizedProgress}%`,
+            background: "linear-gradient(90deg, rgba(120,166,255,0.2), rgba(120,166,255,0.34))",
+            transition: "width 180ms ease",
+          }}
+        />
+      )}
+      <span style={{ position: "relative", zIndex: 1 }}>{children}</span>
     </button>
   );
 }

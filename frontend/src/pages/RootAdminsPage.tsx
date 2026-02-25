@@ -3,9 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { apiGet, apiPost, isAbortError } from "../api/client";
 import AccentPill from "../components/ui/AccentPill";
 import Button from "../components/ui/Button";
+import ReasonPresetButton from "../components/ui/ReasonPresetButton";
 import Card from "../components/ui/Card";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import ClearableInput from "../components/ui/ClearableInput";
+import ListTotalMeta from "../components/ui/ListTotalMeta";
 import SelectableListRow from "../components/ui/SelectableListRow";
 import SlidePanel from "../components/ui/SlidePanel";
 import type { TrustPolicyCatalogItem } from "../components/users/UserActionPanel";
@@ -114,6 +116,7 @@ const TXT = {
   notFoundInDb: "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u0441 \u044d\u0442\u0438\u043c email \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u0432 \u0411\u0414 (\u0435\u0441\u0442\u044c \u0442\u043e\u043b\u044c\u043a\u043e \u0432 ADMIN_EMAILS).",
   confirmRemove: "\u0423\u0434\u0430\u043b\u0438\u0442\u044c",
   selectAllTitle: "\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u0432\u0441\u0435\u0445 \u0432 \u0442\u0435\u043a\u0443\u0449\u0435\u043c \u0441\u043f\u0438\u0441\u043a\u0435",
+  usersTotal: "\u0412\u0441\u0435\u0433\u043e \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439",
 };
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -474,6 +477,7 @@ export default function RootAdminsPage() {
             <div>{TXT.list}</div>
             <div>{TXT.selected}: {selected.length}</div>
           </div>
+          <ListTotalMeta label={TXT.usersTotal} total={total ?? adminCount} />
 
           {rows.map((row) => {
             const email = row.email;
@@ -541,9 +545,7 @@ export default function RootAdminsPage() {
                 />
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {removeReasonPresets.map((p) => (
-                    <Button key={p} size="sm" variant="ghost" onClick={() => setBulkReason(p)} style={{ borderRadius: 999 }}>
-                      {p}
-                    </Button>
+                    <ReasonPresetButton key={p} onClick={() => setBulkReason(p)}>{p}</ReasonPresetButton>
                   ))}
                 </div>
                 <div style={{ fontSize: 12, opacity: 0.78 }}>{removeReasonHintText}</div>
@@ -569,7 +571,7 @@ export default function RootAdminsPage() {
             <input value={addReason} onChange={(e) => setAddReason(e.target.value)} placeholder={addReasonPlaceholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10, marginBottom: 10 }} />
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
               {addReasonPresets.map((p) => (
-                <Button key={p} size="sm" variant="ghost" onClick={() => setAddReason(p)} style={{ borderRadius: 999 }}>{p}</Button>
+                <ReasonPresetButton key={p} onClick={() => setAddReason(p)}>{p}</ReasonPresetButton>
               ))}
             </div>
             <div style={{ fontSize: 12, opacity: 0.78, marginBottom: 10 }}>{addReasonHintText}</div>
@@ -640,7 +642,7 @@ export default function RootAdminsPage() {
               </Card>
 
               <div style={{ display: "flex", justifyContent: "flex-start" }}>
-                <Button size="sm" variant="secondary" onClick={() => navigate(`/users?highlight_email=${encodeURIComponent(drawerEmail)}`)}>
+                <Button size="sm" variant="accent" onClick={() => navigate(`/users?highlight_email=${encodeURIComponent(drawerEmail)}`)}>
                   {TXT.usersLink}
                 </Button>
               </div>
@@ -652,7 +654,7 @@ export default function RootAdminsPage() {
                       <input value={drawerReason} onChange={(e) => setDrawerReason(e.target.value)} placeholder={removeReasonPlaceholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         {removeReasonPresets.map((p) => (
-                          <Button key={p} size="sm" variant="ghost" onClick={() => setDrawerReason(p)} style={{ borderRadius: 999 }}>{p}</Button>
+                          <ReasonPresetButton key={p} onClick={() => setDrawerReason(p)}>{p}</ReasonPresetButton>
                         ))}
                       </div>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

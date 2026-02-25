@@ -355,7 +355,7 @@ export default function EventsPage() {
                 return (
               <Card
                 key={row.id}
-                className="interactive-row"
+                interactive
                 style={{
                   cursor: "pointer",
                   minHeight: EVENT_CARD_MIN_HEIGHT,
@@ -492,11 +492,11 @@ export default function EventsPage() {
 
           {drawerEvent && (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Button variant="primary" size="sm" onClick={() => openEvent(drawerEvent)}>
+              <Button variant="accent" size="sm" onClick={() => openEvent(drawerEvent)}>
                 Открыть источник
               </Button>
               {getTargetEmail(drawerEvent) && (
-                <Button variant="secondary" size="sm" onClick={() => onOpenUser(drawerEvent)}>
+                <Button variant="accent" size="sm" onClick={() => onOpenUser(drawerEvent)}>
                   Открыть в Пользователях
                 </Button>
               )}

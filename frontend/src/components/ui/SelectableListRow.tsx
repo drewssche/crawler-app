@@ -25,7 +25,7 @@ export default function SelectableListRow({
 }) {
   return (
     <Card
-      className="interactive-row"
+      interactive
       style={{
         padding: 12,
         borderColor: highlighted ? "rgba(106,160,255,0.45)" : "transparent",

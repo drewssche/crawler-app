@@ -275,7 +275,7 @@ export default function UserDetailsDrawer({
                       </Button>
                     )}
                     {groupedDevices.length > 1 && (
-                      <Button onClick={() => setShowAllTrustedDevices((v) => !v)} size="sm" variant="ghost">
+                      <Button onClick={() => setShowAllTrustedDevices((v) => !v)} size="sm" variant="panel-toggle" active={showAllTrustedDevices}>
                         {showAllTrustedDevices ? "Свернуть" : "Показать все"}
                       </Button>
                     )}

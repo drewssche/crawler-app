@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import Button from "../ui/Button";
+import ReasonPresetButton from "../ui/ReasonPresetButton";
 import Card from "../ui/Card";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import RoleBadge from "../ui/RoleBadge";
@@ -337,9 +338,9 @@ export default function UserActionPanel({
             {!!meta?.reason_presets?.length && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {(meta.reason_presets || []).map((preset) => (
-                  <Button key={preset} size="sm" variant="ghost" onClick={() => setReason(preset)} style={{ borderRadius: 999 }}>
+                  <ReasonPresetButton key={preset} onClick={() => setReason(preset)}>
                     {preset}
-                  </Button>
+                  </ReasonPresetButton>
                 ))}
               </div>
             )}

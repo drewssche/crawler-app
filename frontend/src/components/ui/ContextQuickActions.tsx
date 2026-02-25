@@ -5,7 +5,7 @@ export type QuickActionItem = {
   key: string;
   label: string;
   onClick: () => void;
-  variant?: "primary" | "secondary" | "ghost" | "danger";
+  variant?: "primary" | "accent" | "secondary" | "ghost" | "danger";
   hidden?: boolean;
 };
 

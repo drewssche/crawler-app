@@ -1,9 +1,10 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiPost, isAbortError } from "../api/client";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import ClearableInput from "../components/ui/ClearableInput";
+import ListTotalMeta from "../components/ui/ListTotalMeta";
 import RelevanceBadge from "../components/ui/RelevanceBadge";
 import RolePermissionsHint from "../components/ui/RolePermissionsHint";
 import SelectableListRow from "../components/ui/SelectableListRow";
@@ -26,7 +27,6 @@ import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll"
 import { useScheduledResetAndLoad } from "../hooks/useScheduledResetAndLoad";
 import type { AvailableActionsResponse } from "../types/catalog";
 import { getUserAndTrustCatalogsCached } from "../utils/catalogCache";
-import { formatApiDateTime } from "../utils/datetime";
 import { normalizeError } from "../utils/errors";
 import { resolveDisplayRole } from "../utils/roles";
 import { loadUserContextByEmail, loadUserContextById } from "../utils/userContext";
@@ -80,9 +80,9 @@ const TXT = {
   selected: "\u0412\u044b\u0431\u0440\u0430\u043d\u043e",
   selectUserTitle: "\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f",
   open: "\u041e\u0442\u043a\u0440\u044b\u0442\u044c",
-  pendingRequest: "\u0417\u0430\u044f\u0432\u043a\u0430",
   hasUnreadRequest: "\u0415\u0441\u0442\u044c \u043d\u0435\u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u0430\u044f \u0437\u0430\u044f\u0432\u043a\u0430",
   usersNotFound: "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0438 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b.",
+  usersTotal: "\u0412\u0441\u0435\u0433\u043e \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439",
   shown: "\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e",
   actionsForSelected: "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044f \u0434\u043b\u044f \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439",
   reasonOptional: "\u041f\u0440\u0438\u0447\u0438\u043d\u0430 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f (\u043d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e, \u043d\u043e \u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f)",
@@ -461,17 +461,16 @@ export default function UsersPage() {
               {TXT.selected}: {selectedIds.length}
             </div>
           </div>
+          <ListTotalMeta label={TXT.usersTotal} total={total} />
 
           {users.map((row) => (
             <UsersListRow
               key={row.id}
               row={row}
-              tab={tab}
               actorEmail={actorEmail}
               checked={selectedIds.includes(row.id)}
               highlighted={drawerOpen && drawerData?.user.id === row.id}
               trustPolicyCatalog={trustPolicyCatalog}
-              pendingRequestLabel={TXT.pendingRequest}
               hasUnreadRequestLabel={TXT.hasUnreadRequest}
               checkboxTitle={TXT.selectUserTitle}
               openLabel={TXT.open}
@@ -540,12 +539,10 @@ export default function UsersPage() {
 const UsersListRow = memo(
   function UsersListRow({
     row,
-    tab,
     actorEmail,
     checked,
     highlighted,
     trustPolicyCatalog,
-    pendingRequestLabel,
     hasUnreadRequestLabel,
     checkboxTitle,
     openLabel,
@@ -553,12 +550,10 @@ const UsersListRow = memo(
     onOpen,
   }: {
     row: UserRow;
-    tab: UsersTab;
     actorEmail: string;
     checked: boolean;
     highlighted: boolean;
     trustPolicyCatalog: Record<TrustPolicy, TrustPolicyCatalogItem>;
-    pendingRequestLabel: string;
     hasUnreadRequestLabel: string;
     checkboxTitle: string;
     openLabel: string;
@@ -601,14 +596,7 @@ const UsersListRow = memo(
         }
         details={
           <div style={{ display: "grid", gap: 4 }}>
-            {tab === "pending" && row.pending_requested_at ? (
-              <div style={{ fontSize: 12, opacity: 0.75, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <span>
-                  {pendingRequestLabel}: {formatApiDateTime(row.pending_requested_at)}
-                </span>
-                {row.pending_unread ? <span>{hasUnreadRequestLabel}</span> : null}
-              </div>
-            ) : null}
+            {!row.is_approved && row.pending_unread ? <div style={{ fontSize: 12, opacity: 0.75 }}>{hasUnreadRequestLabel}</div> : null}
             {row.is_approved ? (
               <UserListSessionMeta
                 lastIp={row.last_ip}
@@ -630,13 +618,12 @@ const UsersListRow = memo(
   },
   (prev, next) =>
     prev.row === next.row &&
-    prev.tab === next.tab &&
     prev.actorEmail === next.actorEmail &&
     prev.checked === next.checked &&
     prev.highlighted === next.highlighted &&
     prev.trustPolicyCatalog === next.trustPolicyCatalog &&
-    prev.pendingRequestLabel === next.pendingRequestLabel &&
     prev.hasUnreadRequestLabel === next.hasUnreadRequestLabel &&
     prev.checkboxTitle === next.checkboxTitle &&
     prev.openLabel === next.openLabel,
 );
+

@@ -24,7 +24,7 @@ import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll"
 type MetricItem = { labels: Record<string, string>; value: number };
 type MetricsResponse = { counters: Record<string, MetricItem[]> };
 type HistoryPoint = { ts: number; value: number };
-type Group = "all" | "http" | "auth" | "admin" | "events";
+type Group = "all" | "http" | "events";
 
 type MonitoringHistoryResponse = {
   enabled: boolean;
@@ -55,13 +55,10 @@ type HighlightKey =
   | "http_requests"
   | "http_errors"
   | "table"
-  | "top_endpoints"
   | null;
 
 const AUTO_REFRESH_MS = 15000;
 const BASE_ROWS = 20;
-const PROMETHEUS_UI_URL = String(import.meta.env.VITE_PROMETHEUS_UI_URL ?? "http://localhost:9090").trim();
-const GRAFANA_UI_URL = String(import.meta.env.VITE_GRAFANA_UI_URL ?? "http://localhost:3000").trim();
 
 const METRIC_DESCRIPTIONS: Record<string, string> = {
   http_requests_total: "Количество HTTP-запросов к API.",
@@ -92,11 +89,6 @@ function prev(points?: HistoryPoint[]): number {
   return Number(points[points.length - 2]?.value || 0);
 }
 
-function pct(total: number, part: number): string {
-  if (!total) return "0.0%";
-  return `${((part / total) * 100).toFixed(1)}%`;
-}
-
 function highlightStyle(active: boolean) {
   return active
     ? { borderColor: "rgba(106,160,255,0.72)", boxShadow: "0 0 0 2px rgba(106,160,255,0.2)" }
@@ -121,7 +113,7 @@ function SmallHistoryCard({
   const delta = values.length > 1 ? values[values.length - 1] - values[0] : 0;
 
   return (
-    <Card style={highlightStyle(Boolean(highlighted))} className={onZoom ? "interactive-row" : undefined} onClick={onZoom}>
+    <Card style={highlightStyle(Boolean(highlighted))} interactive={Boolean(onZoom)} onClick={onZoom}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
         <div style={{ fontWeight: 700 }}>{title}</div>
         <div style={{ fontSize: 12, opacity: 0.8 }}>текущее: {current.toFixed(0)}</div>
@@ -206,8 +198,8 @@ export default function MonitoringPage() {
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
   const [editingThresholds, setEditingThresholds] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [zoomSeries, setZoomSeries] = useState<MonitoringPrimaryChartKey | null>(null);
+  const [showAdditional, setShowAdditional] = useState(false);
   const [customRangeEnabled, setCustomRangeEnabled] = useState(false);
   const [customRangeHours, setCustomRangeHours] = useState(1);
 
@@ -497,6 +489,32 @@ export default function MonitoringPage() {
       .sort((a, b) => b.value - a.value);
   }, [metrics, query, selectedNames]);
 
+  const topEndpoints = useMemo(() => {
+    const source = metrics.http_requests_total || [];
+    const grouped = new Map<string, { method: string; path: string; status: string; value: number }>();
+    for (const item of source) {
+      const method = String(item.labels?.method || "-");
+      const path = String(item.labels?.path || "-");
+      const status = String(item.labels?.status || "-");
+      const key = `${method}|${path}|${status}`;
+      const current = grouped.get(key);
+      if (current) {
+        current.value += Number(item.value || 0);
+      } else {
+        grouped.set(key, { method, path, status, value: Number(item.value || 0) });
+      }
+    }
+    const rows = Array.from(grouped.values()).sort((a, b) => b.value - a.value);
+    const total = rows.reduce((acc, row) => acc + row.value, 0);
+    return {
+      total,
+      rows: rows.slice(0, 10).map((row) => ({
+        ...row,
+        share: total > 0 ? (row.value / total) * 100 : 0,
+      })),
+    };
+  }, [metrics.http_requests_total]);
+
   useEffect(() => {
     setRowsVisible(BASE_ROWS);
   }, [group, query, metrics]);
@@ -511,20 +529,6 @@ export default function MonitoringPage() {
     },
     contentKey: `${rowsVisible}:${rows.length}`,
   });
-
-  const topEndpoints = useMemo(
-    () =>
-      (metrics.http_requests_total || [])
-        .map((r) => ({
-          method: r.labels?.method || "-",
-          path: r.labels?.path || "-",
-          status: r.labels?.status || "-",
-          value: Number(r.value || 0),
-        }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 8),
-    [metrics],
-  );
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -552,7 +556,7 @@ export default function MonitoringPage() {
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <div style={{ opacity: 0.85, fontSize: 13 }}>invalid_code: {summary.invalid.toFixed(0)}</div>
-            <Button onClick={() => setEditingThresholds((v) => !v)}>
+            <Button variant="panel-toggle" active={editingThresholds} onClick={() => setEditingThresholds((v) => !v)}>
               {editingThresholds ? "Скрыть пороги" : "Настроить пороги"}
             </Button>
           </div>
@@ -605,8 +609,8 @@ export default function MonitoringPage() {
         )}
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, marginTop: 10 }}>
-          <Card className="interactive-row" style={{ ...highlightStyle(highlightKey === "http_requests"), cursor: "pointer" }} onClick={() => focusOnMetric("http", "http_requests_total")}><div style={{ fontSize: 12, opacity: 0.75 }}>HTTP запросы</div><div style={{ fontSize: 30, fontWeight: 700 }}>{kpi.req}</div></Card>
-          <Card className="interactive-row" style={{ ...highlightStyle(highlightKey === "http_errors"), cursor: "pointer" }} onClick={() => focusOnMetric("http", "http_errors_total")}><div style={{ fontSize: 12, opacity: 0.75 }}>HTTP ошибки</div><div style={{ fontSize: 30, fontWeight: 700 }}>{kpi.err}</div></Card>
+          <Card interactive style={{ ...highlightStyle(highlightKey === "http_requests"), cursor: "pointer" }} onClick={() => focusOnMetric("http", "http_requests_total")}><div style={{ fontSize: 12, opacity: 0.75 }}>HTTP запросы</div><div style={{ fontSize: 30, fontWeight: 700 }}>{kpi.req}</div></Card>
+          <Card interactive style={{ ...highlightStyle(highlightKey === "http_errors"), cursor: "pointer" }} onClick={() => focusOnMetric("http", "http_errors_total")}><div style={{ fontSize: 12, opacity: 0.75 }}>HTTP ошибки</div><div style={{ fontSize: 30, fontWeight: 700 }}>{kpi.err}</div></Card>
         </div>
       </Card>
 
@@ -619,7 +623,7 @@ export default function MonitoringPage() {
         />
       )}
       {zoomConfig && (
-        <Card className="interactive-row" style={{ ...highlightStyle(true), display: "grid", gap: 8, cursor: "pointer" }} onClick={() => setZoomSeries(null)}>
+        <Card interactive style={{ ...highlightStyle(true), display: "grid", gap: 8, cursor: "pointer" }} onClick={() => setZoomSeries(null)}>
           <div style={{ fontWeight: 700 }}>{zoomConfig.title}</div>
           <InteractiveLineChart
             points={zoomConfig.points}
@@ -689,64 +693,49 @@ export default function MonitoringPage() {
           ))}
         </div>
       </Card>
-
       <Card>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
           <div style={{ fontWeight: 700 }}>Дополнительно</div>
-          <Button onClick={() => setShowAdvanced((v) => !v)} variant="secondary">{showAdvanced ? "Свернуть" : "Развернуть"}</Button>
+          <Button variant="panel-toggle" active={showAdditional} onClick={() => setShowAdditional((v) => !v)}>
+            {showAdditional ? "Скрыть" : "Раскрыть"}
+          </Button>
         </div>
-        {showAdvanced && (
-          <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-            <Card style={highlightStyle(highlightKey === "top_endpoints")}>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>Топ endpoint'ов по запросам</div>
-              {topEndpoints.length === 0 ? (
-                <EmptyState text="По endpoint'ам пока нет данных." />
-              ) : (
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", opacity: 0.8 }}>
-                      <th style={{ padding: "6px 8px", borderBottom: "1px solid #3333" }}>Method</th>
-                      <th style={{ padding: "6px 8px", borderBottom: "1px solid #3333" }}>Path</th>
-                      <th style={{ padding: "6px 8px", borderBottom: "1px solid #3333" }}>Status</th>
-                      <th style={{ padding: "6px 8px", borderBottom: "1px solid #3333" }}>Запросов</th>
-                      <th style={{ padding: "6px 8px", borderBottom: "1px solid #3333" }}>Доля</th>
+        {showAdditional && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Топ endpoint&apos;ов по запросам</div>
+            {topEndpoints.rows.length === 0 ? (
+              <EmptyState text="Данные по endpoint'ам отсутствуют." />
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", opacity: 0.8 }}>
+                    <th style={{ padding: "6px 8px", borderBottom: "1px solid #3333" }}>Method</th>
+                    <th style={{ padding: "6px 8px", borderBottom: "1px solid #3333" }}>Path</th>
+                    <th style={{ padding: "6px 8px", borderBottom: "1px solid #3333" }}>Status</th>
+                    <th style={{ padding: "6px 8px", borderBottom: "1px solid #3333" }}>Запросов</th>
+                    <th style={{ padding: "6px 8px", borderBottom: "1px solid #3333" }}>Доля</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topEndpoints.rows.map((row) => (
+                    <tr key={`${row.method}-${row.path}-${row.status}`} className="table-hover-row" style={{ borderBottom: "1px solid #2226" }}>
+                      <td style={{ padding: "8px", fontFamily: "monospace" }}>{row.method}</td>
+                      <td style={{ padding: "8px", fontFamily: "monospace" }}>{row.path}</td>
+                      <td style={{ padding: "8px", fontFamily: "monospace" }}>{row.status}</td>
+                      <td style={{ padding: "8px", fontWeight: 700 }}>{row.value.toFixed(0)}</td>
+                      <td style={{ padding: "8px" }}>{row.share.toFixed(1)}%</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {topEndpoints.map((r) => (
-                      <tr key={`${r.method}-${r.path}-${r.status}`} style={{ borderBottom: "1px solid #2226" }}>
-                        <td style={{ padding: "8px", fontFamily: "monospace" }}>{r.method}</td>
-                        <td style={{ padding: "8px", fontFamily: "monospace" }}>{r.path}</td>
-                        <td style={{ padding: "8px" }}>{r.status}</td>
-                        <td style={{ padding: "8px", fontWeight: 700 }}>{r.value}</td>
-                        <td style={{ padding: "8px" }}>{pct(kpi.req, r.value)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </Card>
-
-            <Card>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>Grafana / Prometheus</div>
-              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-                <Card>
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>Prometheus UI</div>
-                  <div style={{ marginTop: 6 }}><a href={PROMETHEUS_UI_URL} target="_blank" rel="noreferrer" style={{ color: "#9ec2ff" }}>Открыть Prometheus</a></div>
-                </Card>
-                <Card>
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>Grafana UI</div>
-                  <div style={{ marginTop: 6 }}><a href={GRAFANA_UI_URL} target="_blank" rel="noreferrer" style={{ color: "#9ec2ff" }}>Открыть Grafana</a></div>
-                </Card>
-              </div>
-            </Card>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         )}
       </Card>
 
       {error && <div style={{ color: "#d55" }}>{error}</div>}
       {history && history.enabled === false && (
-        <Card style={{ border: "1px solid rgba(255,166,0,0.45)" }}>
+        <Card variant="warning">
           <div style={{ color: "#ffcf8a", fontWeight: 700 }}>Prometheus недоступен</div>
           <div style={{ fontSize: 13, opacity: 0.85 }}>История графиков не загружена.</div>
           {history.error && <div style={{ fontSize: 12, marginTop: 6, opacity: 0.85 }}>Ошибка: {history.error}</div>}
@@ -761,7 +750,12 @@ export default function MonitoringPage() {
               <option value="csv">CSV</option>
               <option value="xlsx">XLSX</option>
             </UiSelect>
-            <Button onClick={exportMetrics} variant="secondary" disabled={exportPending}>
+            <Button
+              onClick={exportMetrics}
+              variant="export"
+              disabled={exportPending}
+              exportProgress={exportPending ? exportProgress : undefined}
+            >
               {exportPending ? `Экспорт${exportProgress != null ? ` ${exportProgress}%` : "..."}` : "Экспорт"}
             </Button>
           </div>
@@ -789,8 +783,6 @@ export default function MonitoringPage() {
               options={[
                 { value: "all", label: "Все" },
                 { value: "http", label: "HTTP/API" },
-                { value: "auth", label: "Авторизация" },
-                { value: "admin", label: "Админ-действия" },
                 { value: "events", label: "События" },
               ]}
             />
@@ -823,7 +815,7 @@ export default function MonitoringPage() {
               </thead>
               <tbody>
                 {visibleRows.map((r) => (
-                  <tr key={r.id} style={{ borderBottom: "1px solid #2226" }}>
+                  <tr key={r.id} className="table-hover-row" style={{ borderBottom: "1px solid #2226" }}>
                     <td style={{ padding: "8px", fontFamily: "monospace", verticalAlign: "top" }}>{r.name}</td>
                     <td style={{ padding: "8px", verticalAlign: "top", opacity: 0.85 }}>{r.description}</td>
                     <td style={{ padding: "8px", verticalAlign: "top" }}>{r.labels}</td>
@@ -835,6 +827,7 @@ export default function MonitoringPage() {
           </>
         )}
       </Card>
+
     </div>
   );
 }

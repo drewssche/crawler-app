@@ -1,7 +1,7 @@
 import { memo, useState } from "react";
 import type { EventItem } from "../../api/events";
 import ActionMenuPopover from "./ActionMenuPopover";
-import Button from "./Button";
+import CardActionButton, { getCardActionButtonStyle } from "./CardActionButton";
 
 type Props = {
   item: EventItem;
@@ -30,67 +30,58 @@ function EventCardActions({
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const baseStyle = {
-    fontSize: compact ? 11 : 12,
-    padding: compact ? "0 6px" : "6px 10px",
-    borderRadius: compact ? 8 : 10,
-    minHeight: compact ? 24 : 30,
-  } as const;
+  const baseStyle = getCardActionButtonStyle(compact);
 
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", position: "relative" }}>
-      <Button
+      <CardActionButton
         onClick={(e) => {
           e.stopPropagation();
           onOpen(item);
         }}
         variant="secondary"
-        size="sm"
-        style={baseStyle}
+        compact={compact}
       >
         {"\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a"}
-      </Button>
+      </CardActionButton>
       {showReadToggle && onToggleRead && (
-        <Button
+        <CardActionButton
           onClick={(e) => {
             e.stopPropagation();
             onToggleRead(item);
           }}
           variant="ghost"
-          size="sm"
-          style={baseStyle}
+          compact={compact}
         >
           {item.is_read ? "\u041e\u0442\u043c\u0435\u0442\u0438\u0442\u044c \u043d\u0435\u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u044b\u043c" : "\u041e\u0442\u043c\u0435\u0442\u0438\u0442\u044c \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u044b\u043c"}
-        </Button>
+        </CardActionButton>
       )}
       {showDismissToggle && onToggleDismiss && (
-        <Button
+        <CardActionButton
           onClick={(e) => {
             e.stopPropagation();
             onToggleDismiss(item);
           }}
           variant="ghost"
-          size="sm"
-          style={baseStyle}
+          compact={compact}
         >
           {item.is_dismissed ? "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c" : "\u0421\u043a\u0440\u044b\u0442\u044c"}
-        </Button>
+        </CardActionButton>
       )}
 
       {showMoreMenu && (onFilterSimilar || onOpenUser) && (
         <div style={{ position: "relative", display: "inline-flex" }}>
-          <Button
+          <CardActionButton
             onClick={(e) => {
               e.stopPropagation();
               setMenuOpen((v) => !v);
             }}
             variant="secondary"
-            size="sm"
-            style={baseStyle}
+            compact={compact}
             title={"\u0414\u0440\u0443\u0433\u0438\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f"}
           >
             {"\u0415\u0449\u0435"}
-          </Button>
+          </CardActionButton>
           <ActionMenuPopover
             open={menuOpen}
             top={compact ? 24 : 36}

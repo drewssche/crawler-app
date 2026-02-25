@@ -24,7 +24,7 @@ function SettingsItem({
   onClick: () => void;
 }) {
   return (
-    <Card className="interactive-row" style={{ padding: 12, cursor: "pointer" }} onClick={onClick}>
+    <Card interactive style={{ padding: 12, cursor: "pointer" }} onClick={onClick}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 700, lineHeight: 1.2 }}>{title}</div>

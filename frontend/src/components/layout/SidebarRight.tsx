@@ -20,12 +20,14 @@ import EventCardActions from "../ui/EventCardActions";
 import RelevanceBadge from "../ui/RelevanceBadge";
 import SlidePanel from "../ui/SlidePanel";
 import ToastHost, { type ToastItem } from "../ui/ToastHost";
+import SidebarToggleButton from "../ui/SidebarToggleButton";
 import UserActionPanel, { type ActionCatalogItem, type BulkAction, type TrustPolicy, type TrustPolicyCatalogItem } from "../users/UserActionPanel";
 import type { UserDetailsResponse } from "../users/UserDetailsDrawer";
 import { UserStatusPills } from "../users/UserStatusPills";
 import { buildAuthSecurityQuickActions } from "../users/userContextQuickActions";
 import MonitoringContextCard from "../monitoring/MonitoringContextCard";
 import EventMetaPills from "../ui/EventMetaPills";
+import IconGhostButton from "../ui/IconGhostButton";
 
 type Props = {
   collapsed: boolean;
@@ -115,7 +117,7 @@ function NotificationCard({
   const effectiveUnread = unread && relevance !== "self";
   return (
     <Card
-      className="interactive-row"
+      interactive
       style={{
         padding: 10,
         minHeight: 104,
@@ -167,18 +169,15 @@ function NotificationCard({
               <RelevanceBadge relevance={relevance} />
             </div>
           </div>
-          <Button
+          <IconGhostButton
             onClick={(e) => {
               e.stopPropagation();
               onDismiss(item);
             }}
-            size="sm"
-            variant="ghost"
-            style={{ padding: "0 6px", minHeight: 22 }}
             title="Скрыть уведомление"
           >
             ×
-          </Button>
+          </IconGhostButton>
         </div>
         <div style={{ minHeight: BODY_MIN_HEIGHT }}>
           <div
@@ -235,7 +234,7 @@ function ActionCard({
   const effectiveUnread = unread && relevance !== "self";
   return (
     <Card
-      className="interactive-row"
+      interactive
       style={{
         padding: 10,
         minHeight: CARD_MIN_HEIGHT,
@@ -279,18 +278,15 @@ function ActionCard({
               <RelevanceBadge relevance={relevance} />
             </div>
           </div>
-          <Button
+          <IconGhostButton
             onClick={(e) => {
               e.stopPropagation();
               onDismiss(item);
             }}
-            size="sm"
-            variant="ghost"
-            style={{ padding: "0 6px", minHeight: 22 }}
             title="Скрыть событие"
           >
             ×
-          </Button>
+          </IconGhostButton>
         </div>
         <div style={{ minHeight: BODY_MIN_HEIGHT }}>
           <div
@@ -635,7 +631,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   const sectionHeader = useMemo(
     () => (
       <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between", fontSize: 12, opacity: 0.85 }}>
-        <Button onClick={() => navigate("/events")} size="sm" variant="ghost">Показать все</Button>
+        <Button onClick={() => navigate("/events")} size="sm" variant="accent">Показать все</Button>
         <span
           title={lastUpdated ? `Обновлено: ${lastUpdated}` : ""}
           style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
@@ -674,16 +670,14 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
             inset: 0,
             display: "grid",
             placeItems: "start center",
-            paddingTop: 8,
+            paddingTop: 12,
             opacity: collapsed ? 1 : 0,
             transform: collapsed ? "translateX(0)" : "translateX(12px)",
             transition: "opacity 180ms ease, transform 180ms ease",
             pointerEvents: collapsed ? "auto" : "none",
           }}
         >
-          <Button onClick={onToggle} variant="secondary" size="sm" title="Развернуть центр событий" style={{ minWidth: 34 }}>
-            ◀
-          </Button>
+          <SidebarToggleButton collapsed onClick={onToggle} />
         </div>
 
         <div
@@ -700,11 +694,9 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
             pointerEvents: collapsed ? "none" : "auto",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>Центр событий</h3>
-            <Button onClick={onToggle} size="sm" variant="secondary" title="Свернуть центр событий">
-              ▶
-            </Button>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", minHeight: 30 }}>
+            <h3 style={{ margin: 0, lineHeight: 1.2 }}>Центр событий</h3>
+            <SidebarToggleButton collapsed={false} onClick={onToggle} />
           </div>
 
           {sectionHeader}
@@ -840,7 +832,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
                 />
               )}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Button variant="primary" onClick={() => onOpenEventSource(contextItem)}>Открыть источник</Button>
+                <Button variant="accent" onClick={() => onOpenEventSource(contextItem)}>Открыть источник</Button>
                 <Button variant="secondary" onClick={() => onMarkHandled(contextItem)}>Отметить обработанным</Button>
                 <Button
                   variant="ghost"

@@ -115,11 +115,11 @@ export default function SidebarLeft() {
         </div>
 
         <div style={{ display: "grid", gap: 8 }}>
-          <Button onClick={() => navigate("/")} variant="secondary" active={inWorkspace} fullWidth>
+          <Button onClick={() => navigate("/")} variant="accent" active={inWorkspace} fullWidth>
             {"\u0420\u0430\u0431\u043e\u0447\u0430\u044f \u043e\u0431\u043b\u0430\u0441\u0442\u044c"}
           </Button>
           {canOpenSettings && (
-            <Button onClick={() => navigate("/settings")} variant="secondary" active={inSettings} fullWidth>
+            <Button onClick={() => navigate("/settings")} variant="accent" active={inSettings} fullWidth>
               {"\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"}
             </Button>
           )}
@@ -127,7 +127,12 @@ export default function SidebarLeft() {
 
         <hr style={{ margin: "10px 0", borderColor: "#3333" }} />
 
-        <Button onClick={() => navigate("/profiles/new")} variant="primary" fullWidth>
+        <Button
+          onClick={() => navigate("/profiles/new")}
+          variant="primary"
+          active={location.pathname.startsWith("/profiles/new")}
+          fullWidth
+        >
           + {"\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0444\u0438\u043b\u044c"}
         </Button>
 

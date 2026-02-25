@@ -30,6 +30,7 @@ import SegmentedControl from "../components/ui/SegmentedControl";
 import SlidePanel from "../components/ui/SlidePanel";
 
 import Timeline from "../components/ui/Timeline";
+import InlineActionButton from "../components/ui/InlineActionButton";
 
 import UiSelect from "../components/ui/UiSelect";
 
@@ -669,7 +670,7 @@ export default function ActivityLogPage() {
 
           <div style={{ display: "flex", gap: 8, alignItems: "center", borderLeft: "1px solid #3333", paddingLeft: 12 }}>
 
-            <Button variant="ghost" active={showFilters} onClick={() => setShowFilters((v) => !v)}>
+            <Button variant="panel-toggle" active={showFilters} onClick={() => setShowFilters((v) => !v)}>
 
               {showFilters ? "Скрыть фильтры" : "Фильтры"}
 
@@ -683,7 +684,12 @@ export default function ActivityLogPage() {
 
             </UiSelect>
 
-            <Button variant="secondary" onClick={() => exportLogs(exportFormat)} disabled={exportPending}>
+            <Button
+              variant="export"
+              onClick={() => exportLogs(exportFormat)}
+              disabled={exportPending}
+              exportProgress={exportPending ? exportProgress : undefined}
+            >
               {exportPending
                 ? `Экспорт${exportProgress != null ? ` ${exportProgress}%` : "..."}`
                 : `Экспорт ${mode === "audit" ? "аудита" : "входов"}`}
@@ -919,7 +925,7 @@ export default function ActivityLogPage() {
 
                       id={`audit-log-row-${a.id}`}
 
-                      className="interactive-row"
+                      interactive
 
                       style={{ ...toneStyle, ...highlightStyle, cursor: "pointer" }}
 
@@ -931,9 +937,7 @@ export default function ActivityLogPage() {
 
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
 
-                          <button
-
-                            type="button"
+                          <InlineActionButton
 
                             onClick={(e) => {
 
@@ -944,8 +948,7 @@ export default function ActivityLogPage() {
                               scheduleResetAndLoad();
 
                             }}
-
-                            style={{ all: "unset", fontWeight: 700, cursor: "pointer" }}
+                            bold
 
                             title="Фильтр по этому действию"
 
@@ -953,7 +956,7 @@ export default function ActivityLogPage() {
 
                             {(actionCatalog.find((x) => x.action === a.action)?.label) || a.action}
 
-                          </button>
+                          </InlineActionButton>
 
                           <RelevanceBadge relevance={relevance} />
 
@@ -963,9 +966,7 @@ export default function ActivityLogPage() {
 
                         <div style={{ fontSize: 13, opacity: 0.9 }}>
 
-                          <button
-
-                            type="button"
+                          <InlineActionButton
 
                             onClick={(e) => {
 
@@ -977,21 +978,17 @@ export default function ActivityLogPage() {
 
                             }}
 
-                            style={{ all: "unset", cursor: "pointer" }}
-
                             title="Фильтр по администратору"
 
                           >
 
                             {actorLabel(a.actor_email, user?.email)}
 
-                          </button>
+                          </InlineActionButton>
 
                           {" > "}
 
-                          <button
-
-                            type="button"
+                          <InlineActionButton
 
                             onClick={(e) => {
 
@@ -1003,15 +1000,13 @@ export default function ActivityLogPage() {
 
                             }}
 
-                            style={{ all: "unset", cursor: "pointer" }}
-
                             title="Фильтр по получателю"
 
                           >
 
                             {targetLabel(a.target_email)}
 
-                          </button>
+                          </InlineActionButton>
 
                         </div>
 
@@ -1019,9 +1014,7 @@ export default function ActivityLogPage() {
 
                           IP инициатора действия:{" "}
 
-                          <button
-
-                            type="button"
+                          <InlineActionButton
 
                             onClick={(e) => {
 
@@ -1035,15 +1028,13 @@ export default function ActivityLogPage() {
 
                             }}
 
-                            style={{ all: "unset", cursor: "pointer" }}
-
                             title="Фильтр по этому IP"
 
                           >
 
                             {ipHint(a.ip)}
 
-                          </button>
+                          </InlineActionButton>
 
                         </div>
 
@@ -1123,7 +1114,7 @@ export default function ActivityLogPage() {
 
                       id={`login-row-${r.id}`}
 
-                      className="interactive-row"
+                      interactive
 
                       style={{ ...toneStyle, ...highlightStyle, cursor: "pointer" }}
 
@@ -1135,9 +1126,7 @@ export default function ActivityLogPage() {
 
                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
 
-                          <button
-
-                            type="button"
+                          <InlineActionButton
 
                             onClick={(e) => {
 
@@ -1148,8 +1137,7 @@ export default function ActivityLogPage() {
                               scheduleResetAndLoad();
 
                             }}
-
-                            style={{ all: "unset", fontWeight: 700, cursor: "pointer" }}
+                            bold
 
                             title="Фильтр по этому email"
 
@@ -1157,7 +1145,7 @@ export default function ActivityLogPage() {
 
                             {r.email}
 
-                          </button>
+                          </InlineActionButton>
 
                           <RelevanceBadge relevance={relevance} />
 
@@ -1165,9 +1153,7 @@ export default function ActivityLogPage() {
 
                         <div style={{ fontSize: 13, opacity: 0.9 }}>
 
-                          <button
-
-                            type="button"
+                          <InlineActionButton
 
                             onClick={(e) => {
 
@@ -1181,15 +1167,13 @@ export default function ActivityLogPage() {
 
                             }}
 
-                            style={{ all: "unset", cursor: "pointer" }}
-
                             title="Фильтр по этому результату"
 
                           >
 
                             {r.result}{UI_BULLET}{r.source}
 
-                          </button>
+                          </InlineActionButton>
 
                         </div>
 
@@ -1199,9 +1183,7 @@ export default function ActivityLogPage() {
 
                           IP клиента входа:{" "}
 
-                          <button
-
-                            type="button"
+                          <InlineActionButton
 
                             onClick={(e) => {
 
@@ -1213,15 +1195,13 @@ export default function ActivityLogPage() {
 
                             }}
 
-                            style={{ all: "unset", cursor: "pointer" }}
-
                             title="Фильтр по этому IP"
 
                           >
 
                             {ipHint(r.ip)}
 
-                          </button>
+                          </InlineActionButton>
 
                         </div>
 
@@ -1327,7 +1307,7 @@ export default function ActivityLogPage() {
                   </div>
                   <div style={{ fontSize: 12, opacity: 0.82 }}>{formatDate(focusContext.row.created_at)}</div>
                   <div style={{ fontSize: 12, opacity: 0.86 }}>
-                    Кто: {actorLabel(focusContext.row.actor_email, user?.email)} → Кому: {targetLabel(focusContext.row.target_email)}
+                    Кто: {actorLabel(focusContext.row.actor_email, user?.email)} {" → "} Кому: {targetLabel(focusContext.row.target_email)}
                   </div>
                   <div style={{ fontSize: 12, opacity: 0.75 }}>IP инициатора действия: {ipHint(focusContext.row.ip)}</div>
                   {focusContext.row.meta && typeof focusContext.row.meta.reason === "string" && focusContext.row.meta.reason.trim() && (
@@ -1445,7 +1425,7 @@ export default function ActivityLogPage() {
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
 
-                <Button variant="secondary" size="sm" onClick={() => openUserByEmail(drawerData.user.email)}>
+                <Button variant="accent" size="sm" onClick={() => openUserByEmail(drawerData.user.email)}>
                   Открыть в Пользователях
                 </Button>
 
@@ -1464,6 +1444,7 @@ export default function ActivityLogPage() {
   );
 
 }
+
 
 
 

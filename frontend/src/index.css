@@ -13,6 +13,13 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  --ui-accent-border: rgba(120, 166, 255, 0.62);
+  --ui-accent-border-strong: rgba(120, 166, 255, 0.78);
+  --ui-accent-bg: rgba(36, 50, 74, 0.92);
+  --ui-accent-bg-active: rgba(44, 62, 92, 0.95);
+  --ui-accent-glow: 0 6px 16px rgba(98, 146, 242, 0.2);
+  --ui-tab-shell-bg: rgba(255, 255, 255, 0.02);
+  --ui-tab-shell-border: rgba(255, 255, 255, 0.16);
 }
 
 * {
@@ -83,11 +90,36 @@ button:focus-visible {
 }
 
 .ui-btn.is-active {
-  box-shadow: 0 0 0 1px rgba(106, 160, 255, 0.24) inset, 0 3px 10px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14) inset, 0 3px 10px rgba(0, 0, 0, 0.12);
 }
 
 .ui-btn--primary.is-active {
-  background: rgba(106, 160, 255, 0.28) !important;
+  background: rgba(58, 92, 158, 0.94) !important;
+  border-color: rgba(136, 178, 240, 0.78) !important;
+  box-shadow: 0 0 0 1px rgba(166, 200, 246, 0.24) inset, 0 3px 10px rgba(58, 92, 158, 0.18);
+}
+
+.ui-btn--primary:hover:not(:disabled) {
+  border-color: rgba(126, 170, 238, 0.72) !important;
+  box-shadow: 0 4px 12px rgba(76, 120, 204, 0.18);
+}
+
+.ui-btn--primary:active:not(:disabled) {
+  background: rgba(64, 100, 170, 0.95) !important;
+  border-color: rgba(150, 190, 246, 0.8) !important;
+  box-shadow: 0 0 0 1px rgba(182, 212, 250, 0.28) inset, 0 3px 8px rgba(64, 100, 170, 0.2);
+}
+
+.ui-btn--accent:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.36) !important;
+  background: rgba(34, 39, 47, 0.98) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.34);
+}
+
+.ui-btn--accent.is-active {
+  background: rgba(68, 76, 88, 0.95) !important;
+  border-color: rgba(184, 194, 212, 0.62) !important;
+  box-shadow: 0 0 0 1px rgba(214, 224, 238, 0.12) inset, 0 3px 10px rgba(0, 0, 0, 0.26);
 }
 
 .ui-btn--ghost.is-active {
@@ -96,6 +128,24 @@ button:focus-visible {
 
 .ui-btn--danger.is-active {
   background: rgba(230, 127, 127, 0.24) !important;
+}
+
+.ui-btn--panel-toggle:hover:not(:disabled) {
+  border-color: rgba(120, 166, 255, 0.5) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.ui-btn--panel-toggle.is-active {
+  box-shadow: 0 0 0 1px rgba(120, 166, 255, 0.28) inset, 0 4px 12px rgba(26, 45, 76, 0.24);
+}
+
+.segmented-control {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--ui-tab-shell-border);
+  border-radius: 12px;
+  background: var(--ui-tab-shell-bg);
 }
 
 .ui-select-wrap {
@@ -169,4 +219,12 @@ button:focus-visible {
 .interactive-row:focus-within {
   border-color: rgba(106, 160, 255, 0.55) !important;
   box-shadow: 0 0 0 2px rgba(106, 160, 255, 0.2) inset;
+}
+
+.table-hover-row {
+  transition: background-color 140ms ease;
+}
+
+.table-hover-row:hover {
+  background: rgba(106, 160, 255, 0.07);
 }

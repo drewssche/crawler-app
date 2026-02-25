@@ -13,16 +13,7 @@ type Props<T extends string> = {
 
 export default function SegmentedControl<T extends string>({ value, options, onChange }: Props<T>) {
   return (
-    <div
-      style={{
-        display: "inline-flex",
-        gap: 6,
-        padding: 4,
-        border: "1px solid #3333",
-        borderRadius: 12,
-        background: "rgba(255,255,255,0.02)",
-      }}
-    >
+    <div className="segmented-control">
       {options.map((option) => (
         <Button
           key={option.value}
@@ -37,4 +28,3 @@ export default function SegmentedControl<T extends string>({ value, options, onC
     </div>
   );
 }
-

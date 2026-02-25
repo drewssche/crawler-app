@@ -101,7 +101,7 @@ export default function AppLayout() {
               onClick={onBack}
               disabled={!parentPathFor(location.pathname)}
               size="sm"
-              variant="ghost"
+              variant="accent"
               style={{ opacity: parentPathFor(location.pathname) ? 1 : 0.45 }}
               title="Назад"
             >
