@@ -458,12 +458,14 @@
 - Governance check: cross-page HIGH reconciliation completed (`docs/audits/AUDIT_HIGH_REVALIDATION_2026-02-24.md`), reuse/pattern coverage confirmed for current infinite-scroll and export hot paths.
 - Governance update (re-audit pass 2): cross-page HIGH reconciliation matrix refreshed (`docs/audits/AUDIT_HIGH_REVALIDATION_2026-02-24.md`) with done+open coverage and explicit page applicability.
 - Backend alignment fix: `/admin/audit` list route now respects `include_total`, so `useActivityFeed` count-less append contract is now fully effective for both `/admin/audit` and `/admin/login-history`.
+- Time unification update: `frontend/src/utils/datetime.ts` now provides shared operational + dual local/UTC helpers
+  (`formatOperationalDateTime`, `formatOperationalTime`, `formatOperationalNow`, `formatLocalAndUtc`, `formatApiDateTimeDual`);
+  `EventsPage`, `ActivityLogPage`, `MonitoringPage` use the shared operational contract.
 
 ## Active Reuse Targets (intake wave)
 - `frontend/src/utils/reasonPolicy.ts`: единый модуль reason-policy (`required/recommended/optional`, placeholder/validation helpers),
   включая shared `getAdminEmailsReasonInputMeta` для `placeholder/hint/presets` в `RootAdminsPage` (add/remove/bulk/drawer) без page-level fallback-строк.
 - `frontend/src/utils/download.ts`: extend to shared export runner state (`pending/success/error`) and keep non-navigating download behavior for all callers.
-- `frontend/src/utils/datetime.ts` + `frontend/src/utils/eventTime.ts`: converge to single `local + UTC` rendering contract for cards, drawers, lists, charts.
 - `frontend/src/components/users/UserListSessionMeta.tsx`: keep single session/device renderer shared by `UsersPage` and `RootAdminsPage`; parity regressions fixed only through this reusable path.
 - `frontend/src/hooks/useIncrementalPager.ts` + domain hooks (`useEventFeed`, `useUsersList`, `useActivityFeed`): staging-scale counter recheck must preserve one total-contract implementation.
 - `frontend/src/utils/exportUrl.ts`: maintain one export URL builder entry-point for `ActivityLogPage` + `MonitoringPage`; new export callers should be added here first.

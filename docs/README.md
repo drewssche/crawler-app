@@ -21,3 +21,4 @@
 ## Governance
 
 - Резервная зона для дополнительных governance-артефактов: `docs/governance/`
+- Feature process playbook: `docs/governance/FEATURE_INTAKE_PLAYBOOK.md`

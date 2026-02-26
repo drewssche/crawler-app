@@ -65,3 +65,31 @@ export function formatTimestampSecondsLocal(value: number, locale: string = "ru-
   const date = new Date(value * 1000);
   return formatLocalDateTimeWithOffset(date, { locale, includeDate: true, includeSeconds: true });
 }
+
+export function formatOperationalDateTime(value: string, locale: string = "ru-RU"): string {
+  return formatApiDateTime(value, locale);
+}
+
+export function formatOperationalTime(value: string, locale: string = "ru-RU"): string {
+  return formatApiTime(value, locale);
+}
+
+export function formatOperationalNow(options?: { locale?: string; includeDate?: boolean; includeSeconds?: boolean }): string {
+  return formatLocalDateTimeWithOffset(new Date(), options);
+}
+
+export function formatLocalAndUtc(
+  date: Date,
+  options?: { locale?: string; includeDate?: boolean; includeSeconds?: boolean; separator?: string },
+): string {
+  const separator = options?.separator ?? " | ";
+  const local = formatLocalDateTimeWithOffset(date, options);
+  const utc = formatUtcTime(date, { includeSeconds: options?.includeSeconds });
+  return `${local}${separator}${utc}`;
+}
+
+export function formatApiDateTimeDual(value: string, locale: string = "ru-RU"): string {
+  const date = parseApiDate(value);
+  if (!date) return value;
+  return formatLocalAndUtc(date, { locale, includeDate: true, includeSeconds: true });
+}

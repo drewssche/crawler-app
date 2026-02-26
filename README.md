@@ -43,6 +43,7 @@ docker compose down -v
 - `REUSE_INDEX.md`
 - `RBAC_MAP.md`
 - `docs/README.md`
+- `docs/governance/FEATURE_INTAKE_PLAYBOOK.md`
 - `docs/audits/AUDIT_DISCOVERY_2026-02-24.md`
 
 Критичный governance-контракт:

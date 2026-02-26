@@ -6,7 +6,7 @@ import { apiGet, apiPost, isAbortError } from "../../api/client";
 
 import { useAuth } from "../../hooks/auth";
 
-import { formatApiDateTime } from "../../utils/datetime";
+import { formatOperationalDateTime } from "../../utils/datetime";
 import { downloadBlobFile } from "../../utils/download";
 import { normalizeError } from "../../utils/errors";
 import { buildActivityExportRequest } from "../../utils/exportUrl";
@@ -100,7 +100,7 @@ type FocusContext =
 
 function formatDate(value: string) {
 
-  return formatApiDateTime(value);
+  return formatOperationalDateTime(value);
 
 }
 
@@ -1443,7 +1443,6 @@ export default function ActivityLogPage() {
   );
 
 }
-
 
 
 

@@ -2,7 +2,7 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { markAllEventsRead, markEventRead, setEventDismissed, setEventHandled, type EventItem } from "../api/events";
 import { useAuth } from "../hooks/auth";
-import { formatApiDateTime } from "../utils/datetime";
+import { formatOperationalDateTime } from "../utils/datetime";
 import { UI_BULLET } from "../utils/uiText";
 import { runEventPrimaryAction } from "../utils/eventPrimaryAction";
 import { eventChannelLabel, eventReadStatusLabel, eventSeverityLabel } from "../utils/eventLabels";
@@ -380,7 +380,7 @@ export default function EventsPage() {
                       <div style={{ fontWeight: 700 }}>{row.title}</div>
                       <RelevanceBadge relevance={relevance} />
                     </div>
-                    <div style={{ fontSize: 12, opacity: 0.78 }}>{formatApiDateTime(row.created_at)}</div>
+                    <div style={{ fontSize: 12, opacity: 0.78 }}>{formatOperationalDateTime(row.created_at)}</div>
                   </div>
                   <div style={{ minHeight: EVENT_CARD_BODY_MIN_HEIGHT }}>
                     <div
@@ -433,7 +433,7 @@ export default function EventsPage() {
             title={(
               <div>
                 <div style={{ fontSize: 18, fontWeight: 800 }}>Контекст события</div>
-                <MetaText opacity={0.72}>{drawerEvent ? formatApiDateTime(drawerEvent.created_at) : ""}</MetaText>
+                <MetaText opacity={0.72}>{drawerEvent ? formatOperationalDateTime(drawerEvent.created_at) : ""}</MetaText>
               </div>
             )}
             actions={<Button onClick={() => setDrawerOpen(false)} variant="ghost" size="sm">Закрыть</Button>}
@@ -533,7 +533,6 @@ export default function EventsPage() {
     </div>
   );
 }
-
 
 
 

@@ -79,6 +79,9 @@
   - Phase 1: completed.
   - Phase 2: started with `MonitoringPage` decomposition into `frontend/src/pages/monitoring/*`.
   - Phase 2: continued with `ActivityLogPage` move into `frontend/src/pages/activity/*` + bridge export in `frontend/src/pages/ActivityLogPage.tsx`.
+  - Phase 2: completed with `RootAdminsPage` move into `frontend/src/pages/rootAdmins/*` + bridge export in `frontend/src/pages/RootAdminsPage.tsx`.
+  - Phase 3: started with `main.py` split for middleware/exception handlers/metrics export (`backend/app/core/http_middleware.py`, `backend/app/core/exception_handlers.py`, `backend/app/core/metrics_export.py`).
+  - Phase 3: completed with lifecycle/wiring/system-routes split (`backend/app/core/app_lifecycle.py`, `backend/app/core/app_wiring.py`, `backend/app/api/system.py`) and integration smoke (`tests/test_api_integration.py`: 20 passed).
 
 ## Verification
 

@@ -1,7 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet, apiPost, isAbortError } from "../../api/client";
-import { formatLocalDateTimeWithOffset } from "../../utils/datetime";
+import { formatOperationalNow } from "../../utils/datetime";
 import { downloadBlobFile } from "../../utils/download";
 import { normalizeError } from "../../utils/errors";
 import { buildMonitoringExportRequest, type MonitoringExportGroup } from "../../utils/exportUrl";
@@ -107,7 +107,7 @@ export default function MonitoringPage() {
       if (metricsAbortRef.current !== controller) return;
       setMetrics(m.counters || {});
       setHistory(h);
-      setLastUpdated(formatLocalDateTimeWithOffset(new Date(), { locale: "ru-RU", includeDate: false, includeSeconds: true }));
+      setLastUpdated(formatOperationalNow({ locale: "ru-RU", includeDate: false, includeSeconds: true }));
     } catch (e) {
       if (isAbortError(e)) return;
       setError(normalizeError(e));

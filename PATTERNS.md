@@ -458,6 +458,7 @@
 - For `FUTURE re-audit` waves, produce an explicit cross-page HIGH reconciliation matrix (`done + open`) with PATTERNS/REUSE linkage and page-level applicability (`applied / not applicable / gap`).
 
 ## Active Intake Playbook (2026-02-24)
+- Detailed feature intake flow for new feature work: `docs/governance/FEATURE_INTAKE_PLAYBOOK.md`.
 - Keep `TODO.md` section `Next` as a single source for open items; do not append new open tasks to file tail.
 - For intake issues spanning pages (Monitoring/Activity/Users/Settings), implement in this order:
   1. source-of-truth alignment (backend contract),
