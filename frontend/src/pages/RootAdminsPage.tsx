@@ -8,8 +8,14 @@ import Card from "../components/ui/Card";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import ClearableInput from "../components/ui/ClearableInput";
 import ListTotalMeta from "../components/ui/ListTotalMeta";
+import ModalActionRow from "../components/ui/ModalActionRow";
+import ModalShell from "../components/ui/ModalShell";
+import ApplicabilityHint from "../components/ui/ApplicabilityHint";
+import InlineInfoRow from "../components/ui/InlineInfoRow";
 import SelectableListRow from "../components/ui/SelectableListRow";
+import SectionHeaderRow from "../components/ui/SectionHeaderRow";
 import SlidePanel from "../components/ui/SlidePanel";
+import { MetaText, StatusText } from "../components/ui/StatusText";
 import type { TrustPolicyCatalogItem } from "../components/users/UserActionPanel";
 import CompactActionCard from "../components/users/CompactActionCard";
 import IdentityBadgeRow from "../components/users/IdentityBadgeRow";
@@ -460,8 +466,8 @@ export default function RootAdminsPage() {
     <div>
       <h2 style={{ marginTop: 0 }}>{TXT.title}</h2>
 
-      {error && <div style={{ color: "#d55", marginBottom: 10 }}>{error}</div>}
-      {message && <div style={{ color: "#8fd18f", marginBottom: 10 }}>{message}</div>}
+      {error && <StatusText tone="danger" style={{ marginBottom: 10 }}>{error}</StatusText>}
+      {message && <StatusText tone="success" style={{ marginBottom: 10 }}>{message}</StatusText>}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginBottom: 12 }}>
         <ClearableInput value={search} onChange={setSearch} placeholder={TXT.search} />
@@ -518,8 +524,8 @@ export default function RootAdminsPage() {
             );
           })}
 
-          {!isListLoading && rows.length === 0 && <div style={{ opacity: 0.75 }}>{TXT.noRows}</div>}
-          {hasMore && <div style={{ fontSize: 12, opacity: 0.72 }}>Показано: {rows.length} из {total ?? "—"}</div>}
+          {!isListLoading && rows.length === 0 && <StatusText tone="muted">{TXT.noRows}</StatusText>}
+          {hasMore && <MetaText opacity={0.72}>Показано: {rows.length} из {total ?? "—"}</MetaText>}
         </div>
       </Card>
 
@@ -528,12 +534,12 @@ export default function RootAdminsPage() {
           <div style={{ display: "grid", gap: 8 }}>
             {canBulkRemove ? (
               <>
-                <div style={{ fontSize: 12, opacity: 0.82 }}>Применится к записям: {removableSelected.length} из {selected.length}</div>
-                {removableSelected.length < selected.length && (
-                  <div style={{ fontSize: 12, opacity: 0.82 }}>
-                    Часть выбранных записей будет пропущена (например, нельзя удалить себя).
-                  </div>
-                )}
+                <ApplicabilityHint
+                  applied={removableSelected.length}
+                  total={selected.length}
+                  showPartial={removableSelected.length < selected.length}
+                  partialText="Часть выбранных записей будет пропущена (например, нельзя удалить себя)."
+                />
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <Button onClick={removeSelected} disabled={loading} variant="danger" size="sm">{TXT.removeSelected}</Button>
                 </div>
@@ -548,11 +554,11 @@ export default function RootAdminsPage() {
                     <ReasonPresetButton key={p} onClick={() => setBulkReason(p)}>{p}</ReasonPresetButton>
                   ))}
                 </div>
-                <div style={{ fontSize: 12, opacity: 0.78 }}>{removeReasonHintText}</div>
+                <MetaText opacity={0.78}>{removeReasonHintText}</MetaText>
               </>
             ) : (
               <>
-                <div style={{ fontSize: 12, opacity: 0.82 }}>Применится к записям: {removableSelected.length} из {selected.length}</div>
+                <ApplicabilityHint applied={removableSelected.length} total={selected.length} />
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {selected.some((x) => x === selfEmail) && <AccentPill tone="warning">{TXT.cannotSelf}</AccentPill>}
                   {adminCount <= 1 && <AccentPill tone="warning">{TXT.cannotLast}</AccentPill>}
@@ -563,33 +569,39 @@ export default function RootAdminsPage() {
         </CompactActionCard>
       )}
 
-      {modalOpen && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "grid", placeItems: "center", zIndex: 20 }}>
-          <Card style={{ width: 420, maxWidth: "92vw", padding: 14, background: "#1a1a1a" }}>
-            <h3 style={{ marginTop: 0 }}>{TXT.addModalTitle}</h3>
-            <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@company.com" style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10, marginBottom: 10 }} />
-            <input value={addReason} onChange={(e) => setAddReason(e.target.value)} placeholder={addReasonPlaceholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10, marginBottom: 10 }} />
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-              {addReasonPresets.map((p) => (
-                <ReasonPresetButton key={p} onClick={() => setAddReason(p)}>{p}</ReasonPresetButton>
-              ))}
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.78, marginBottom: 10 }}>{addReasonHintText}</div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <Button variant="ghost" size="sm" onClick={() => setModalOpen(false)}>{TXT.cancel}</Button>
-              <Button variant="primary" size="sm" onClick={addEmail}>OK</Button>
-            </div>
-          </Card>
+      <ModalShell
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        width="min(420px, 92vw)"
+        zIndex={20}
+        contentStyle={{ padding: 14, background: "#1a1a1a", display: "grid", gap: 10 }}
+      >
+        <h3 style={{ marginTop: 0, marginBottom: 0 }}>{TXT.addModalTitle}</h3>
+        <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@company.com" style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
+        <input value={addReason} onChange={(e) => setAddReason(e.target.value)} placeholder={addReasonPlaceholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {addReasonPresets.map((p) => (
+            <ReasonPresetButton key={p} onClick={() => setAddReason(p)}>{p}</ReasonPresetButton>
+          ))}
         </div>
-      )}
+        <MetaText opacity={0.78}>{addReasonHintText}</MetaText>
+        <ModalActionRow style={{ marginTop: 0 }}>
+          <Button variant="ghost" size="sm" onClick={() => setModalOpen(false)}>{TXT.cancel}</Button>
+          <Button variant="primary" size="sm" onClick={addEmail}>OK</Button>
+        </ModalActionRow>
+      </ModalShell>
 
       <SlidePanel open={drawerOpen} onClose={() => setDrawerOpen(false)}>
-        <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>{TXT.drawerTitle}</div>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>{drawerEmail}</div>
-          </div>
-          <Button onClick={() => setDrawerOpen(false)} size="sm" variant="ghost">{TXT.close}</Button>
+        <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <SectionHeaderRow
+            title={(
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>{TXT.drawerTitle}</div>
+                <MetaText opacity={0.7}>{drawerEmail}</MetaText>
+              </div>
+            )}
+            actions={<Button onClick={() => setDrawerOpen(false)} size="sm" variant="ghost">{TXT.close}</Button>}
+          />
         </div>
 
         <div style={{ overflowY: "auto", padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
@@ -627,16 +639,16 @@ export default function RootAdminsPage() {
                           title={TXT.trustDetails}
                         />
                       ) : (
-                        <div
-                          style={{ fontSize: 13, opacity: 0.84 }}
+                        <InlineInfoRow
                           title="Политика доверия устройства"
-                        >
-                          Политика доверия: <b>{drawerUser.trust_policy || "-"}</b>
-                        </div>
+                          label="Политика доверия:"
+                          value={drawerUser.trust_policy || "-"}
+                          boldValue
+                        />
                       )}
                     </>
                   ) : (
-                    <div style={{ opacity: 0.8 }}>{TXT.notFoundInDb}</div>
+                    <MetaText>{TXT.notFoundInDb}</MetaText>
                   )}
                 </div>
               </Card>
@@ -662,7 +674,7 @@ export default function RootAdminsPage() {
                           {drawerActionLoading ? TXT.removing : TXT.removeOne}
                         </Button>
                       </div>
-                      <div style={{ fontSize: 12, opacity: 0.78 }}>{removeReasonHintText}</div>
+                      <MetaText opacity={0.78}>{removeReasonHintText}</MetaText>
                     </>
                   ) : (
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

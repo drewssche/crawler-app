@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Button from "./Button";
+import IconGhostButton from "./IconGhostButton";
 
 export type ToastItem = {
   id: string;
@@ -216,18 +217,16 @@ export default function ToastHost({ items, onClose, autoCloseMs = 6000 }: Props)
                 {item.body}
               </div>
             </div>
-            <Button
+            <IconGhostButton
               onClick={(e) => {
                 e.stopPropagation();
                 beginClose(item.id);
               }}
-              size="sm"
-              variant="ghost"
               title={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c"}
               style={{ minWidth: 28, padding: "0 8px" }}
             >
               {"\u00d7"}
-            </Button>
+            </IconGhostButton>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, alignItems: "center" }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center", minHeight: 28 }}>

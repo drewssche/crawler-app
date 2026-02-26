@@ -18,7 +18,9 @@ import ContextQuickActions from "../ui/ContextQuickActions";
 import EmptyState from "../ui/EmptyState";
 import EventCardActions from "../ui/EventCardActions";
 import RelevanceBadge from "../ui/RelevanceBadge";
+import SectionHeaderRow from "../ui/SectionHeaderRow";
 import SlidePanel from "../ui/SlidePanel";
+import { MetaText, StatusText } from "../ui/StatusText";
 import ToastHost, { type ToastItem } from "../ui/ToastHost";
 import SidebarToggleButton from "../ui/SidebarToggleButton";
 import UserActionPanel, { type ActionCatalogItem, type BulkAction, type TrustPolicy, type TrustPolicyCatalogItem } from "../users/UserActionPanel";
@@ -630,23 +632,26 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
 
   const sectionHeader = useMemo(
     () => (
-      <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between", fontSize: 12, opacity: 0.85 }}>
-        <Button onClick={() => navigate("/events")} size="sm" variant="accent">Показать все</Button>
-        <span
-          title={lastUpdated ? `Обновлено: ${lastUpdated}` : ""}
-          style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-          aria-label={lastUpdated ? `Обновлено: ${lastUpdated}` : "Не обновлялось"}
-        >
-          {lastUpdated ? (
-            <>
-              <span aria-hidden="true" style={{ opacity: 0.75 }}>↻</span>
-              <span>{lastUpdated}</span>
-            </>
-          ) : (
-            ""
-          )}
-        </span>
-      </div>
+      <SectionHeaderRow
+        title={<Button onClick={() => navigate("/events")} size="sm" variant="accent">Показать все</Button>}
+        actions={(
+          <span
+            title={lastUpdated ? `Обновлено: ${lastUpdated}` : ""}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+            aria-label={lastUpdated ? `Обновлено: ${lastUpdated}` : "Не обновлялось"}
+          >
+            {lastUpdated ? (
+              <>
+                <span aria-hidden="true" style={{ opacity: 0.75 }}>↻</span>
+                <span>{lastUpdated}</span>
+              </>
+            ) : (
+              ""
+            )}
+          </span>
+        )}
+        style={{ fontSize: 12, opacity: 0.85 }}
+      />
     ),
     [lastUpdated, navigate],
   );
@@ -726,7 +731,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
                 <div style={{ fontWeight: 700, fontSize: 13 }}>Лента действий</div>
               </div>
 
-              {error && <div style={{ opacity: 0.8, fontSize: 13 }}>{error}</div>}
+              {error && <StatusText tone="muted" style={{ fontSize: 13, opacity: 0.8 }}>{error}</StatusText>}
               {actions.map((item) => (
                 <ActionCard
                   key={item.id}
@@ -744,18 +749,22 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
         </div>
       </aside>
       <SlidePanel open={contextItem !== null} onClose={() => setContextItem(null)}>
-        <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>Контекст события</div>
-            <div style={{ fontSize: 12, opacity: 0.72 }}>
-              {contextItem ? formatApiTime(contextItem.created_at) : ""}
-            </div>
-          </div>
-          <Button onClick={() => setContextItem(null)} variant="ghost" size="sm">Закрыть</Button>
+        <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <SectionHeaderRow
+            title={(
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>Контекст события</div>
+                <MetaText opacity={0.72}>
+                  {contextItem ? formatApiTime(contextItem.created_at) : ""}
+                </MetaText>
+              </div>
+            )}
+            actions={<Button onClick={() => setContextItem(null)} variant="ghost" size="sm">Закрыть</Button>}
+          />
         </div>
         <div style={{ padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
           {contextLoading && <div>Загрузка...</div>}
-          {contextError && <div style={{ color: "#d55" }}>{contextError}</div>}
+          {contextError && <StatusText tone="danger">{contextError}</StatusText>}
           {contextItem && (
             <>
               <Card style={{ display: "grid", gap: 8 }}>

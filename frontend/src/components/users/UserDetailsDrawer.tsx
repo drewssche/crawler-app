@@ -1,7 +1,10 @@
 ﻿import { useMemo, useState } from "react";
 import Button from "../ui/Button";
 import Card from "../ui/Card";
+import InlineInfoRow from "../ui/InlineInfoRow";
+import SectionHeaderRow from "../ui/SectionHeaderRow";
 import SlidePanel from "../ui/SlidePanel";
+import { MetaText, StatusText } from "../ui/StatusText";
 import DeviceSummaryCard, { type TrustedDeviceItem } from "./DeviceSummaryCard";
 import SessionSummaryCard, { type LoginHistoryItem } from "./SessionSummaryCard";
 import UserActionPanel, { type ActionCatalogItem, type BulkAction, type TrustPolicy, type TrustPolicyCatalogItem } from "./UserActionPanel";
@@ -201,7 +204,7 @@ export default function UserDetailsDrawer({
 
       <div style={{ overflowY: "auto", padding: 16, display: "grid", gap: 12 }}>
         {loading && <div>Загрузка...</div>}
-        {error && <div style={{ color: "#e67f7f" }}>{error}</div>}
+        {error && <StatusText tone="error">{error}</StatusText>}
 
         {!loading && !error && data && (
           <>
@@ -233,14 +236,14 @@ export default function UserDetailsDrawer({
                   />
                 )}
                 {!data.user.is_approved && !data.user.is_deleted && (
-                  <div style={{ fontSize: 12, opacity: 0.8 }}>статус: ожидает подтверждения</div>
+                  <MetaText>статус: ожидает подтверждения</MetaText>
                 )}
-                <div
-                  style={{ fontSize: 13, opacity: 0.78 }}
+                <InlineInfoRow
+                  style={{ opacity: 0.78 }}
                   title="Версия JWT. Увеличивается при security-действиях (отзыв сессий, смена роли, блокировка). Старые токены становятся недействительными."
-                >
-                  Версия токена (JWT): {data.user.token_version}
-                </div>
+                  label="Версия токена (JWT):"
+                  value={data.user.token_version}
+                />
               </div>
             </Card>
 
@@ -266,29 +269,31 @@ export default function UserDetailsDrawer({
 
             <Card>
               <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                  <div style={{ fontWeight: 700 }}>Доверенные устройства ({groupedDevices.length})</div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    {groupedDevices.length > 1 && latestDevice && !isSelfUser && (
-                      <Button size="sm" variant="secondary" onClick={handleRevokeExceptLatest} disabled={deviceActionBusy !== null}>
-                        {deviceActionBusy === "except_latest" ? "Отзыв..." : "Отозвать все кроме последнего"}
-                      </Button>
-                    )}
-                    {groupedDevices.length > 1 && (
-                      <Button onClick={() => setShowAllTrustedDevices((v) => !v)} size="sm" variant="panel-toggle" active={showAllTrustedDevices}>
-                        {showAllTrustedDevices ? "Свернуть" : "Показать все"}
-                      </Button>
-                    )}
-                  </div>
-                </div>
+                <SectionHeaderRow
+                  title={`Доверенные устройства (${groupedDevices.length})`}
+                  actions={(
+                    <>
+                      {groupedDevices.length > 1 && latestDevice && !isSelfUser && (
+                        <Button size="sm" variant="secondary" onClick={handleRevokeExceptLatest} disabled={deviceActionBusy !== null}>
+                          {deviceActionBusy === "except_latest" ? "Отзыв..." : "Отозвать все кроме последнего"}
+                        </Button>
+                      )}
+                      {groupedDevices.length > 1 && (
+                        <Button onClick={() => setShowAllTrustedDevices((v) => !v)} size="sm" variant="panel-toggle" active={showAllTrustedDevices}>
+                          {showAllTrustedDevices ? "Свернуть" : "Показать все"}
+                        </Button>
+                      )}
+                    </>
+                  )}
+                />
 
-                {deviceActionError && <div style={{ color: "#e67f7f", fontSize: 12 }}>{deviceActionError}</div>}
+                {deviceActionError && <StatusText tone="error" style={{ fontSize: 12 }}>{deviceActionError}</StatusText>}
                 {isSelfUser && groupedDevices.length > 0 && (
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>Вы не можете отозвать для себя.</div>
+                  <MetaText opacity={0.75}>Вы не можете отозвать для себя.</MetaText>
                 )}
-                {groupedDevices.length === 0 && <div style={{ fontSize: 13, opacity: 0.75 }}>Устройств пока нет</div>}
+                {groupedDevices.length === 0 && <MetaText size={13} opacity={0.75}>Устройств пока нет</MetaText>}
                 {groupedDevices.length > 0 && !showAllTrustedDevices && hiddenDevicesCount > 0 && (
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>еще устройств: {hiddenDevicesCount}</div>
+                  <MetaText opacity={0.75}>еще устройств: {hiddenDevicesCount}</MetaText>
                 )}
 
                 {visibleDevices.map((group, index) => (
@@ -306,14 +311,16 @@ export default function UserDetailsDrawer({
 
             <Card>
               <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                  <div style={{ fontWeight: 700 }}>История входов и IP</div>
-                  <a href={`/logs?mode=login&email=${encodeURIComponent(data.user.email)}`} style={{ fontSize: 12, textDecoration: "none" }}>
-                    Открыть полный журнал входов
-                  </a>
-                </div>
+                <SectionHeaderRow
+                  title="История входов и IP"
+                  actions={(
+                    <a href={`/logs?mode=login&email=${encodeURIComponent(data.user.email)}`} style={{ fontSize: 12, textDecoration: "none" }}>
+                      Открыть полный журнал входов
+                    </a>
+                  )}
+                />
 
-                {loginHistoryPreview.length === 0 && <div style={{ fontSize: 13, opacity: 0.75 }}>Записей нет</div>}
+                {loginHistoryPreview.length === 0 && <MetaText size={13} opacity={0.75}>Записей нет</MetaText>}
                 {loginHistoryPreview.map((row) => (
                   <div key={row.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: 6 }}>
                     <div style={{ fontSize: 13 }}><b>{row.result}</b>{UI_BULLET}{row.source}</div>

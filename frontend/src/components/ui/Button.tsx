@@ -29,39 +29,39 @@ function byVariant(variant: ButtonVariant, active: boolean): CSSProperties {
   if (variant === "accent") {
     return active
       ? {
-          background: "rgba(68,76,88,0.95)",
-          border: "1px solid rgba(184,194,212,0.62)",
-          color: "#f0f3f9",
+          background: "rgba(24,74,84,0.95)",
+          border: "1px solid rgba(110,212,226,0.72)",
+          color: "#ecfcff",
         }
       : {
-          background: "rgba(12,15,20,0.99)",
-          border: "1px solid rgba(255,255,255,0.22)",
-          color: "#e4e9f2",
+          background: "rgba(12,36,42,0.98)",
+          border: "1px solid rgba(96,190,205,0.58)",
+          color: "#dbf5fa",
         };
   }
   if (variant === "danger") {
     return active
       ? {
-          background: "rgba(230,127,127,0.2)",
-          border: "1px solid rgba(230,127,127,0.65)",
-          color: "#ffd7d7",
+          background: "rgba(124,31,44,0.5)",
+          border: "1px solid rgba(255,120,136,0.74)",
+          color: "#ffe4e8",
         }
       : {
-          background: "rgba(230,127,127,0.1)",
-          border: "1px solid rgba(230,127,127,0.35)",
-          color: "#ffd7d7",
+          background: "rgba(98,24,35,0.34)",
+          border: "1px solid rgba(234,104,121,0.56)",
+          color: "#ffdbe1",
         };
   }
   if (variant === "ghost") {
     return active
       ? {
-          background: "rgba(106,160,255,0.12)",
-          border: "1px solid rgba(106,160,255,0.55)",
+          background: "rgba(104,154,246,0.15)",
+          border: "1px solid rgba(112,166,255,0.58)",
           color: "inherit",
         }
       : {
-          background: "transparent",
-          border: "1px solid #3333",
+          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.2)",
           color: "inherit",
         };
   }

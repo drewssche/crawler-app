@@ -1,5 +1,7 @@
 import AccentPill from "../ui/AccentPill";
 import Button from "../ui/Button";
+import Card from "../ui/Card";
+import { MetaText } from "../ui/StatusText";
 import { shortUserAgent } from "../../utils/userAgent";
 import { UI_BULLET } from "../../utils/uiText";
 import { formatApiDateTime } from "../../utils/datetime";
@@ -59,7 +61,7 @@ export default function DeviceSummaryCard({
   busy?: boolean;
 }) {
   return (
-    <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: 10, display: "grid", gap: 6 }}>
+    <Card style={{ borderColor: "rgba(255,255,255,0.08)", borderRadius: 10, padding: 10, display: "grid", gap: 6 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
         {isLatest && <AccentPill tone="info">{"\u043f\u043e\u0441\u043b\u0435\u0434\u043d\u0435\u0435"}</AccentPill>}
         <AccentPill>{device.policy}</AccentPill>
@@ -68,18 +70,18 @@ export default function DeviceSummaryCard({
         </AccentPill>
         {usageCount > 1 && <AccentPill tone="neutral">{"\u043f\u043e\u0432\u0442\u043e\u0440\u043e\u0432"}: {usageCount}</AccentPill>}
       </div>
-      <div style={{ fontSize: 12, opacity: 0.84 }}>
+      <MetaText opacity={0.84}>
         {"\u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u043e"}: {device.device_label || shortUserAgent(device.device_user_agent)}
-      </div>
-      <div style={{ fontSize: 12, opacity: 0.84 }}>
+      </MetaText>
+      <MetaText opacity={0.84}>
         IP: {device.device_ip || "-"}{UI_BULLET}{"\u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a"}: {device.device_source || "-"}
-      </div>
-      <div style={{ fontSize: 12, opacity: 0.84 }}>
+      </MetaText>
+      <MetaText opacity={0.84}>
         {"\u043f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0439 \u0432\u0445\u043e\u0434"}: {(device.last_used_at || device.device_seen_at || device.created_at) ? formatApiDateTime(device.last_used_at || device.device_seen_at || device.created_at || "") : "-"}
-      </div>
-      <div style={{ fontSize: 12, opacity: 0.84 }}>
+      </MetaText>
+      <MetaText opacity={0.84}>
         {"\u0438\u0441\u0442\u0435\u043a\u0430\u0435\u0442"}: {device.expires_at ? formatApiDateTime(device.expires_at) : "-"}
-      </div>
+      </MetaText>
       {onRevoke && device.status !== "revoked" && (
         <div>
           <Button size="sm" variant="danger" onClick={onRevoke} disabled={busy}>
@@ -87,6 +89,6 @@ export default function DeviceSummaryCard({
           </Button>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

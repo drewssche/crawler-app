@@ -1,9 +1,12 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import Button from "../ui/Button";
+import ActionStateMarker from "../ui/ActionStateMarker";
+import ApplicabilityHint from "../ui/ApplicabilityHint";
 import ReasonPresetButton from "../ui/ReasonPresetButton";
 import Card from "../ui/Card";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import RoleBadge from "../ui/RoleBadge";
+import { MetaText, StatusText } from "../ui/StatusText";
 import UiSelect from "../ui/UiSelect";
 import TrustPolicyDetailChips from "./TrustPolicyDetailChips";
 import { getReasonMode, getReasonPlaceholder, getReasonRequiredError, type ReasonMode } from "../../utils/reasonPolicy";
@@ -100,6 +103,12 @@ function normalizeAvailableActions(actions: BulkAction[]): BulkAction[] {
 
 function actionLabel(action: BulkAction, fallback?: string) {
   return ACTION_LABELS[action] || fallback || action;
+}
+
+function actionMarkerTone(action: BulkAction, critical?: boolean): "info" | "warning" | "danger" {
+  if (action === "delete_hard" || action === "delete_soft" || action === "block") return "danger";
+  if (critical) return "warning";
+  return "info";
 }
 
 export default function UserActionPanel({
@@ -211,7 +220,7 @@ export default function UserActionPanel({
       <Card style={{ display: "grid", gap: 10 }}>
         <div style={{ fontWeight: 700 }}>{title}</div>
         {filteredAvailableActions.length === 0 ? (
-          <div style={{ fontSize: 13, opacity: 0.75 }}>Для пользователя нет доступных действий.</div>
+          <MetaText size={13} opacity={0.75}>Для пользователя нет доступных действий.</MetaText>
         ) : (
           <>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -251,20 +260,10 @@ export default function UserActionPanel({
                 }}
               >
                 <div style={{ display: "grid", gridTemplateColumns: "24px 1fr", gap: 10, alignItems: "start" }}>
-                  <div
-                    style={{
-                      width: 24,
-                      height: 24,
-                      borderRadius: 12,
-                      display: "grid",
-                      placeItems: "center",
-                      fontWeight: 700,
-                      border: "1px solid #3333",
-                      fontSize: 12,
-                    }}
-                  >
-                    {ACTION_ICON_FALLBACK[effectiveAction] ?? "i"}
-                  </div>
+                  <ActionStateMarker
+                    icon={ACTION_ICON_FALLBACK[effectiveAction] ?? "i"}
+                    tone={actionMarkerTone(effectiveAction, meta.critical)}
+                  />
                   <div style={{ display: "grid", gap: 4 }}>
                     {effectiveAction === "delete_soft" && (
                       <div style={{ fontSize: 12, opacity: 0.82 }}>Мягкое удаление: пользователя можно восстановить позже.</div>
@@ -273,19 +272,14 @@ export default function UserActionPanel({
                       <div style={{ fontSize: 12, opacity: 0.82 }}>Жесткое удаление: восстановление будет недоступно.</div>
                     )}
                     <div style={{ fontSize: 13, opacity: 0.9 }}>{meta.details || "Описание действия будет добавлено в каталоге."}</div>
-                    <div style={{ fontSize: 12, opacity: 0.82 }}>
-                      Применится к пользователям: {applicableCount} из {selectedCount}
-                    </div>
-                    {hasPartialApplicability && (
-                      <div style={{ fontSize: 12, opacity: 0.82 }}>
-                        Часть выбранных записей будет пропущена: действие применимо только к подходящим.
-                      </div>
-                    )}
-                    {hasNoApplicableTargets && (
-                      <div style={{ fontSize: 12, opacity: 0.82, color: "#e7a15a" }}>
-                        Действие недоступно для текущей выборки.
-                      </div>
-                    )}
+                    <ApplicabilityHint
+                      applied={applicableCount}
+                      total={selectedCount}
+                      subject="пользователям"
+                      showPartial={hasPartialApplicability}
+                      partialText="Часть выбранных записей будет пропущена: действие применимо только к подходящим."
+                      showNone={hasNoApplicableTargets}
+                    />
 
                     {(effectiveAction === "approve" || effectiveAction === "set_role") && (
                       <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
@@ -345,7 +339,7 @@ export default function UserActionPanel({
               </div>
             )}
 
-            {error && <div style={{ color: "#e67f7f", fontSize: 12 }}>{error}</div>}
+            {error && <StatusText tone="error" style={{ fontSize: 12 }}>{error}</StatusText>}
           </>
         )}
       </Card>

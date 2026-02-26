@@ -17,7 +17,10 @@ import EmptyState from "../components/ui/EmptyState";
 import HintCard from "../components/ui/HintCard";
 import HintTable from "../components/ui/HintTable";
 import InteractiveLineChart from "../components/monitoring/InteractiveLineChart";
+import RangePresetGroup from "../components/ui/RangePresetGroup";
+import SectionHeaderRow from "../components/ui/SectionHeaderRow";
 import SegmentedControl from "../components/ui/SegmentedControl";
+import { MetaText, StatusText } from "../components/ui/StatusText";
 import UiSelect from "../components/ui/UiSelect";
 import { useWorkspaceInfiniteScroll } from "../hooks/useWorkspaceInfiniteScroll";
 
@@ -644,21 +647,17 @@ export default function MonitoringPage() {
           <div style={{ fontWeight: 700 }}>Исторические графики (Prometheus)</div>
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              {[
-                { label: "15м", value: 15 },
-                { label: "1ч", value: 60 },
-                { label: "6ч", value: 360 },
-                { label: "24ч", value: 1440 },
-              ].map((preset) => (
-                <Button
-                  key={preset.value}
-                  size="sm"
-                  variant={!customRangeEnabled && historyRangePreset === preset.value ? "primary" : "ghost"}
-                  onClick={() => applyPresetRange(preset.value)}
-                >
-                  {preset.label}
-                </Button>
-              ))}
+              <RangePresetGroup
+                presets={[
+                  { label: "15м", value: 15 },
+                  { label: "1ч", value: 60 },
+                  { label: "6ч", value: 360 },
+                  { label: "24ч", value: 1440 },
+                ]}
+                value={historyRangePreset}
+                active={!customRangeEnabled}
+                onChange={applyPresetRange}
+              />
               <Button size="sm" variant={customRangeEnabled ? "primary" : "ghost"} onClick={() => setCustomRangeEnabled((v) => !v)}>
                 Точный (1-24ч)
               </Button>
@@ -733,33 +732,41 @@ export default function MonitoringPage() {
         )}
       </Card>
 
-      {error && <div style={{ color: "#d55" }}>{error}</div>}
+      {error && <StatusText tone="danger">{error}</StatusText>}
       {history && history.enabled === false && (
         <Card variant="warning">
           <div style={{ color: "#ffcf8a", fontWeight: 700 }}>Prometheus недоступен</div>
-          <div style={{ fontSize: 13, opacity: 0.85 }}>История графиков не загружена.</div>
-          {history.error && <div style={{ fontSize: 12, marginTop: 6, opacity: 0.85 }}>Ошибка: {history.error}</div>}
+          <MetaText size={13} opacity={0.85}>История графиков не загружена.</MetaText>
+          {history.error && <MetaText style={{ marginTop: 6 }} opacity={0.85}>Ошибка: {history.error}</MetaText>}
         </Card>
       )}
 
       <Card ref={tableCardRef} style={{ overflowX: "auto", ...highlightStyle(highlightKey === "table") }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-          <div><div style={{ fontWeight: 700 }}>Таблица метрик (текущий срез)</div><div style={{ fontSize: 12, opacity: 0.75 }}>{lastUpdated ? `обновлено: ${lastUpdated}` : ""}</div></div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <UiSelect value={exportFormat} onChange={(e) => setExportFormat(e.target.value as "csv" | "xlsx")}>
-              <option value="csv">CSV</option>
-              <option value="xlsx">XLSX</option>
-            </UiSelect>
-            <Button
-              onClick={exportMetrics}
-              variant="export"
-              disabled={exportPending}
-              exportProgress={exportPending ? exportProgress : undefined}
-            >
-              {exportPending ? `Экспорт${exportProgress != null ? ` ${exportProgress}%` : "..."}` : "Экспорт"}
-            </Button>
-          </div>
-        </div>
+        <SectionHeaderRow
+          style={{ marginBottom: 10, flexWrap: "wrap" }}
+          title={(
+            <div>
+              <div style={{ fontWeight: 700 }}>Таблица метрик (текущий срез)</div>
+              <MetaText opacity={0.75}>{lastUpdated ? `обновлено: ${lastUpdated}` : ""}</MetaText>
+            </div>
+          )}
+          actions={(
+            <>
+              <UiSelect value={exportFormat} onChange={(e) => setExportFormat(e.target.value as "csv" | "xlsx")}>
+                <option value="csv">CSV</option>
+                <option value="xlsx">XLSX</option>
+              </UiSelect>
+              <Button
+                onClick={exportMetrics}
+                variant="export"
+                disabled={exportPending}
+                exportProgress={exportPending ? exportProgress : undefined}
+              >
+                {exportPending ? `Экспорт${exportProgress != null ? ` ${exportProgress}%` : "..."}` : "Экспорт"}
+              </Button>
+            </>
+          )}
+        />
 
         {hasEventContext && (
           <Card style={{ marginBottom: 10, borderColor: "rgba(106,160,255,0.4)", background: "rgba(106,160,255,0.08)" }}>
@@ -803,7 +810,7 @@ export default function MonitoringPage() {
           <EmptyState text="Метрики по текущему фильтру отсутствуют." />
         ) : (
           <>
-            <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>Показано: {visibleRows.length} из {rows.length}</div>
+            <MetaText opacity={0.7} style={{ marginBottom: 8 }}>Показано: {visibleRows.length} из {rows.length}</MetaText>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ textAlign: "left", opacity: 0.8 }}>

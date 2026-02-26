@@ -74,8 +74,8 @@ button:focus-visible {
 }
 
 .ui-btn:hover:not(:disabled) {
-  transform: translateY(-0.5px);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   border-color: rgba(106, 160, 255, 0.36) !important;
 }
 
@@ -111,23 +111,36 @@ button:focus-visible {
 }
 
 .ui-btn--accent:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.36) !important;
-  background: rgba(34, 39, 47, 0.98) !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.34);
+  border-color: rgba(118, 219, 233, 0.68) !important;
+  background: rgba(20, 63, 72, 0.98) !important;
+  box-shadow: 0 4px 12px rgba(17, 79, 91, 0.28);
 }
 
 .ui-btn--accent.is-active {
-  background: rgba(68, 76, 88, 0.95) !important;
-  border-color: rgba(184, 194, 212, 0.62) !important;
-  box-shadow: 0 0 0 1px rgba(214, 224, 238, 0.12) inset, 0 3px 10px rgba(0, 0, 0, 0.26);
+  background: rgba(24, 74, 84, 0.95) !important;
+  border-color: rgba(110, 212, 226, 0.72) !important;
+  box-shadow: 0 0 0 1px rgba(196, 244, 250, 0.12) inset, 0 3px 10px rgba(0, 0, 0, 0.26);
 }
 
 .ui-btn--ghost.is-active {
-  background: rgba(106, 160, 255, 0.16) !important;
+  background: rgba(104, 154, 246, 0.18) !important;
+}
+
+.ui-btn--ghost:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.34) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .ui-btn--danger.is-active {
-  background: rgba(230, 127, 127, 0.24) !important;
+  background: rgba(124, 31, 44, 0.54) !important;
+  border-color: rgba(255, 120, 136, 0.74) !important;
+}
+
+.ui-btn--danger:hover:not(:disabled) {
+  border-color: rgba(255, 130, 145, 0.72) !important;
+  background: rgba(118, 29, 42, 0.46) !important;
+  box-shadow: 0 4px 12px rgba(98, 24, 35, 0.24);
 }
 
 .ui-btn--panel-toggle:hover:not(:disabled) {
@@ -186,18 +199,33 @@ button:focus-visible {
 
 .ui-select-arrow {
   position: absolute;
-  right: 10px;
+  right: 14px;
   top: 50%;
+  width: 10px;
+  height: 10px;
   transform: translateY(-50%);
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(226, 234, 248, 0.82);
   opacity: 0.78;
   pointer-events: none;
-  transition: transform 170ms ease, opacity 170ms ease;
+  transition: opacity 170ms ease, color 170ms ease;
+}
+
+.ui-select-arrow::before {
+  content: "▾";
+  font-size: 11px;
+  line-height: 1;
 }
 
 .ui-select-wrap:focus-within .ui-select-arrow {
-  transform: translateY(-52%) rotate(180deg);
+  color: rgba(172, 204, 255, 0.98);
   opacity: 0.95;
+}
+
+.ui-select-arrow.is-open::before {
+  content: "▴";
 }
 
 .ui-select option {

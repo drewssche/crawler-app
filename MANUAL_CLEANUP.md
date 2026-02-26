@@ -50,6 +50,13 @@ WHERE user_agent = 'Mozilla/5.0 loadtest'
 - `tools/fix_userspage.py`
 - `tools/fix_userspage_regex.py`
 
+## Button Full-Sweep (2026-02-25)
+
+- Ручных удалений файлов по button-волне не требуется.
+- Найденные legacy-кейсы по кнопкам очищены автоматически в коде:
+  - `frontend/src/components/layout/AppLayout.tsx`
+  - `frontend/src/components/ui/ToastHost.tsx`
+
 ## Policy Note (manual mode)
 
 - По текущему соглашению физическое удаление файлов из этого списка выполняется вручную.

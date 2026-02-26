@@ -1,6 +1,7 @@
 ﻿import { formatApiDateTime } from "../../utils/datetime";
 import { UA_TOOLTIP_PREFIX, UI_BULLET } from "../../utils/uiText";
 import { parseUserAgentParts } from "../../utils/userAgent";
+import { MetaText } from "../ui/StatusText";
 
 type Props = {
   lastIp?: string | null;
@@ -21,21 +22,18 @@ export default function UserListSessionMeta({
   const uaLabel =
     parts.browser === "-" && parts.os === "-"
       ? "UA: -"
-      : `UA: ${parts.browser} (браузер)${UI_BULLET}${parts.os} (ОС)`;
+      : `UA: ${parts.browser} (\u0431\u0440\u0430\u0443\u0437\u0435\u0440)${UI_BULLET}${parts.os} (\u041e\u0421)`;
   const devices = typeof trustedDevicesCount === "number" ? String(trustedDevicesCount) : "-";
   const lineParts = [
-    `сессия: ${session}`,
+    `\u0441\u0435\u0441\u0441\u0438\u044f: ${session}`,
     `IP: ${ip}`,
     uaLabel,
-    `устройств: ${devices}`,
+    `\u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432: ${devices}`,
   ];
 
   return (
-    <div
-      style={{ fontSize: 12, opacity: 0.76 }}
-      title={lastUserAgent ? `${UA_TOOLTIP_PREFIX}${lastUserAgent}` : undefined}
-    >
+    <MetaText opacity={0.76} title={lastUserAgent ? `${UA_TOOLTIP_PREFIX}${lastUserAgent}` : undefined}>
       {lineParts.join(UI_BULLET)}
-    </div>
+    </MetaText>
   );
 }

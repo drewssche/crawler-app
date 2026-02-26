@@ -338,6 +338,26 @@
   - какие риски/регрессы появились;
   - что осталось с высоким ROI.
 - Условие остановки текущей волны и перехода к финалу:
+
+## 17. Button Semantics
+
+- Используем единый семантический контракт кнопок через `frontend/src/components/ui/Button.tsx`.
+- Эталон `primary` (визуал/анимация): стиль кнопки `+ Создать профиль` (плотный темный фон, синий контур, мягкий glow на hover, короткий lift).
+- Разрешенные варианты:
+  - `primary`: главное действие блока (`Сохранить`, `Применить`, `Подтвердить`);
+  - `accent`: навигационно-контекстный акцент (`Рабочая область`, `Настройки`, ключевые CTA в сайдбарах/рабочих панелях); контрастный темный стиль, без голубого glow (neutral hover/active).
+  - `secondary`: важное, но вторичное действие (`Обновить`, `Открыть`, `Показать похожие`);
+  - `ghost`: вспомогательное действие без акцента;
+  - `danger`: деструктивные действия;
+  - `export`: экспортные действия (`CSV/XLSX`) с индикацией процесса через `exportProgress`;
+  - `panel-toggle`: раскрытие/сворачивание блоков (`Раскрыть/Скрыть`, `Фильтры`, `Показать все/Свернуть`) с `active`-состоянием.
+- Для экспорта запрещены page-level кастомные кнопки: используем только `variant="export"` и `exportProgress`.
+- Для collapsible-блоков используем только `variant="panel-toggle"` и `active`, чтобы не было style-drift между страницами.
+- Size-map кнопок (консистентность обязательна):
+  - `sm`: inline/локальные действия внутри карточек и строк;
+  - `md`: default и section-level toggles (`Настроить пороги`, `Раскрыть/Скрыть`, `Фильтры`);
+  - для одинаковой семантики на разных страницах используем один и тот же size.
+- Tabs/segmented-контролы: визуальный эталон — вкладки страницы `Пользователи`; используем единый `SegmentedControl` без page-level переопределений shell/button-стилей.
   - в двух подряд проходах не найдено `HIGH` задач;
   - ожидаемый эффект новых пунктов только `LOW` и в сумме < ~10% по целевым метрикам (запросы/рендеры/TTFB/объем кода);
   - стоимость изменений выше ожидаемой пользы (по времени/риску).
@@ -368,6 +388,18 @@
 - Large API modules must be split by responsibility into service modules: `queries`, `serializers`, `actions`, `monitoring/settings`.
 - API route layer remains thin: validate input, call service, format response.
 - Split must be `no-regression`: keep route contracts and response schema unchanged.
+
+## Button Reuse Audit Rule
+- For each audit wave, run a cross-page scan of buttons in `frontend/src/pages/*` and `frontend/src/components/*`.
+- Classify each finding: `reused`, `candidate`, or `explicit exception`.
+- New visual button behavior must be introduced only via shared patterns (`Button.tsx` variants or shared inline button component), not page-level literals.
+- Any unavoidable page-level button style must be documented in `TODO.md` with reason and planned cleanup status.
+
+## Selector Reuse Audit Rule
+- For each selector mini-wave, run a cross-page scan in `frontend/src/pages/*` and `frontend/src/components/*` for `UiSelect` and raw `<select>`.
+- Canonical contract: feature/pages use only `frontend/src/components/ui/UiSelect.tsx`; raw `<select>` is allowed only inside this shared component.
+- Classify findings as `used/missed/legacy/exception` and store them in `UI_SELECTOR_FULL_SWEEP_MATRIX.md` with UI route visibility.
+- Do not introduce `toolbar/modal/dense` selector wrappers until there are at least 2 stable call-sites with the same layout contract.
 
 
 
@@ -440,8 +472,71 @@
 - Default visible monitoring charts are scoped to operational pair (`http_requests`, `http_errors`);
   extra series stay accessible via metrics table/export instead of always-on cards.
 
+## Event Card Actions Contract
+- Buttons inside event cards are canonicalized via shared `EventCardActions` (`frontend/src/components/ui/EventCardActions.tsx`).
+- Visual baseline (current approved look): compact dense row, `sm` sizing, existing hover/press animation, no page-level restyling.
+- `EventCardActions` must compose shared `CardActionButton` (`frontend/src/components/ui/CardActionButton.tsx`) so card-button spacing/size/radius come from one source.
+- Mandatory reuse:
+  - `EventsPage` event cards;
+  - `SidebarRight` notification/action cards.
+- If a new card needs different behavior, extend `EventCardActions` first; do not rebuild local button rows.
+
+## Sidebar Toggle Button Contract
+- Right sidebar collapse/expand control uses shared `SidebarToggleButton` (`frontend/src/components/ui/SidebarToggleButton.tsx`).
+- It composes base `Button` (`variant="accent"`, `size="sm"`) and enforces fixed square geometry for consistent alignment.
+- Do not use page-level inline styles for this control in layout files.
+- Collapsed and expanded header states must keep the same visual baseline (same top offset/alignment line).
+
+## Reason Preset Button Contract
+- Preset chips for reason fields are rendered via shared `ReasonPresetButton` (`frontend/src/components/ui/ReasonPresetButton.tsx`).
+- Do not duplicate `ghost + size="sm" + borderRadius: 999` inline in pages/components.
+
+## Icon Ghost Button Contract
+- Compact dismiss/close icon controls in cards use shared `IconGhostButton` (`frontend/src/components/ui/IconGhostButton.tsx`).
+- Use this wrapper instead of local `Button` with repeated compact icon styles.
+
+## Modal Shell Contract
+- Use shared `ModalShell` (`frontend/src/components/ui/ModalShell.tsx`) for overlay/portal/animation container of modal windows.
+- `ConfirmDialog` and form modals (for example, `RootAdmins` add-modal) must compose `ModalShell` instead of local fixed-overlay markup.
+- Footer actions stay on `ModalActionRow`; do not duplicate modal overlay/transition styles in page code.
+
 ## Hint Card Contract
 - Informational UI hints (tables/help blocks) use shared `HintCard` (`frontend/src/components/ui/HintCard.tsx`) for consistent accent style.
 - Reuse `HintCard` in both Settings/Users and Monitoring contexts to avoid page-level style drift.
 - Do not force accent style on surrounding functional containers (status/forms); accent applies only to hint content block.
 - Table-heavy hints should use shared `HintTable` (`frontend/src/components/ui/HintTable.tsx`) instead of local `<table>` markup.
+
+## Panel Variants Contract
+- Reuse existing `Card` as base panel primitive; do not create parallel visual panel modules.
+- Panel semantics:
+  - `variant="default"` for regular containers,
+  - `variant="hint"` for informational accent cards,
+  - `variant="warning"` for warning-border containers.
+- Clickable panels must use `interactive` on `Card` (maps to existing `.interactive-row` transitions); do not duplicate hover/transition CSS inline.
+- Preserve existing animation behavior (`interactive-row` hover/focus transitions) during refactors.
+
+## Button Taxonomy Baseline (2026-02-25)
+- Source of truth: `UI_BUTTON_TAXONOMY.md`.
+- Category contract:
+  - `primary`: main action;
+  - `secondary`: secondary important action;
+  - `ghost`: neutral helper action;
+  - `danger`: destructive action;
+  - `accent`: navigation/context CTA;
+  - `export`: export only (`exportProgress`);
+  - `panel-toggle`: expand/collapse only (`active`).
+- Context contract:
+  - `drawer`: `Button` variants + domain wrappers;
+  - `sidebar card actions`: `EventCardActions` + `CardActionButton` + `IconGhostButton`;
+  - `modal footer`: `ModalActionRow` + `Button` variants;
+  - `table/toolbar`: `Button` variants without page-level style overrides;
+  - `inline text actions`: `InlineActionButton`.
+- Size contract:
+  - outside controls: default `md` baseline;
+  - inside controls (cards/rows): compact via `CardActionButton` tokens.
+- Motion contract:
+  - unified hover/press animation pattern for all button categories;
+  - variant-level differences only in palette/border accents, not in interaction geometry.
+- Single-use pilot exception (agreed):
+  - `RangePresetGroup` and `ActionStateMarker` are allowed as pilot patterns before 2nd call-site;
+  - once 2nd call-site appears, they become mandatory canonical shared patterns.

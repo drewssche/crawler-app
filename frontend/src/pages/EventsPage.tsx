@@ -23,7 +23,9 @@ import EventCardActions from "../components/ui/EventCardActions";
 import FiltersBar from "../components/ui/FiltersBar";
 import RelevanceBadge from "../components/ui/RelevanceBadge";
 import SegmentedControl from "../components/ui/SegmentedControl";
+import SectionHeaderRow from "../components/ui/SectionHeaderRow";
 import SlidePanel from "../components/ui/SlidePanel";
+import { MetaText, StatusText } from "../components/ui/StatusText";
 import type { UserDetailsResponse } from "../components/users/UserDetailsDrawer";
 import ContextQuickActions from "../components/ui/ContextQuickActions";
 import UserActionPanel, {
@@ -333,12 +335,12 @@ export default function EventsPage() {
         </div>
       </FiltersBar>
 
-      <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>
+      <MetaText size={13} opacity={0.75} style={{ marginTop: 8 }}>
         Загружено: {rows.length} из {total ?? "—"}
         {similar.trim() ? `${UI_BULLET}по фильтру: ${visibleRows.length}` : ""}
-      </div>
+      </MetaText>
 
-      {feedError && <div style={{ color: "#d55", marginTop: 10 }}>{feedError}</div>}
+      {feedError && <StatusText tone="danger" style={{ marginTop: 10 }}>{feedError}</StatusText>}
 
       <Card style={{ marginTop: 12, minHeight: 320 }}>
         <div>
@@ -412,7 +414,7 @@ export default function EventsPage() {
                 );
               })()
             ))}
-            {isLoading && <div style={{ fontSize: 13, opacity: 0.75 }}>Загрузка...</div>}
+            {isLoading && <MetaText size={13} opacity={0.75}>Загрузка...</MetaText>}
           </div>
         ) : (
           !feedError && !isLoading && (
@@ -425,17 +427,21 @@ export default function EventsPage() {
       </Card>
 
       <SlidePanel open={drawerOpen} onClose={() => setDrawerOpen(false)}>
-        <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>Контекст события</div>
-            <div style={{ fontSize: 12, opacity: 0.72 }}>{drawerEvent ? formatApiDateTime(drawerEvent.created_at) : ""}</div>
-          </div>
-          <Button onClick={() => setDrawerOpen(false)} variant="ghost" size="sm">Закрыть</Button>
+        <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <SectionHeaderRow
+            title={(
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>Контекст события</div>
+                <MetaText opacity={0.72}>{drawerEvent ? formatApiDateTime(drawerEvent.created_at) : ""}</MetaText>
+              </div>
+            )}
+            actions={<Button onClick={() => setDrawerOpen(false)} variant="ghost" size="sm">Закрыть</Button>}
+          />
         </div>
 
         <div style={{ padding: 16, display: "grid", gap: 12, alignContent: "start", overflowY: "auto" }}>
           {drawerLoading && <div>Загрузка...</div>}
-          {drawerError && <div style={{ color: "#d55" }}>{drawerError}</div>}
+          {drawerError && <StatusText tone="danger">{drawerError}</StatusText>}
 
           {drawerEvent && (
             <Card style={{ borderColor: "rgba(106,160,255,0.45)", background: "rgba(106,160,255,0.08)" }}>

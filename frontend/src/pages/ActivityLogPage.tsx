@@ -26,8 +26,10 @@ import FiltersBar from "../components/ui/FiltersBar";
 import RelevanceBadge from "../components/ui/RelevanceBadge";
 
 import SegmentedControl from "../components/ui/SegmentedControl";
+import SectionHeaderRow from "../components/ui/SectionHeaderRow";
 
 import SlidePanel from "../components/ui/SlidePanel";
+import { MetaText, StatusText } from "../components/ui/StatusText";
 
 import Timeline from "../components/ui/Timeline";
 import InlineActionButton from "../components/ui/InlineActionButton";
@@ -844,7 +846,7 @@ export default function ActivityLogPage() {
 
 
 
-      <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>Загружено: {loadedCount} из {total ?? "—"}</div>
+      <MetaText size={13} opacity={0.75} style={{ marginTop: 8 }}>Загружено: {loadedCount} из {total ?? "—"}</MetaText>
       {showFilters && isEmailSuggestLoading && (
         <div style={{ marginTop: 4, fontSize: 12, opacity: 0.72 }}>Подсказки email: загрузка...</div>
       )}
@@ -859,7 +861,7 @@ export default function ActivityLogPage() {
 
 
 
-      {error && <div style={{ color: "#d55", marginTop: 10 }}>{error}</div>}
+      {error && <StatusText tone="danger" style={{ marginTop: 10 }}>{error}</StatusText>}
 
 
 
@@ -1233,7 +1235,7 @@ export default function ActivityLogPage() {
 
         )}
 
-        {isFeedLoading && <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>Загружено: {loadedCount} из {total ?? "—"}</div>}
+        {isFeedLoading && <MetaText size={13} opacity={0.75} style={{ marginTop: 8 }}>Загружено: {loadedCount} из {total ?? "—"}</MetaText>}
 
         </div>
 
@@ -1243,22 +1245,18 @@ export default function ActivityLogPage() {
 
       <SlidePanel open={drawerOpen} onClose={() => setDrawerOpen(false)}>
 
-        <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-
-          <div>
-
-            <div style={{ fontSize: 18, fontWeight: 800 }}>Контекст записи</div>
-
-            <div style={{ fontSize: 12, opacity: 0.72 }}>
-
-              {focusContext?.kind === "audit" ? "Аудит-действие" : focusContext?.kind === "login" ? "История входа" : ""}
-
-            </div>
-
-          </div>
-
-          <Button onClick={() => setDrawerOpen(false)} variant="ghost" size="sm">Закрыть</Button>
-
+        <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <SectionHeaderRow
+            title={(
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>Контекст записи</div>
+                <MetaText opacity={0.72}>
+                  {focusContext?.kind === "audit" ? "Аудит-действие" : focusContext?.kind === "login" ? "История входа" : ""}
+                </MetaText>
+              </div>
+            )}
+            actions={<Button onClick={() => setDrawerOpen(false)} variant="ghost" size="sm">Закрыть</Button>}
+          />
         </div>
 
 
@@ -1267,7 +1265,7 @@ export default function ActivityLogPage() {
 
           {drawerLoading && <div>Загрузка...</div>}
 
-          {drawerError && <div style={{ color: "#d55" }}>{drawerError}</div>}
+          {drawerError && <StatusText tone="danger">{drawerError}</StatusText>}
 
 
 

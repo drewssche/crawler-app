@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import Button from "../ui/Button";
+import InlineActionButton from "../ui/InlineActionButton";
 import SidebarLeft from "./SidebarLeft";
 import SidebarRight from "./SidebarRight";
 
@@ -111,14 +112,12 @@ export default function AppLayout() {
               {crumbs.map((c, idx) => (
                 <div key={c.path} style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   {idx > 0 && <span style={{ opacity: 0.6 }}>/</span>}
-                  <Button
+                  <InlineActionButton
                     onClick={() => navigate(c.path)}
-                    variant="ghost"
-                    size="sm"
-                    style={{ border: "none", background: "transparent", padding: 0, minHeight: "auto" }}
+                    style={{ opacity: 0.92 }}
                   >
                     {c.label}
-                  </Button>
+                  </InlineActionButton>
                 </div>
               ))}
             </div>

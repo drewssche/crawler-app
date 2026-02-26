@@ -6,9 +6,14 @@
 
 - `frontend/src/components/ui/Button.tsx`
   Единый паттерн кнопок (`variant`, `size`, hover/active).
+  Добавлены:
+  - `variant="accent"` для навигационно-контекстного акцента (левый/правый сайдбар, workspace CTA);
+  - `variant="export"` + `exportProgress` (in-button progress слой для экспортов);
+  - `variant="panel-toggle"` для collapsible-кнопок (`Раскрыть/Скрыть`, `Фильтры`, `Показать все/Свернуть`) с `active`.
 
 - `frontend/src/components/ui/SegmentedControl.tsx`
   Короткие фиксированные переключатели (`all/notification/action`, `asc/desc`, вкладки).
+  Использует единый shell-стиль (`.segmented-control`) как эталон вкладок страницы `Пользователи`.
 
 - `frontend/src/components/ui/UiSelect.tsx`
   Единый `select`-паттерн (стиль + стрелка + focus/hover).
@@ -21,8 +26,76 @@
   Единый табличный паттерн для hint-блоков (колонки/строки/align/padding).
   Используется в `RolePermissionsHint` и в подсказке порогов `MonitoringPage`.
 
+- `frontend/src/components/ui/Card.tsx` (`variant`, `interactive`)
+  Единый контракт панелей:
+  `default/hint/warning` + `interactive` (с сохранением анимаций через `.interactive-row`).
+  Применен в `MonitoringPage`, `SettingsPage`, `SidebarRight`, `EventsPage`, `ActivityLogPage`, `SelectableListRow` (`Users`/`RootAdmins`).
+
 - `frontend/src/components/ui/ClearableInput.tsx`
   Поисковые поля с очисткой `×`.
+
+- `frontend/src/components/ui/SectionHeaderRow.tsx`
+  Shared row-wrapper для заголовков секций (`title + actions`) без локального дублирования flex-layout.
+  Подключен в `UserDetailsDrawer` для секций `Доверенные устройства` и `История входов и IP`,
+  в `RootAdminsPage` для drawer-header (`title + close action`),
+  в drawer-header страниц `EventsPage`/`ActivityLogPage`,
+  а также в `MonitoringPage` (header таблицы метрик) и в `SidebarRight` (context drawer header).
+
+- `frontend/src/components/ui/StatusText.tsx` (`MetaText`, `StatusText`)
+  Shared text wrappers для вторичного текста и inline-сообщений состояния (`error/success/warning/muted`),
+  чтобы не дублировать page-level `fontSize/opacity/color` литералы.
+  Подключены в `UsersPage`, `RootAdminsPage`, `EventsPage`, `ActivityLogPage`,
+  `MonitoringPage`, `SidebarRight`, `UserActionPanel`, `UserDetailsDrawer`, `SessionSummaryCard`, `DeviceSummaryCard`, `UserListSessionMeta`.
+
+- `frontend/src/components/ui/InlineActionButton.tsx`
+  Единая inline-кнопка фильтра/ссылки внутри карточек (unstyled button с `all: unset`, pointer, optional `bold`),
+  чтобы не дублировать page-level литералы кнопочных стилей.
+  Подключено в `ActivityLogPage` для фильтров по `action/actor/target/result/ip/email`.
+
+- `frontend/src/components/ui/EventCardActions.tsx`
+  Каноничный ряд кнопок в карточках событий (`Открыть источник`, `Отметить`, `Скрыть`, `Еще`) с согласованными
+  размером/дизайном/анимациями.
+  Подключено в `EventsPage` и `SidebarRight`.
+
+- `frontend/src/components/ui/CardActionButton.tsx`
+  Shared wrapper for card-level action buttons (size/radius/padding tokens for compact/default cards).
+  Used by `EventCardActions` and as style source for action popover items.
+
+- `frontend/src/components/ui/SidebarToggleButton.tsx`
+  Shared collapse/expand control for right sidebar header (fixed square geometry + accent visual contract).
+  Used in `SidebarRight` for both collapsed and expanded states.
+
+- `frontend/src/components/ui/ReasonPresetButton.tsx`
+  Shared reason-preset chip button (`ghost`, `sm`, pill radius) for reason inputs.
+  Used in `UserActionPanel` and `RootAdminsPage`.
+
+- `frontend/src/components/ui/IconGhostButton.tsx`
+  Shared compact ghost icon button for card-level dismiss/close controls.
+  Used in `SidebarRight` notification/action cards.
+
+- `frontend/src/components/ui/ModalActionRow.tsx`
+  Shared layout row for modal footer actions (`cancel/confirm`, right-aligned with stable gap).
+  Used in `ConfirmDialog` and `RootAdminsPage` add-modal.
+
+- `frontend/src/components/ui/ModalShell.tsx`
+  Shared animated modal shell (overlay + portal + enter/exit transitions + dialog container).
+  Used in `ConfirmDialog` and `RootAdminsPage` add-modal.
+
+- `frontend/src/components/ui/ApplicabilityHint.tsx`
+  Shared applicability text block (`Применится к X из Y` + optional partial/none hints).
+  Used in `UserActionPanel` and `RootAdminsPage` bulk actions.
+
+- `frontend/src/components/ui/InlineInfoRow.tsx`
+  Shared compact info row (`label + value`) for small technical/fallback lines in cards/drawers.
+  Used in `RootAdminsPage` (trust fallback) and `UserDetailsDrawer` (JWT token version line).
+
+- `frontend/src/components/ui/RangePresetGroup.tsx`
+  Shared preset button row for quick range controls (`15м/1ч/6ч/24ч`) with active-state handling.
+  Used in `MonitoringPage` (pilot pattern).
+
+- `frontend/src/components/ui/ActionStateMarker.tsx`
+  Shared compact marker (`info/warning/danger`) for action-state badges (`i/!`) in action detail blocks.
+  Used in `UserActionPanel` (pilot pattern).
 
 - `frontend/src/components/ui/SelectableListRow.tsx`
   Единая строка списка с чекбоксом/контентом/кнопкой `Открыть` и общими hover/highlight состояниями.
@@ -55,8 +128,8 @@
 - `frontend/src/components/users/UserStatusPills.tsx`
   Единый рендер статусов пользователя (без инфошума).
 
-- `frontend/src/components/users/UserTrustPills.tsx`
-  Единый рендер trust-статуса пользователя (`доверие: ...`) без отдельного time/device слоя в compact UX.
+- `frontend/src/components/users/UserStatusPills.tsx` (`UserStatusPills` + `UserTrustPills`)
+  Единый рендер статусных/trust-бейджей пользователя (`статусы + доверие`) без отдельного time/device слоя в compact UX.
 
 - `frontend/src/components/users/UserBadgeGroups.tsx`
   Единый layout для групп бейджей (`identity -> status -> trust`) с одинаковой структурой рядов в drawer-контекстах.
@@ -214,11 +287,13 @@
 ### UI компоненты
 - `frontend/src/components/ui/Button.tsx`, `frontend/src/components/ui/SegmentedControl.tsx`, `frontend/src/components/ui/UiSelect.tsx`, `frontend/src/components/ui/ClearableInput.tsx`
 - `frontend/src/components/ui/SelectableListRow.tsx`, `frontend/src/components/ui/EventMetaPills.tsx`, `frontend/src/components/ui/ContextQuickActions.tsx`
+- `frontend/src/components/ui/SectionHeaderRow.tsx`, `frontend/src/components/ui/StatusText.tsx`, `frontend/src/components/ui/ApplicabilityHint.tsx`, `frontend/src/components/ui/InlineInfoRow.tsx`
+- `frontend/src/components/ui/ModalShell.tsx`, `frontend/src/components/ui/ModalActionRow.tsx`, `frontend/src/components/ui/RangePresetGroup.tsx`, `frontend/src/components/ui/ActionStateMarker.tsx`
 - `frontend/src/components/ui/RoleBadge.tsx`, `frontend/src/components/ui/RolePermissionsHint.tsx`
 
 ### UI доменные блоки
 - `frontend/src/components/users/UserActionPanel.tsx`
-- `frontend/src/components/users/UserStatusPills.tsx`, `frontend/src/components/users/UserTrustPills.tsx`, `frontend/src/components/users/UserBadgeGroups.tsx`, `frontend/src/components/users/IdentityBadgeRow.tsx`
+- `frontend/src/components/users/UserStatusPills.tsx` (`UserStatusPills`, `UserTrustPills`), `frontend/src/components/users/UserBadgeGroups.tsx`, `frontend/src/components/users/IdentityBadgeRow.tsx`
 - `frontend/src/components/users/TrustPolicyDetailsCard.tsx`, `frontend/src/components/users/TrustPolicyDetailChips.tsx`
 - `frontend/src/components/users/SessionSummaryCard.tsx`, `frontend/src/components/users/DeviceSummaryCard.tsx`, `frontend/src/components/users/UserListSessionMeta.tsx`, `frontend/src/components/users/CompactActionCard.tsx`
 
@@ -375,3 +450,33 @@
 
 - `MonitoringPage` range control reuse contract:
   quick presets (`15m/1h/6h/24h`) + optional precise slider (`1..24h`) with one effective range-state for all history/focus loaders.
+
+## Button Sweep Tracking
+
+- Per-wave `Button Slice` inventory is maintained in:
+  - `UI_WAVE_USERS_MATRIX.md`
+  - `UI_WAVE_ROOTADMINS_MATRIX.md`
+  - `UI_WAVE_EVENTS_ACTIVITY_MATRIX.md`
+  - `UI_WAVE_MONITORING_SIDEBAR_MATRIX.md`
+- Full cross-page matrix: `UI_BUTTON_FULL_SWEEP_MATRIX.md` (`used/missed/legacy` + UI routes).
+- Button taxonomy baseline: `UI_BUTTON_TAXONOMY.md` (categories, context contracts, size/motion rules).
+- Cross-page consolidation target: one full-sweep matrix (`used/missed/legacy`) + single-use decisions in `UI_SINGLE_USE_BACKLOG.md`.
+- Rule: new visual button behavior is introduced only via shared `Button` variants or shared wrappers (`EventCardActions`, `ReasonPresetButton`, `IconGhostButton`, `SidebarToggleButton`).
+- Button legacy cleanup in this sweep:
+  - `AppLayout` breadcrumbs now use `InlineActionButton` (removed style-reset override on `Button`).
+  - `ToastHost` close control now uses `IconGhostButton`.
+  - `RootAdmins` add-modal and `ConfirmDialog` action footer now use `ModalActionRow`.
+  - `Monitoring` quick presets now use `RangePresetGroup`; `UserActionPanel` marker now uses `ActionStateMarker`.
+
+## UI Taxonomy Tracking
+
+- Cross-element taxonomy draft: `UI_TAXONOMY_MATRIX.md`.
+- Matrix includes `context -> canonical component -> status -> UI route`.
+- Expansion rule for new pages: map to existing `used` contexts first; otherwise register `candidate/pilot` in `UI_SINGLE_USE_BACKLOG.md`.
+
+## Selector Sweep Tracking
+
+- Full cross-page selector matrix: `UI_SELECTOR_FULL_SWEEP_MATRIX.md` (`used/missed/legacy` + UI routes).
+- Canonical selector contract remains `frontend/src/components/ui/UiSelect.tsx`.
+- Current sweep result: no page-level raw `<select>` outside `UiSelect`.
+- `toolbar/modal/dense` wrappers are tracked as backlog candidates and will be promoted only at `>=2` stable call-sites.

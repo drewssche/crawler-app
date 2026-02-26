@@ -9,6 +9,7 @@ import RelevanceBadge from "../components/ui/RelevanceBadge";
 import RolePermissionsHint from "../components/ui/RolePermissionsHint";
 import SelectableListRow from "../components/ui/SelectableListRow";
 import SegmentedControl from "../components/ui/SegmentedControl";
+import { MetaText, StatusText } from "../components/ui/StatusText";
 import IdentityBadgeRow from "../components/users/IdentityBadgeRow";
 import UserDetailsDrawer, { type UserDetailsResponse } from "../components/users/UserDetailsDrawer";
 import UserActionPanel, {
@@ -417,8 +418,8 @@ export default function UsersPage() {
     <div style={{ display: "grid", gap: 12 }}>
       <h2 style={{ marginTop: 0, marginBottom: 0 }}>{TXT.title}</h2>
 
-      {error && <div style={{ color: "#d55" }}>{error}</div>}
-      {message && <div style={{ color: "#8fd18f" }}>{message}</div>}
+      {error && <StatusText tone="danger">{error}</StatusText>}
+      {message && <StatusText tone="success">{message}</StatusText>}
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <SegmentedControl value={tab} options={TAB_OPTIONS} onChange={setTab} />
@@ -479,12 +480,12 @@ export default function UsersPage() {
             />
           ))}
 
-          {!isUsersLoading && users.length === 0 && <div style={{ opacity: 0.78 }}>{TXT.usersNotFound}</div>}
+          {!isUsersLoading && users.length === 0 && <StatusText tone="muted">{TXT.usersNotFound}</StatusText>}
 
           {hasMore && (
-            <div style={{ fontSize: 12, opacity: 0.72 }}>
+            <MetaText opacity={0.72}>
               {TXT.shown}: {users.length} {"\u0438\u0437"} {total ?? "—"}
-            </div>
+            </MetaText>
           )}
         </div>
       </Card>
@@ -503,7 +504,7 @@ export default function UsersPage() {
       )}
 
       {selectedIds.length > 0 && availableLoading && (
-        <div style={{ fontSize: 12, opacity: 0.7 }}>{TXT.loadingActions}</div>
+        <MetaText opacity={0.7}>{TXT.loadingActions}</MetaText>
       )}
 
       <RolePermissionsHint />
@@ -596,7 +597,7 @@ const UsersListRow = memo(
         }
         details={
           <div style={{ display: "grid", gap: 4 }}>
-            {!row.is_approved && row.pending_unread ? <div style={{ fontSize: 12, opacity: 0.75 }}>{hasUnreadRequestLabel}</div> : null}
+            {!row.is_approved && row.pending_unread ? <MetaText opacity={0.75}>{hasUnreadRequestLabel}</MetaText> : null}
             {row.is_approved ? (
               <UserListSessionMeta
                 lastIp={row.last_ip}
