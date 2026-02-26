@@ -1214,7 +1214,6 @@ def bulk_users(
     db: Session = Depends(get_db),
     admin: User = Depends(require_permission("users.manage")),
 ):
-    increment_counter("admin_bulk_total")
     if not payload.user_ids:
         raise HTTPException(status_code=400, detail="No users selected")
 
@@ -1274,7 +1273,6 @@ def bulk_users(
     increment_counter("admin_bulk_result_total", action=payload.action, changed=str(changed).lower())
 
     return success_response_payload(request, data={"ok": True, "results": results})
-
 
 
 

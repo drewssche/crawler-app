@@ -7,11 +7,11 @@
 - Cleanup blockers and dead-surface candidates.
 
 ## Current blockers
-- File deletion blocked by OS ACL/lock semantics:
-  - `backend/app/api/compare.py` (0 bytes)
-  - `backend/app/api/pages.py` (0 bytes)
-- Even after ACL grant on folder/git, direct delete still returns Access denied in this session.
-- Manual queue is tracked in `MANUAL_CLEANUP.md`.
+- Active blockers: none for dead API files.
+- Cleanup status update (2026-02-26):
+  - `backend/app/api/compare.py` removed;
+  - `backend/app/api/pages.py` removed;
+  - one-off scripts `tools/fix_userspage.py` and `tools/fix_userspage_regex.py` removed.
 
 ## Structure snapshot
 - Top-level dirs: `backend`, `frontend`, `monitoring`, `tools`.
@@ -55,7 +55,7 @@
 2. Dead API surface candidates
 - Evidence: empty files `backend/app/api/compare.py`, `backend/app/api/pages.py`.
 - Risk: confusion and wrong assumptions during onboarding.
-- Action: remove after manual ACL unblock and confirm no imports/references.
+- Action: removed (2026-02-26), references/import checks stayed clean.
 
 3. Large page components still carry mixed responsibilities
 - Evidence: `UsersPage`, `RootAdminsPage`, `MonitoringPage`, `ActivityLogPage` remain 600-800 LOC each.
@@ -71,18 +71,18 @@
 ### HIGH
 1. Continue admin split-plan phase 2-4 (`admin_queries`, `admin_actions`, monitoring/settings service split).
 2. Encoding normalization wave for runtime text files + UTF-8 guard check.
-3. Finalize dead API cleanup (`compare.py`, `pages.py`) right after ACL unblock.
+3. Dead API cleanup (`compare.py`, `pages.py`) — completed 2026-02-26.
 
 ### MEDIUM
 1. Add RBAC parity check between backend permission matrix and frontend mirror.
 2. Decompose frontend heavy pages into bounded sections (no-regression only).
-3. DB/index workload audit based on real query paths from admin/events (completed; migration `d4f8a1c9b2e7` applied in dev env, see `AUDIT_DB_INDEX_2026-02-24.md`).
+3. DB/index workload audit based on real query paths from admin/events (completed; migration `d4f8a1c9b2e7` applied in dev env, see `docs/audits/AUDIT_DB_INDEX_2026-02-24.md`).
 
 ### LOW
 1. Optional tree simplification pass (`tools/`, docs grouping) after medium items.
 
 ## Suggested execution order
-1. Finish cleanup blocker (manual delete two files).
+1. Cleanup blocker completed (dead API files + one-off tools removed).
 2. Admin split-plan phase 2 (queries extraction) with compile/tests.
 3. Encoding wave for runtime-visible text.
 4. RBAC parity automation.
@@ -114,14 +114,14 @@
 
 
 
-- Update: staging-like EXPLAIN validation completed (dev data scale-up), see `AUDIT_DB_INDEX_2026-02-24.md` for plans and keep/tune decisions.
+- Update: staging-like EXPLAIN validation completed (dev data scale-up), see `docs/audits/AUDIT_DB_INDEX_2026-02-24.md` for plans and keep/tune decisions.
 
 - Update: trusted-devices index path tuned via migration `e7c2d5a1f4b9`; residual `top-N sort` removed on staging-like EXPLAIN.
 
 
-- Update: dead code/infra discovery completed, see AUDIT_DEAD_CODE_2026-02-24.md (empty API modules + one-off tools classification).
+- Update: dead code/infra discovery completed, see docs/audits/AUDIT_DEAD_CODE_2026-02-24.md (empty API modules + one-off tools classification).
 
-- Update: manual cleanup execution delegated to user (MANUAL_CLEANUP.md), agent keeps queue/report in sync and skips physical deletion.
+- Update: manual-cleanup phase closed; physical deletions executed in workspace on 2026-02-26.
 
 
 - Update: `admin.py` user-details query path consolidated to `admin_queries` loaders (login/audit), reducing router-level SQL duplication.
@@ -131,7 +131,7 @@
 - Update: trusted-devices revoke-except path now also uses shared admin_queries loader (active devices list), reducing remaining inline query duplication in admin.py.
 - Update: user-details anomaly counters (`invalid_code_24h`, latest-ip novelty) moved to shared admin_queries helper layer, further reducing router-level inline SQL/count paths.
 - Update: user-details response mapping (login_history/admin_actions/anomalies) moved to shared admin_serializers helpers; admin route layer remains orchestration-only.
-- Update: Discovery-wave 1 profiling execution completed; see `AUDIT_API_QUERY_PROFILING_2026-02-24.md` for ranked hotspots and new prioritized backlog.
+- Update: Discovery-wave 1 profiling execution completed; see `docs/audits/AUDIT_API_QUERY_PROFILING_2026-02-24.md` for ranked hotspots and new prioritized backlog.
 
 
-- Update: HIGH reconciliation rerun completed across all pages; see `AUDIT_HIGH_REVALIDATION_2026-02-24.md` (no open HIGH residuals).
+- Update: HIGH reconciliation rerun completed across all pages; see `docs/audits/AUDIT_HIGH_REVALIDATION_2026-02-24.md` (no open HIGH residuals).

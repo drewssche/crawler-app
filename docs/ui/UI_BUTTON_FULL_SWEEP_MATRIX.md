@@ -8,7 +8,7 @@
 - `frontend/src/components/*`
 - `frontend/src/components/ui/Button.tsx` и button-wrappers
 - wave docs: `UI_WAVE_*_MATRIX.md`
-- backlog: `UI_SINGLE_USE_BACKLOG.md`
+- backlog: `docs/ui/UI_SINGLE_USE_BACKLOG.md`
 
 ## Used (aligned)
 

@@ -2,6 +2,20 @@
 
 Точечная карта реюзов и кандидатов на дедупликацию.
 
+## Governance Note (Super-Priority)
+
+- Для всех новых реюзов и изменений действует правило `Server-Load & Multi-User Sync First` из `PATTERNS.md` (раздел `1.2`).
+- Вынесение в shared-слой не должно:
+  - увеличивать число запросов или частоту тяжелых вызовов;
+  - ломать синхронизацию shared-state между несколькими админами/пользователями.
+- Для каждого значимого change-set в отчете фиксируем:
+  - эффект на server-load;
+  - эффект на client-perf;
+  - проверку multi-user консистентности.
+- Для monitoring-счетчиков применяем lifecycle-правило:
+  - удаляем только неиспользуемые `total` без операционной ценности;
+  - сохраняем `events_*`, `*_result_total`, `monitoring_anomaly_total` как runtime-диагностический минимум.
+
 ## Уже переиспользуется
 
 - `frontend/src/components/ui/Button.tsx`
@@ -41,11 +55,25 @@
   в drawer-header страниц `EventsPage`/`ActivityLogPage`,
   а также в `MonitoringPage` (header таблицы метрик) и в `SidebarRight` (context drawer header).
 
+- `frontend/src/components/ui/DrawerBody.tsx`
+  Shared scrollable drawer-body контейнер (`padding + grid gap + minHeight:0 + overflowY:auto`).
+  Подключен в `UserDetailsDrawer`, `RootAdminsPage`, `EventsPage`, `ActivityLogPage`, `SidebarRight`.
+  Важно: не заменяет и не затрагивает механики списков `20 + incremental load` (`useWorkspaceInfiniteScroll`, `useIncrementalPager`).
+
+- `frontend/src/components/ui/ScrollableRegion.tsx`
+  Shared базовый scroll-контейнер для non-drawer зон (`minHeight:0 + overflowY:auto + overflowX:hidden`).
+  Подключен в `SidebarLeft` (список профилей) и в `SidebarRight` (колонки `Уведомления`/`Лента действий`).
+  Важно: не применяется к `workspace-scroll-container` и не меняет infinite/lazy load-поведение.
+
 - `frontend/src/components/ui/StatusText.tsx` (`MetaText`, `StatusText`)
   Shared text wrappers для вторичного текста и inline-сообщений состояния (`error/success/warning/muted`),
   чтобы не дублировать page-level `fontSize/opacity/color` литералы.
   Подключены в `UsersPage`, `RootAdminsPage`, `EventsPage`, `ActivityLogPage`,
   `MonitoringPage`, `SidebarRight`, `UserActionPanel`, `UserDetailsDrawer`, `SessionSummaryCard`, `DeviceSummaryCard`, `UserListSessionMeta`.
+
+- `frontend/src/utils/httpStatusVisual.ts` + `frontend/src/components/ui/HttpStatusBadge.tsx`
+  Shared HTTP-status visual contract (`2xx/3xx/4xx/5xx -> label/hint/color/row-accent`) для таблиц и diff-контекстов.
+  Подключено в `MonitoringPage` (endpoint table + metrics table status chips) и предназначено для reuse в page-level diff механиках.
 
 - `frontend/src/components/ui/InlineActionButton.tsx`
   Единая inline-кнопка фильтра/ссылки внутри карточек (unstyled button с `all: unset`, pointer, optional `bold`),
@@ -79,6 +107,8 @@
 
 - `frontend/src/components/ui/ModalShell.tsx`
   Shared animated modal shell (overlay + portal + enter/exit transitions + dialog container).
+  Добавлен viewport-safe scroll contract: `maxHeight: calc(100dvh - 32px)` + `overflowY: auto`,
+  чтобы длинный контент модалок оставался доступным на низких экранах.
   Used in `ConfirmDialog` and `RootAdminsPage` add-modal.
 
 - `frontend/src/components/ui/ApplicabilityHint.tsx`
@@ -154,7 +184,7 @@
   `status` -> зелёный/красный/нейтральный,
   `time` -> централизованная палитра сроков/состояний устройства.
 
-- `BADGE_INDEX.md`
+- `docs/ui/BADGE_INDEX.md`
   Единый реестр всех бейджей (тексты, группы, источники, логика показа).
   Используется как навигационная карта перед изменениями бейджей/подсказок.
 
@@ -315,7 +345,7 @@
 
 ### Типы и контракты
 - `frontend/src/types/catalog.ts`, `frontend/src/types/common.ts`
-- `frontend/src/components/users/userBadgeCatalog.ts`, `BADGE_INDEX.md`
+- `frontend/src/components/users/userBadgeCatalog.ts`, `docs/ui/BADGE_INDEX.md`
 ## Кандидаты на реюз (аудит)
 
 1. Monitoring drawer context duplicated (закрыто)
@@ -425,12 +455,13 @@
 
 - `useUsersList` now reuses count-less append contract (`include_total` only for page 1) for `/admin/users`, aligned with shared `useIncrementalPager` total/hasMore fallback behavior.
 
-- Governance check: cross-page HIGH reconciliation completed (`AUDIT_HIGH_REVALIDATION_2026-02-24.md`), reuse/pattern coverage confirmed for current infinite-scroll and export hot paths.
-- Governance update (re-audit pass 2): cross-page HIGH reconciliation matrix refreshed (`AUDIT_HIGH_REVALIDATION_2026-02-24.md`) with done+open coverage and explicit page applicability.
+- Governance check: cross-page HIGH reconciliation completed (`docs/audits/AUDIT_HIGH_REVALIDATION_2026-02-24.md`), reuse/pattern coverage confirmed for current infinite-scroll and export hot paths.
+- Governance update (re-audit pass 2): cross-page HIGH reconciliation matrix refreshed (`docs/audits/AUDIT_HIGH_REVALIDATION_2026-02-24.md`) with done+open coverage and explicit page applicability.
 - Backend alignment fix: `/admin/audit` list route now respects `include_total`, so `useActivityFeed` count-less append contract is now fully effective for both `/admin/audit` and `/admin/login-history`.
 
 ## Active Reuse Targets (intake wave)
-- `frontend/src/utils/reasonPolicy.ts`: единый модуль reason-policy (`required/recommended/optional`, placeholder/validation helpers), подключен в `UserActionPanel` и `RootAdminsPage` для консистентного поведения поля причины.
+- `frontend/src/utils/reasonPolicy.ts`: единый модуль reason-policy (`required/recommended/optional`, placeholder/validation helpers),
+  включая shared `getAdminEmailsReasonInputMeta` для `placeholder/hint/presets` в `RootAdminsPage` (add/remove/bulk/drawer) без page-level fallback-строк.
 - `frontend/src/utils/download.ts`: extend to shared export runner state (`pending/success/error`) and keep non-navigating download behavior for all callers.
 - `frontend/src/utils/datetime.ts` + `frontend/src/utils/eventTime.ts`: converge to single `local + UTC` rendering contract for cards, drawers, lists, charts.
 - `frontend/src/components/users/UserListSessionMeta.tsx`: keep single session/device renderer shared by `UsersPage` and `RootAdminsPage`; parity regressions fixed only through this reusable path.
@@ -454,13 +485,13 @@
 ## Button Sweep Tracking
 
 - Per-wave `Button Slice` inventory is maintained in:
-  - `UI_WAVE_USERS_MATRIX.md`
-  - `UI_WAVE_ROOTADMINS_MATRIX.md`
-  - `UI_WAVE_EVENTS_ACTIVITY_MATRIX.md`
-  - `UI_WAVE_MONITORING_SIDEBAR_MATRIX.md`
-- Full cross-page matrix: `UI_BUTTON_FULL_SWEEP_MATRIX.md` (`used/missed/legacy` + UI routes).
-- Button taxonomy baseline: `UI_BUTTON_TAXONOMY.md` (categories, context contracts, size/motion rules).
-- Cross-page consolidation target: one full-sweep matrix (`used/missed/legacy`) + single-use decisions in `UI_SINGLE_USE_BACKLOG.md`.
+  - `docs/ui/UI_WAVE_USERS_MATRIX.md`
+  - `docs/ui/UI_WAVE_ROOTADMINS_MATRIX.md`
+  - `docs/ui/UI_WAVE_EVENTS_ACTIVITY_MATRIX.md`
+  - `docs/ui/UI_WAVE_MONITORING_SIDEBAR_MATRIX.md`
+- Full cross-page matrix: `docs/ui/UI_BUTTON_FULL_SWEEP_MATRIX.md` (`used/missed/legacy` + UI routes).
+- Button taxonomy baseline: `docs/ui/UI_BUTTON_TAXONOMY.md` (categories, context contracts, size/motion rules).
+- Cross-page consolidation target: one full-sweep matrix (`used/missed/legacy`) + single-use decisions in `docs/ui/UI_SINGLE_USE_BACKLOG.md`.
 - Rule: new visual button behavior is introduced only via shared `Button` variants or shared wrappers (`EventCardActions`, `ReasonPresetButton`, `IconGhostButton`, `SidebarToggleButton`).
 - Button legacy cleanup in this sweep:
   - `AppLayout` breadcrumbs now use `InlineActionButton` (removed style-reset override on `Button`).
@@ -470,13 +501,13 @@
 
 ## UI Taxonomy Tracking
 
-- Cross-element taxonomy draft: `UI_TAXONOMY_MATRIX.md`.
+- Cross-element taxonomy draft: `docs/ui/UI_TAXONOMY_MATRIX.md`.
 - Matrix includes `context -> canonical component -> status -> UI route`.
-- Expansion rule for new pages: map to existing `used` contexts first; otherwise register `candidate/pilot` in `UI_SINGLE_USE_BACKLOG.md`.
+- Expansion rule for new pages: map to existing `used` contexts first; otherwise register `candidate/pilot` in `docs/ui/UI_SINGLE_USE_BACKLOG.md`.
 
 ## Selector Sweep Tracking
 
-- Full cross-page selector matrix: `UI_SELECTOR_FULL_SWEEP_MATRIX.md` (`used/missed/legacy` + UI routes).
+- Full cross-page selector matrix: `docs/ui/UI_SELECTOR_FULL_SWEEP_MATRIX.md` (`used/missed/legacy` + UI routes).
 - Canonical selector contract remains `frontend/src/components/ui/UiSelect.tsx`.
 - Current sweep result: no page-level raw `<select>` outside `UiSelect`.
 - `toolbar/modal/dense` wrappers are tracked as backlog candidates and will be promoted only at `>=2` stable call-sites.

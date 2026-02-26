@@ -19,6 +19,8 @@ import EmptyState from "../ui/EmptyState";
 import EventCardActions from "../ui/EventCardActions";
 import RelevanceBadge from "../ui/RelevanceBadge";
 import SectionHeaderRow from "../ui/SectionHeaderRow";
+import DrawerBody from "../ui/DrawerBody";
+import ScrollableRegion from "../ui/ScrollableRegion";
 import SlidePanel from "../ui/SlidePanel";
 import { MetaText, StatusText } from "../ui/StatusText";
 import ToastHost, { type ToastItem } from "../ui/ToastHost";
@@ -707,7 +709,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
           {sectionHeader}
 
           <div style={{ overflow: "hidden", minHeight: 0, display: "grid", gridTemplateRows: "1fr 1px 1fr", gap: 10 }}>
-            <div style={{ overflow: "auto", minHeight: 0, display: "grid", gap: 6, alignContent: "start", gridAutoRows: "max-content" }}>
+            <ScrollableRegion style={{ display: "grid", gap: 6, alignContent: "start", gridAutoRows: "max-content", overflowX: "visible" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                 <div style={{ fontWeight: 700, fontSize: 13 }}>Уведомления</div>
               </div>
@@ -722,11 +724,11 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
                 />
               ))}
               {notifications.length === 0 && <EmptyState text="Новых уведомлений нет." />}
-            </div>
+            </ScrollableRegion>
 
             <div style={{ background: "#3333" }} />
 
-            <div style={{ overflow: "auto", minHeight: 0, display: "grid", gap: 8, alignContent: "start", gridAutoRows: "max-content" }}>
+            <ScrollableRegion style={{ display: "grid", gap: 8, alignContent: "start", gridAutoRows: "max-content", overflowX: "visible" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontWeight: 700, fontSize: 13 }}>Лента действий</div>
               </div>
@@ -744,7 +746,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
                 />
               ))}
               {actions.length === 0 && !error && <EmptyState text="Событий пока нет." />}
-            </div>
+            </ScrollableRegion>
           </div>
         </div>
       </aside>
@@ -762,7 +764,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
             actions={<Button onClick={() => setContextItem(null)} variant="ghost" size="sm">Закрыть</Button>}
           />
         </div>
-        <div style={{ padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
+        <DrawerBody>
           {contextLoading && <div>Загрузка...</div>}
           {contextError && <StatusText tone="danger">{contextError}</StatusText>}
           {contextItem && (
@@ -855,14 +857,11 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
               </div>
             </>
           )}
-        </div>
+        </DrawerBody>
       </SlidePanel>
     </>
   );
 }
-
-
-
 
 
 

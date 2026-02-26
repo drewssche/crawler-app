@@ -1,6 +1,6 @@
 export type ActivityExportMode = "audit" | "login";
 export type ExportFormat = "csv" | "xlsx";
-export type MonitoringExportGroup = "all" | "http" | "auth" | "admin" | "events";
+export type MonitoringExportGroup = "all" | "http" | "events";
 
 export function buildActivityExportRequest(args: {
   mode: ActivityExportMode;

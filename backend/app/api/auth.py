@@ -177,7 +177,6 @@ def _check_trusted_device(db: Session, user: User, token: str | None) -> bool:
 
 @router.post("/start")
 def start_auth(payload: StartIn, request: Request, db: Session = Depends(get_db)):
-    increment_counter("auth_start_total")
     email = _normalize_email(payload.email)
     _validate_email(email)
     check_rate_limit(db, email, "auth_start", limit=AUTH_START_LIMIT, window_minutes=AUTH_START_WINDOW_MINUTES)
@@ -247,7 +246,6 @@ def login_alias(payload: StartIn, request: Request, db: Session = Depends(get_db
 
 @router.post("/verify-code")
 def verify_code(payload: VerifyCodeIn, request: Request, db: Session = Depends(get_db)):
-    increment_counter("auth_verify_total")
     challenge = db.get(LoginCode, payload.challenge_id)
     if not challenge:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid challenge")
@@ -331,7 +329,6 @@ def verify_code(payload: VerifyCodeIn, request: Request, db: Session = Depends(g
 
 @router.post("/request-access")
 def request_access(payload: RequestAccessIn, request: Request, db: Session = Depends(get_db)):
-    increment_counter("auth_request_access_total")
     email = _normalize_email(payload.email)
     _validate_email(email)
     check_rate_limit(
@@ -434,7 +431,6 @@ def me(request: Request, current_user: User = Depends(get_current_user)):
 @router.get("/permissions-matrix")
 def permissions_matrix(request: Request, _: User = Depends(get_current_user)):
     return success_response_payload(request, data=permissions_matrix_payload())
-
 
 
 

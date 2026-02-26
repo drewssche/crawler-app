@@ -66,10 +66,12 @@ export default function ModalShell({
           aria-modal
           style={{
             width,
+            maxHeight: "calc(100dvh - 32px)",
             borderRadius: 16,
             border: "1px solid rgba(255,255,255,0.12)",
             background: "#1f2024",
             boxShadow: "0 16px 40px rgba(0,0,0,0.45)",
+            overflowY: "auto",
             pointerEvents: "auto",
             opacity: visible ? 1 : 0,
             transform: visible ? "translateY(0) scale(1)" : "translateY(10px) scale(0.98)",
@@ -86,4 +88,3 @@ export default function ModalShell({
   if (typeof document === "undefined") return content;
   return createPortal(content, document.body);
 }
-

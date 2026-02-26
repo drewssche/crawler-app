@@ -35,15 +35,15 @@ if not logging.getLogger().handlers:
 METRIC_DESCRIPTIONS: dict[str, str] = {
     "http_requests_total": "Количество HTTP-запросов к API.",
     "http_errors_total": "Количество HTTP-ошибок (4xx/5xx).",
-    "auth_start_total": "Количество стартов авторизации.",
-    "auth_verify_total": "Количество проверок одноразового кода.",
-    "auth_request_access_total": "Количество заявок на доступ.",
-    "admin_bulk_total": "Количество массовых admin-операций.",
-    "admin_action_total": "Количество единичных admin-действий.",
+    "auth_start_result_total": "Результаты старта авторизации по статусам (labels: result).",
+    "auth_verify_result_total": "Результаты проверки кода входа по статусам (labels: result).",
+    "auth_request_access_result_total": "Результаты заявок на доступ по статусам (labels: result).",
+    "admin_bulk_result_total": "Итоги bulk-операций админа (labels: action, changed).",
     "events_center_total": "Количество загрузок центра событий.",
     "events_feed_total": "Количество загрузок полной ленты событий.",
     "events_read_total": "Изменения статуса прочитанности событий.",
     "events_dismiss_total": "Изменения статуса скрытия событий.",
+    "monitoring_anomaly_total": "Срабатывания monitoring-anomaly детектора (labels: key, severity).",
 }
 
 

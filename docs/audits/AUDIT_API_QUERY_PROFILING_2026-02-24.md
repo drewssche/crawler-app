@@ -123,7 +123,7 @@ References:
 
 ## Notes
 - This is a discovery/profiling artifact. No runtime behavior changed.
-- DB/index migrations from `AUDIT_DB_INDEX_2026-02-24.md` remain valid and complementary.
+- DB/index migrations from `docs/audits/AUDIT_DB_INDEX_2026-02-24.md` remain valid and complementary.
 
 ## Execution Update (2026-02-24)
 - Implemented first HIGH backlog item (partial): `/events/center` now skips redundant `count()` calls in internal feed loads.

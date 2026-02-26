@@ -7,6 +7,7 @@ import { resolveDisplayRole } from "../../utils/roles";
 import appLogo from "../../assets/logo-crawler.svg";
 import Button from "../ui/Button";
 import ClearableInput from "../ui/ClearableInput";
+import ScrollableRegion from "../ui/ScrollableRegion";
 import RoleBadge from "../ui/RoleBadge";
 
 export default function SidebarLeft() {
@@ -144,15 +145,14 @@ export default function SidebarLeft() {
         />
       </div>
 
-      <div
+      <ScrollableRegion
         style={{
           flex: 1,
-          overflow: "auto",
           marginTop: 12,
           display: "flex",
           flexDirection: "column",
           gap: 10,
-          minHeight: 0,
+          overflowX: "visible",
         }}
       >
         {filtered.map((p) => {
@@ -184,7 +184,7 @@ export default function SidebarLeft() {
             </div>
           );
         })}
-      </div>
+      </ScrollableRegion>
 
       <div style={{ borderTop: "1px solid #3333", marginTop: 12, paddingTop: 12 }}>
         <div style={{ fontWeight: 700 }}>{user?.email ?? "\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u043e"}</div>

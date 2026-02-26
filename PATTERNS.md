@@ -28,6 +28,34 @@
 6. Зафиксировать результат в `REUSE_INDEX.md`:
 что вынесли, где применяется, какие правила нельзя ломать.
 
+## 1.2 Super-Priority: Server-Load & Multi-User Sync First
+
+- Для любой новой фичи и любой правки существующей логики приоритет №1:
+  - не увеличивать нагрузку на сервер;
+  - по возможности снижать нагрузку (кол-во запросов, тяжелые query-path, частоту polling, лишние counts);
+  - не деградировать клиентскую производительность (лишние рендеры/пересчеты/загрузки).
+- Multi-user baseline обязателен:
+  - состояние, влияющее на других админов/пользователей, хранится и синхронизируется через backend/БД;
+  - локальное UI-состояние не может быть source of truth для shared-сценариев;
+  - конкурентные действия (несколько админов одновременно) должны давать консистентный итог без race-drift.
+- Запрещено мерджить изменения, если:
+  - появился новый лишний запрос в hot-path без необходимости;
+  - добавлен дублирующий запрос без dedupe/кэша;
+  - изменен shared-state поток без проверки многопользовательского сценария.
+
+### 1.2.1 Required Checklist (каждая фича/правка)
+
+1. Server load check:
+   описать, какие запросы/агрегации добавлены или убраны, и почему это безопасно по нагрузке.
+2. Client perf check:
+   подтвердить отсутствие лишних ререндеров/повторных загрузок в измененном флоу.
+3. Multi-user sync check:
+   явно указать, где источник истины (`DB/backend`) и как обрабатывается конкурентный доступ.
+4. Validation check:
+   выполнить минимум `build/tests` по затронутому модулю и зафиксировать результат в отчете.
+5. Docs check:
+   при изменении контракта обновить `PATTERNS.md`/`REUSE_INDEX.md`/wave-док.
+
 ## 2. Backend-driven правила
 
 - UI не хранит бизнес-правила безопасности.
@@ -65,6 +93,21 @@
   - пассивная инвалидция по TTL;
   - активная инвалидция при изменении monitoring-настроек;
   - опциональный `force_refresh` для явного bypass в диагностических сценариях.
+
+### 4.1 Monitoring Metrics Lifecycle (keep/remove rule)
+
+- Удаляем только те monitoring-счетчики, которые:
+  - не используются в текущем UI/экспорте/диагностике;
+  - не нужны для multi-user операционных сценариев;
+  - не участвуют в anomaly/alerting потоках.
+- Сохраняем операционные счетчики:
+  - `events_*` (нагрузка и действия в Event Center),
+  - `*_result_total` (результаты действий/авторизации по статусам),
+  - `monitoring_anomaly_total` и метрики, которые feed'ят anomaly-flow.
+- Перед удалением счетчика обязательно:
+  - собрать карту использования (`code + docs + tests`);
+  - зафиксировать решение `keep/remove` в audit-артефакте;
+  - выполнить no-regression проверку (`backend tests`, `frontend build`, monitoring smoke).
 
 ## 5. Deep-link + highlight
 
@@ -194,6 +237,8 @@
 - Бейдж релевантности (`Вы`) размещается в первой зоне карточки в фиксированном слоте, чтобы заголовок и кнопки не прыгали между карточками.
 - Поля `UA` во всех экранах показываем в коротком виде + явная подпись `UA (идентификатор браузера/устройства)`; полный `user-agent` даем в `title`/tooltip.
 - KPI-карточки на мониторинге кликабельны и ведут к фильтрации/фокусу таблицы метрик по выбранной метрике.
+- HTTP status-метки (`2xx/3xx/4xx/5xx`) в таблицах/дифф-контекстах рендерим через shared-contract
+  (`httpStatusVisual` + `HttpStatusBadge`), без page-level color hardcode.
 - Для страницы `Настройки`: группировка по доменам (`Доступ`, `События`, `Наблюдаемость`) и динамический сабтекст/статус на каждом пункте.
 - Для `SettingsPage` используем мини-самодиагностику источников: если конкретный API-источник недоступен, на соответствующей карточке показываем явный индикатор ошибки с пояснением.
 - Для `SettingsPage` загрузка статистики выполняется параллельно по независимым доменам (`users/root-admins/events/audit/monitoring`) + через короткий TTL-кэш для редко меняющихся счетчиков.
@@ -398,7 +443,7 @@
 ## Selector Reuse Audit Rule
 - For each selector mini-wave, run a cross-page scan in `frontend/src/pages/*` and `frontend/src/components/*` for `UiSelect` and raw `<select>`.
 - Canonical contract: feature/pages use only `frontend/src/components/ui/UiSelect.tsx`; raw `<select>` is allowed only inside this shared component.
-- Classify findings as `used/missed/legacy/exception` and store them in `UI_SELECTOR_FULL_SWEEP_MATRIX.md` with UI route visibility.
+- Classify findings as `used/missed/legacy/exception` and store them in `docs/ui/UI_SELECTOR_FULL_SWEEP_MATRIX.md` with UI route visibility.
 - Do not introduce `toolbar/modal/dense` selector wrappers until there are at least 2 stable call-sites with the same layout contract.
 
 
@@ -516,7 +561,7 @@
 - Preserve existing animation behavior (`interactive-row` hover/focus transitions) during refactors.
 
 ## Button Taxonomy Baseline (2026-02-25)
-- Source of truth: `UI_BUTTON_TAXONOMY.md`.
+- Source of truth: `docs/ui/UI_BUTTON_TAXONOMY.md`.
 - Category contract:
   - `primary`: main action;
   - `secondary`: secondary important action;

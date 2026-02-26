@@ -14,6 +14,7 @@ import ApplicabilityHint from "../components/ui/ApplicabilityHint";
 import InlineInfoRow from "../components/ui/InlineInfoRow";
 import SelectableListRow from "../components/ui/SelectableListRow";
 import SectionHeaderRow from "../components/ui/SectionHeaderRow";
+import DrawerBody from "../components/ui/DrawerBody";
 import SlidePanel from "../components/ui/SlidePanel";
 import { MetaText, StatusText } from "../components/ui/StatusText";
 import type { TrustPolicyCatalogItem } from "../components/users/UserActionPanel";
@@ -30,7 +31,7 @@ import { getTrustPolicyCatalogCached } from "../utils/catalogCache";
 import { normalizeError } from "../utils/errors";
 import {
   DEFAULT_ADMIN_EMAILS_REASON_CONTRACT,
-  getReasonPlaceholder,
+  getAdminEmailsReasonInputMeta,
   getReasonRequiredError,
   mergeAdminEmailsReasonContract,
   resolveAdminEmailsReasonMode,
@@ -382,20 +383,8 @@ export default function RootAdminsPage() {
   const isDrawerSelf = drawerEmail.toLowerCase() === selfEmail;
   const isLastRootAdmin = adminCount <= 1;
   const canRemoveFromDrawer = !isDrawerSelf && !isLastRootAdmin;
-  const addReasonMode = adminReasonContract.modes.add_root_admin;
-  const removeReasonMode = adminReasonContract.modes.remove_other_root_admin;
-  const addReasonPlaceholder = getReasonPlaceholder(
-    addReasonMode,
-    "Причина изменения списка (необязательно, но рекомендуется)",
-  );
-  const removeReasonPlaceholder = getReasonPlaceholder(
-    removeReasonMode,
-    "Причина изменения списка (необязательно, но рекомендуется)",
-  );
-  const removeReasonHintText = adminReasonContract.hints[removeReasonMode];
-  const addReasonHintText = adminReasonContract.hints[addReasonMode];
-  const addReasonPresets = adminReasonContract.presets.add_root_admin || [];
-  const removeReasonPresets = adminReasonContract.presets.remove_other_root_admin || [];
+  const addReasonMeta = getAdminEmailsReasonInputMeta(adminReasonContract, "add_root_admin");
+  const removeReasonMeta = getAdminEmailsReasonInputMeta(adminReasonContract, "remove_other_root_admin");
 
   async function removeFromDrawer() {
     if (!canRemoveFromDrawer) return;
@@ -546,15 +535,15 @@ export default function RootAdminsPage() {
                 <input
                   value={bulkReason}
                   onChange={(e) => setBulkReason(e.target.value)}
-                  placeholder={removeReasonPlaceholder}
+                  placeholder={removeReasonMeta.placeholder}
                   style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
                 />
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {removeReasonPresets.map((p) => (
+                  {removeReasonMeta.presets.map((p) => (
                     <ReasonPresetButton key={p} onClick={() => setBulkReason(p)}>{p}</ReasonPresetButton>
                   ))}
                 </div>
-                <MetaText opacity={0.78}>{removeReasonHintText}</MetaText>
+                <MetaText opacity={0.78}>{removeReasonMeta.hint}</MetaText>
               </>
             ) : (
               <>
@@ -578,13 +567,13 @@ export default function RootAdminsPage() {
       >
         <h3 style={{ marginTop: 0, marginBottom: 0 }}>{TXT.addModalTitle}</h3>
         <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@company.com" style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
-        <input value={addReason} onChange={(e) => setAddReason(e.target.value)} placeholder={addReasonPlaceholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
+        <input value={addReason} onChange={(e) => setAddReason(e.target.value)} placeholder={addReasonMeta.placeholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {addReasonPresets.map((p) => (
+          {addReasonMeta.presets.map((p) => (
             <ReasonPresetButton key={p} onClick={() => setAddReason(p)}>{p}</ReasonPresetButton>
           ))}
         </div>
-        <MetaText opacity={0.78}>{addReasonHintText}</MetaText>
+        <MetaText opacity={0.78}>{addReasonMeta.hint}</MetaText>
         <ModalActionRow style={{ marginTop: 0 }}>
           <Button variant="ghost" size="sm" onClick={() => setModalOpen(false)}>{TXT.cancel}</Button>
           <Button variant="primary" size="sm" onClick={addEmail}>OK</Button>
@@ -604,7 +593,7 @@ export default function RootAdminsPage() {
           />
         </div>
 
-        <div style={{ overflowY: "auto", padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
+        <DrawerBody>
           {drawerLoading && <div>{TXT.loading}</div>}
 
           {!drawerLoading && (
@@ -663,9 +652,9 @@ export default function RootAdminsPage() {
                 <div style={{ display: "grid", gap: 8 }}>
                   {canRemoveFromDrawer ? (
                     <>
-                      <input value={drawerReason} onChange={(e) => setDrawerReason(e.target.value)} placeholder={removeReasonPlaceholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
+                      <input value={drawerReason} onChange={(e) => setDrawerReason(e.target.value)} placeholder={removeReasonMeta.placeholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {removeReasonPresets.map((p) => (
+                        {removeReasonMeta.presets.map((p) => (
                           <ReasonPresetButton key={p} onClick={() => setDrawerReason(p)}>{p}</ReasonPresetButton>
                         ))}
                       </div>
@@ -674,7 +663,7 @@ export default function RootAdminsPage() {
                           {drawerActionLoading ? TXT.removing : TXT.removeOne}
                         </Button>
                       </div>
-                      <MetaText opacity={0.78}>{removeReasonHintText}</MetaText>
+                      <MetaText opacity={0.78}>{removeReasonMeta.hint}</MetaText>
                     </>
                   ) : (
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -686,7 +675,7 @@ export default function RootAdminsPage() {
               </CompactActionCard>
             </>
           )}
-        </div>
+        </DrawerBody>
       </SlidePanel>
       <ConfirmDialog
         open={confirmState.open}
@@ -710,4 +699,3 @@ export default function RootAdminsPage() {
     </div>
   );
 }
-

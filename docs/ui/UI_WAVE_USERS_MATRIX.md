@@ -89,4 +89,4 @@
 
 ## Non-Reused (single-use now)
 
-Одиночные паттерны вынесены в отдельный backlog: `UI_SINGLE_USE_BACKLOG.md`.
+Одиночные паттерны вынесены в отдельный backlog: `docs/ui/UI_SINGLE_USE_BACKLOG.md`.

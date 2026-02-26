@@ -9,8 +9,8 @@
 - `TODO.md`
 - `PATTERNS.md`
 - `REUSE_INDEX.md`
-- `AUDIT_DISCOVERY_2026-02-24.md`
-- `AUDIT_API_QUERY_PROFILING_2026-02-24.md`
+- `docs/audits/AUDIT_DISCOVERY_2026-02-24.md`
+- `docs/audits/AUDIT_API_QUERY_PROFILING_2026-02-24.md`
 - runtime code refs in:
   - `backend/app/api/events.py`
   - `backend/app/api/admin.py`
@@ -25,11 +25,11 @@
 
 1. Discovery-wave 1: API/query profiling + hot paths
 - Status: DONE
-- Evidence: `AUDIT_API_QUERY_PROFILING_2026-02-24.md`
+- Evidence: `docs/audits/AUDIT_API_QUERY_PROFILING_2026-02-24.md`
 
 2. Discovery-wave 1: structural simplification map
 - Status: DONE
-- Evidence: `AUDIT_API_QUERY_PROFILING_2026-02-24.md` (structural map section)
+- Evidence: `docs/audits/AUDIT_API_QUERY_PROFILING_2026-02-24.md` (structural map section)
 
 3. Split-plan for `backend/app/api/admin.py`
 - Status: DONE

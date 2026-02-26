@@ -63,4 +63,4 @@
 
 ## Non-Reused (single-use now)
 
-Одиночные паттерны добавляются в `UI_SINGLE_USE_BACKLOG.md`.
+Одиночные паттерны добавляются в `docs/ui/UI_SINGLE_USE_BACKLOG.md`.

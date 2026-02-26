@@ -73,7 +73,6 @@ from sqlalchemy.orm import Session
 
 from app.core.event_catalog import admin_action_event_meta
 from app.core.events import emit_event, utc_now_naive
-from app.core.metrics import increment_counter
 from app.core.observability import log_business_event
 from app.core.utils import send_auth_code_email
 from app.db.models.admin_audit_log import AdminAuditLog
@@ -137,7 +136,6 @@ def log_admin_action(
             **(meta_json or {}),
         },
     )
-    increment_counter("admin_action_total", action=action)
     log_business_event(
         logger,
         request,

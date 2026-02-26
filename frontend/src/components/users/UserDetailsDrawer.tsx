@@ -1,6 +1,7 @@
 ﻿import { useMemo, useState } from "react";
 import Button from "../ui/Button";
 import Card from "../ui/Card";
+import DrawerBody from "../ui/DrawerBody";
 import InlineInfoRow from "../ui/InlineInfoRow";
 import SectionHeaderRow from "../ui/SectionHeaderRow";
 import SlidePanel from "../ui/SlidePanel";
@@ -202,7 +203,7 @@ export default function UserDetailsDrawer({
         <Button onClick={onClose} size="sm" variant="ghost">Закрыть</Button>
       </div>
 
-      <div style={{ overflowY: "auto", padding: 16, display: "grid", gap: 12 }}>
+      <DrawerBody>
         {loading && <div>Загрузка...</div>}
         {error && <StatusText tone="error">{error}</StatusText>}
 
@@ -335,7 +336,7 @@ export default function UserDetailsDrawer({
             </Card>
           </>
         )}
-      </div>
+      </DrawerBody>
     </SlidePanel>
   );
 }

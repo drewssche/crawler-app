@@ -20,6 +20,9 @@ export type AdminEmailsReasonContract = {
   hints: Record<ReasonMode, string>;
 };
 
+export const ADMIN_EMAILS_REASON_RECOMMENDED_PLACEHOLDER =
+  "Причина изменения списка (необязательно, но рекомендуется)";
+
 export const DEFAULT_ADMIN_EMAILS_REASON_POLICY: AdminEmailsReasonPolicy = {
   add_root_admin: "required",
   remove_other_root_admin: "required",
@@ -128,5 +131,18 @@ export function mergeAdminEmailsReasonContract(
       ...DEFAULT_ADMIN_EMAILS_REASON_CONTRACT.hints,
       ...(incoming?.hints || {}),
     },
+  };
+}
+
+export function getAdminEmailsReasonInputMeta(
+  contract: AdminEmailsReasonContract,
+  scenario: AdminEmailsReasonScenario,
+) {
+  const mode = contract.modes[scenario];
+  return {
+    mode,
+    placeholder: getReasonPlaceholder(mode, ADMIN_EMAILS_REASON_RECOMMENDED_PLACEHOLDER),
+    hint: contract.hints[mode],
+    presets: contract.presets[scenario] || [],
   };
 }

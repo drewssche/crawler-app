@@ -24,6 +24,7 @@ import FiltersBar from "../components/ui/FiltersBar";
 import RelevanceBadge from "../components/ui/RelevanceBadge";
 import SegmentedControl from "../components/ui/SegmentedControl";
 import SectionHeaderRow from "../components/ui/SectionHeaderRow";
+import DrawerBody from "../components/ui/DrawerBody";
 import SlidePanel from "../components/ui/SlidePanel";
 import { MetaText, StatusText } from "../components/ui/StatusText";
 import type { UserDetailsResponse } from "../components/users/UserDetailsDrawer";
@@ -439,7 +440,7 @@ export default function EventsPage() {
           />
         </div>
 
-        <div style={{ padding: 16, display: "grid", gap: 12, alignContent: "start", overflowY: "auto" }}>
+        <DrawerBody>
           {drawerLoading && <div>Загрузка...</div>}
           {drawerError && <StatusText tone="danger">{drawerError}</StatusText>}
 
@@ -527,12 +528,11 @@ export default function EventsPage() {
               }
             />
           )}
-        </div>
+        </DrawerBody>
       </SlidePanel>
     </div>
   );
 }
-
 
 
 

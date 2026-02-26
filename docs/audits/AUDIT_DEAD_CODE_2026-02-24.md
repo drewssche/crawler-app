@@ -9,27 +9,27 @@
 
 ## Findings
 
-### 1) Empty API modules (remove when ACL allows)
-- `backend/app/api/compare.py` (0 bytes)
-- `backend/app/api/pages.py` (0 bytes)
+### 1) Empty API modules
+- `backend/app/api/compare.py` (0 bytes, removed 2026-02-26)
+- `backend/app/api/pages.py` (0 bytes, removed 2026-02-26)
 
 Evidence:
 - Files are empty.
 - Not imported in `backend/app/main.py` routers.
 - No references found in backend code search.
 
-Decision: `REMOVE` (manual cleanup queue remains due ACL lock).
+Decision: `REMOVED` (physically deleted in workspace).
 
 ### 2) One-off migration scripts in tools (stale path, non-reusable)
-- `tools/fix_userspage.py`
-- `tools/fix_userspage_regex.py`
+- `tools/fix_userspage.py` (removed 2026-02-26)
+- `tools/fix_userspage_regex.py` (removed 2026-02-26)
 
 Evidence:
 - Hardcoded legacy path: `d:\python\crawler-app\frontend\src\pages\UsersPage.tsx`.
 - Contain one-time mojibake-replacement logic.
 - Not referenced by docs/CI/runtime.
 
-Decision: `ARCHIVE/REMOVE` (safe candidate after confirmation).
+Decision: `REMOVED` (safe cleanup executed).
 
 ### 3) Operational guard scripts (keep)
 - `tools/check_utf8.py`
@@ -45,7 +45,7 @@ Decision: `KEEP`.
 - `monitoring/prometheus.yml`
 
 Evidence:
-- Mounted by `docker-compose.yml` in `prometheus` service (`--profile monitoring`).
+- Mounted by `docker-compose.yml` in `prometheus` service (base stack, default `docker compose up`).
 
 Decision: `KEEP`.
 
@@ -56,6 +56,6 @@ Decision: `KEEP`.
 Decision: `KEEP` (no cleanup needed).
 
 ## Prioritized cleanup execution queue
-1. `HIGH`: physically delete `backend/app/api/compare.py`, `backend/app/api/pages.py` (after ACL unblock; already tracked).
-2. `MEDIUM`: remove or archive `tools/fix_userspage.py`, `tools/fix_userspage_regex.py`.
+1. `HIGH`: physically delete `backend/app/api/compare.py`, `backend/app/api/pages.py` (completed 2026-02-26).
+2. `MEDIUM`: remove or archive `tools/fix_userspage.py`, `tools/fix_userspage_regex.py` (completed 2026-02-26).
 3. `LOW`: optional docs regrouping for audit artifacts after functional cleanup.

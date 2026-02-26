@@ -93,9 +93,6 @@ def get_monitoring_history_payload(
     queries = {
         "http_requests": "(sum(http_requests_total) or vector(0))",
         "http_errors": "(sum(http_errors_total) or vector(0))",
-        "auth_starts": "(sum(auth_start_total) or vector(0))",
-        "admin_actions": "(sum(admin_action_total) or vector(0))",
-        "events_center": "(sum(events_center_total) or vector(0))",
         "invalid_code": '(sum(auth_verify_result_total{result="invalid_code"}) or vector(0))',
     }
 

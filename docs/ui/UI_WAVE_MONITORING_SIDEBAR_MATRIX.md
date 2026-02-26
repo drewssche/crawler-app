@@ -35,6 +35,24 @@
    - Monitoring quick-range buttons (`15м/1ч/6ч/24ч`) как возможный reusable preset-group.
    - Monitoring table filter toolbar action grouping (если появится второй аналогичный экран).
 
+## Adaptive Follow-up (2026-02-26)
+
+1. Monitoring thresholds controls layout
+   Problem: в блоке `Настроить пороги` была жесткая сетка `repeat(4, minmax(140px, 1fr)) auto auto`, из-за чего на узком экране кнопки действий визуально сжимались.
+   Fix:
+   - поля порогов переведены на responsive-grid `repeat(auto-fit, minmax(140px, 1fr))`;
+   - кнопки `Сохранить`/`Рекомендованные` вынесены в отдельный flex-ряд (`wrap`, `justify-content: flex-end`).
+   Result: кнопки остаются читаемыми и кликабельными на compact-width без изменения бизнес-поведения.
+   File: `frontend/src/pages/MonitoringPage.tsx`
+
+2. HTTP status visual contract (soft-accent)
+   Problem: статус-коды `2xx/3xx/4xx/5xx` рендерились локальным hardcode в `MonitoringPage`.
+   Fix:
+   - вынесен shared helper `frontend/src/utils/httpStatusVisual.ts`;
+   - добавлен shared `frontend/src/components/ui/HttpStatusBadge.tsx`;
+   - `MonitoringPage` переведен на этот контракт (endpoint table + metrics table).
+   Result: единая интерпретация status-кодов и мягкий row-accent для ненормальных кодов без page-level style drift.
+
 ## Где Увидеть В UI
 
 1. Monitoring page
@@ -49,4 +67,4 @@
 
 ## Non-Reused (single-use now)
 
-Одиночные паттерны добавлены в `UI_SINGLE_USE_BACKLOG.md`.
+Одиночные паттерны добавлены в `docs/ui/UI_SINGLE_USE_BACKLOG.md`.

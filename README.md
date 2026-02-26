@@ -4,14 +4,9 @@
 
 ## Быстрый старт
 
-### Обычный режим
+### Основной режим (с Prometheus)
 ```bash
 docker compose up -d --build
-```
-
-### Режим с мониторингом (Prometheus + Grafana)
-```bash
-docker compose --profile monitoring up -d --build
 ```
 
 ## Адреса сервисов
@@ -19,18 +14,17 @@ docker compose --profile monitoring up -d --build
 - Frontend: `http://localhost:5173`
 - Backend health: `http://localhost:8000/health`
 - Prometheus: `http://localhost:9090`
-- Grafana: `http://localhost:3000`
 
 ## Остановка
 
 ### Остановить без удаления данных
 ```bash
-docker compose --profile monitoring down
+docker compose down
 ```
 
 ### Остановить и удалить тома
 ```bash
-docker compose --profile monitoring down -v
+docker compose down -v
 ```
 
 ## Метрики
@@ -48,7 +42,11 @@ docker compose --profile monitoring down -v
 - `PATTERNS.md`
 - `REUSE_INDEX.md`
 - `RBAC_MAP.md`
-- `AUDIT_DISCOVERY_2026-02-24.md`
+- `docs/README.md`
+- `docs/audits/AUDIT_DISCOVERY_2026-02-24.md`
+
+Критичный governance-контракт:
+- `PATTERNS.md` -> `1.2 Super-Priority: Server-Load & Multi-User Sync First`.
 
 Этот файл (`README.md`) оставляем кратким: запуск/эксплуатация/точки входа.
 
