@@ -6,3 +6,8 @@ node_modules/
 dist/
 TODO.md
 .DS_Store
+
+# Understand Anything: share the reusable graph, keep local scratch data out of Git.
+.understand-anything/intermediate/
+.understand-anything/diff-overlay.json
+.understand-anything/.trash-*/

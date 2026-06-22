@@ -35,6 +35,12 @@ docker compose down -v
   - `GET /metrics/export.csv`
   - `GET /metrics/export.xlsx`
 
+## Архитектурный граф
+
+- [Открыть knowledge graph проекта](.understand-anything/knowledge-graph.json)
+
+Граф создан с помощью [Understand Anything](https://github.com/Egonex-AI/Understand-Anything) и содержит архитектурные слои, связи файлов и guided tour. Для интерактивного просмотра установите Understand Anything и запустите `/understand-dashboard` из корня проекта; повторный полный анализ не требуется.
+
 ## Паттерны и контракты
 
 Подробный свод механик, паттернов реюза, DoD и PR-checklist вынесен в:
