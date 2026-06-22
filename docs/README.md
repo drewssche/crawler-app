@@ -22,3 +22,5 @@
 
 - Резервная зона для дополнительных governance-артефактов: `docs/governance/`
 - Feature process playbook: `docs/governance/FEATURE_INTAKE_PLAYBOOK.md`
+- Scan/diff MVP-1 feature card: `docs/governance/FEATURE_CARD_SCAN_DIFF_MVP1_2026-02-26.md`
+- Scan/diff MVP-1 implementation plan: `docs/governance/IMPLEMENTATION_PLAN_SCAN_DIFF_MVP1_2026-02-26.md`

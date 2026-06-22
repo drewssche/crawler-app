@@ -8,6 +8,7 @@ type Props = {
   description?: string;
   confirmText?: string;
   cancelText?: string;
+  confirmVariant?: "primary" | "danger";
   loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -19,6 +20,7 @@ export default function ConfirmDialog({
   description,
   confirmText = "Подтвердить",
   cancelText = "Отмена",
+  confirmVariant = "primary",
   loading = false,
   onConfirm,
   onCancel,
@@ -35,7 +37,7 @@ export default function ConfirmDialog({
         <Button variant="ghost" onClick={onCancel} disabled={loading}>
           {cancelText}
         </Button>
-        <Button variant="primary" onClick={onConfirm} disabled={loading}>
+        <Button variant={confirmVariant} onClick={onConfirm} disabled={loading}>
           {loading ? "Выполнение..." : confirmText}
         </Button>
       </ModalActionRow>

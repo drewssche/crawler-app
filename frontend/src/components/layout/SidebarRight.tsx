@@ -7,7 +7,12 @@ import { runEventPrimaryAction } from "../../utils/eventPrimaryAction";
 import { formatApiTime, formatLocalDateTimeWithOffset } from "../../utils/datetime";
 import { UI_BULLET } from "../../utils/uiText";
 import { getEventRelevance } from "../../utils/relevance";
-import { getMonitoringFocusMeta, loadMonitoringContext, type FocusHistoryResponse } from "../../utils/monitoringContext";
+import {
+  getMonitoringFocusMeta,
+  loadMonitoringContext,
+  type FocusHistoryResponse,
+  type MonitoringFocusSnapshot,
+} from "../../utils/monitoringContext";
 import { getAuditActionCatalogCached, getUserAndTrustCatalogsCached } from "../../utils/catalogCache";
 import { loadUserContextByEmail, loadUserContextById } from "../../utils/userContext";
 import { subscribeEventCenterPolling } from "../../utils/eventCenterPollingManager";
@@ -338,6 +343,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   const [contextItem, setContextItem] = useState<EventItem | null>(null);
   const [monitoringFocus, setMonitoringFocus] = useState<FocusHistoryResponse | null>(null);
   const [monitoringFocusRangeMinutes, setMonitoringFocusRangeMinutes] = useState(60);
+  const [monitoringFocusSnapshot, setMonitoringFocusSnapshot] = useState<MonitoringFocusSnapshot | null>(null);
   const [monitoringErrorRows, setMonitoringErrorRows] = useState<Array<{ labels: string; value: number }>>([]);
   const [contextUser, setContextUser] = useState<UserDetailsResponse | null>(null);
   const [contextAvailableActions, setContextAvailableActions] = useState<BulkAction[]>([]);
@@ -572,6 +578,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
     if (!contextItem) {
       resetContextTask();
       setMonitoringFocus(null);
+      setMonitoringFocusSnapshot(null);
       setMonitoringErrorRows([]);
       setContextUser(null);
       setContextAvailableActions([]);
@@ -606,11 +613,13 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
             if (!isCurrent()) return;
             setMonitoringFocus(ctx.history);
             setMonitoringFocusRangeMinutes(ctx.rangeMinutes);
+            setMonitoringFocusSnapshot(ctx.snapshot);
             setMonitoringErrorRows(ctx.errorRows);
           })(),
         );
       } else {
         setMonitoringFocus(null);
+        setMonitoringFocusSnapshot(null);
         setMonitoringErrorRows([]);
         setMonitoringFocusRangeMinutes(60);
       }
@@ -620,6 +629,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
       } catch {
         if (!isCurrent()) return;
         setMonitoringFocus(null);
+        setMonitoringFocusSnapshot(null);
         setMonitoringErrorRows([]);
         setContextUser(null);
         setContextAvailableActions([]);
@@ -631,6 +641,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   const isAuthSecurityContextEvent = Boolean(
     contextItem?.event_type?.startsWith("auth.") || contextItem?.event_type?.startsWith("security."),
   );
+  const isMonitoringContextEvent = Boolean(contextItem && getMonitoringFocusMeta(contextItem).isMonitoring);
 
   const sectionHeader = useMemo(
     () => (
@@ -811,6 +822,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
                 focus={monitoringFocus}
                 errorRows={monitoringErrorRows}
                 rangeMinutes={monitoringFocusRangeMinutes}
+                snapshot={monitoringFocusSnapshot}
                 onOpenFocus={() => {
                   const params = new URLSearchParams();
                   const focusMetric = typeof contextItem.meta?.focus_metric === "string" ? contextItem.meta.focus_metric : "";
@@ -844,7 +856,9 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
               )}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Button variant="accent" onClick={() => onOpenEventSource(contextItem)}>Открыть источник</Button>
-                <Button variant="secondary" onClick={() => onMarkHandled(contextItem)}>Отметить обработанным</Button>
+                {!isMonitoringContextEvent && (
+                  <Button variant="secondary" onClick={() => onMarkHandled(contextItem)}>Отметить обработанным</Button>
+                )}
                 <Button
                   variant="ghost"
                   onClick={async () => {
@@ -862,6 +876,4 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
     </>
   );
 }
-
-
 

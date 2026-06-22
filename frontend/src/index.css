@@ -234,19 +234,95 @@ button:focus-visible {
 }
 
 .interactive-row {
+  position: relative;
+  cursor: pointer;
   transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
 
 .interactive-row:hover {
+  z-index: 1;
   background-color: rgba(106, 160, 255, 0.08) !important;
   border-color: rgba(106, 160, 255, 0.38) !important;
   box-shadow: 0 0 0 1px rgba(106, 160, 255, 0.18) inset;
   transform: translateY(-1px);
 }
 
+.interactive-row.project-row:hover {
+  background-color: var(--project-row-hover-bg, rgba(106, 160, 255, 0.08)) !important;
+  border-color: var(--project-row-hover-border, rgba(106, 160, 255, 0.38)) !important;
+  box-shadow: 0 0 0 1px var(--project-row-hover-border, rgba(106, 160, 255, 0.18)) inset;
+}
+
 .interactive-row:focus-within {
   border-color: rgba(106, 160, 255, 0.55) !important;
   box-shadow: 0 0 0 2px rgba(106, 160, 255, 0.2) inset;
+}
+
+.structure-tree-root {
+  display: grid;
+  gap: 6px;
+}
+
+.structure-tree-row {
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.structure-tree-row:hover {
+  border-color: rgba(106, 160, 255, 0.36);
+  background: rgba(106, 160, 255, 0.08);
+  box-shadow: 0 0 0 1px rgba(106, 160, 255, 0.18) inset;
+}
+
+.structure-tree-toggle {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(230, 235, 245, 0.9);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.structure-tree-link {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.structure-tree-link:hover {
+  text-decoration: underline;
+}
+
+.structure-tree-children {
+  overflow: hidden;
+  transition: max-height 180ms ease, opacity 180ms ease;
+}
+
+.structure-tree-sentinel {
+  height: 1px;
+  width: 100%;
 }
 
 .table-hover-row {
@@ -255,4 +331,20 @@ button:focus-visible {
 
 .table-hover-row:hover {
   background: rgba(106, 160, 255, 0.07);
+}
+
+@keyframes projectRunSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.project-run-spinner {
+  animation: projectRunSpin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-run-spinner {
+    animation: none;
+  }
 }

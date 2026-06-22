@@ -1,9 +1,21 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import Button from "../ui/Button";
 import InlineActionButton from "../ui/InlineActionButton";
+import { apiGet } from "../../api/client";
 import SidebarLeft from "./SidebarLeft";
 import SidebarRight from "./SidebarRight";
+import { getProfilesCached } from "../../utils/profileListCache";
+
+function normalizeProjectLabel(name: string | null | undefined, fallbackId?: number): string {
+  const raw = (name || "").trim();
+  if (!raw) {
+    return Number.isFinite(fallbackId) ? `Проект #${fallbackId}` : "Проект";
+  }
+  const legacy = raw.match(/^профиль\s*#?\s*(\d+)$/i);
+  if (legacy) return `Проект #${legacy[1]}`;
+  return raw;
+}
 
 function parentPathFor(pathname: string) {
   const path = pathname.split("?")[0];
@@ -24,8 +36,13 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [profileCrumbLabel, setProfileCrumbLabel] = useState<string | null>(null);
 
   const path = location.pathname.split("?")[0];
+  const stateProjectName =
+    location.state && typeof location.state === "object" && "projectName" in location.state
+      ? String((location.state as { projectName?: unknown }).projectName || "")
+      : "";
   const isSettingsTree =
     path === "/settings" ||
     path === "/users" ||
@@ -54,14 +71,55 @@ export default function AppLayout() {
     if (path === "/compare") {
       crumbs.push({ label: "\u0421\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435", path: "/compare" });
     } else if (path === "/profiles/new") {
-      crumbs.push({ label: "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0444\u0438\u043b\u044c", path: "/profiles/new" });
+      crumbs.push({ label: "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442", path: "/profiles/new" });
     } else {
       const match = path.match(/^\/profiles\/([0-9]+)$/);
       if (match) {
-        crumbs.push({ label: `\u041f\u0440\u043e\u0444\u0438\u043b\u044c #${match[1]}`, path });
+        const immediate = normalizeProjectLabel(stateProjectName, Number(match[1]));
+        crumbs.push({ label: profileCrumbLabel || immediate, path });
       }
     }
   }
+
+  useEffect(() => {
+    const match = path.match(/^\/profiles\/([0-9]+)$/);
+    if (!match) {
+      setProfileCrumbLabel(null);
+      return;
+    }
+    const profileId = Number(match[1]);
+    if (!Number.isFinite(profileId) || profileId <= 0) {
+      setProfileCrumbLabel(null);
+      return;
+    }
+    if (stateProjectName.trim()) {
+      setProfileCrumbLabel(normalizeProjectLabel(stateProjectName, profileId));
+    }
+
+    let cancelled = false;
+    async function loadProfileLabel() {
+      try {
+        const cached = await getProfilesCached(false);
+        if (cancelled) return;
+        const hit = cached.find((p) => p.id === profileId);
+        if (hit?.name) {
+          setProfileCrumbLabel(normalizeProjectLabel(hit.name, profileId));
+          return;
+        }
+        const row = await apiGet<{ id: number; name: string }>(`/profiles/${profileId}`);
+        if (cancelled) return;
+        setProfileCrumbLabel(normalizeProjectLabel(row?.name, profileId));
+      } catch {
+        if (cancelled) return;
+        setProfileCrumbLabel(`\u041f\u0440\u043e\u0435\u043a\u0442 #${profileId}`);
+      }
+    }
+    void loadProfileLabel();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [path, stateProjectName]);
 
   function onBack() {
     const parent = parentPathFor(location.pathname);

@@ -14,6 +14,8 @@ from app.db.base import Base
 from app.db.models.admin_audit_log import AdminAuditLog
 from app.db.models.event_feed import EventFeed
 from app.db.models.login_history import LoginHistory
+from app.db.models.profile import Profile
+from app.db.models.run import Run
 from app.db.models.trusted_device import TrustedDevice
 from app.db.models.user import User
 from app.db.session import get_db
@@ -128,6 +130,123 @@ def test_http_errors_metric_includes_404_status():
         and row.get("labels", {}).get("status") == "404"
         for row in error_rows
     )
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_profiles_summary_returns_last_run_and_totals():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        viewer = _make_user(email="summary@test.local", role="viewer", is_approved=True)
+        p1 = Profile(name="A", start_url="https://a.test", allowed_domains_csv="a.test")
+        p2 = Profile(name="B", start_url="https://b.test", allowed_domains_csv="b.test")
+        db.add_all([viewer, p1, p2])
+        db.commit()
+        db.refresh(p1)
+        db.refresh(p2)
+
+        db.add_all(
+            [
+                Run(
+                    profile_id=p1.id,
+                    status="FINISHED",
+                    started_at=datetime(2026, 1, 1, 10, 0, 0),
+                    finished_at=datetime(2026, 1, 1, 10, 1, 0),
+                    pages_total=12,
+                    pages_changed=3,
+                ),
+                Run(
+                    profile_id=p1.id,
+                    status="RUNNING",
+                    started_at=datetime(2026, 1, 2, 11, 0, 0),
+                    finished_at=None,
+                    pages_total=7,
+                    pages_changed=0,
+                ),
+            ]
+        )
+        db.commit()
+
+    client = TestClient(app)
+    response = client.get("/profiles/summary", headers=_auth_header("summary@test.local", role="viewer"))
+    assert response.status_code == 200
+    data = _extract_success_data(response)
+    by_name = {row["name"]: row for row in data}
+    assert by_name["A"]["runs_total"] == 2
+    assert by_name["A"]["last_run"]["status"] == "RUNNING"
+    assert by_name["A"]["last_run"]["pages_total"] == 7
+    assert by_name["B"]["runs_total"] == 0
+    assert by_name["B"]["last_run"] is None
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_run_start_seeds_all_allowed_domains(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        profile = Profile(
+            name="Multi",
+            start_url="https://a.test",
+            allowed_domains_csv="a.test,b.test",
+            max_pages=10,
+        )
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        profile_id = profile.id
+
+    calls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, url: str):
+            self.url = url
+            self.status_code = 200
+            self.headers = {"content-type": "text/html; charset=utf-8"}
+            self.text = "<html><body><h1>ok</h1></body></html>"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            calls.append(url)
+            return FakeResponse(url)
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+
+    client = TestClient(app)
+    response = client.post(f"/runs/start/{profile_id}")
+    assert response.status_code == 200
+    run_id = response.json()["run_id"]
+
+    pages_response = client.get(f"/runs/{run_id}/pages")
+    assert pages_response.status_code == 200
+    pages = pages_response.json()
+    urls = {row["url"] for row in pages}
+    assert "https://a.test" in urls or "https://a.test/" in urls
+    assert "https://b.test/" in urls
+    assert any("a.test" in url for url in calls)
+    assert any("b.test" in url for url in calls)
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

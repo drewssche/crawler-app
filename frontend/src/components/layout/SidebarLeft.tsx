@@ -1,12 +1,17 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+﻿import type { CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../hooks/auth";
 import { hasPermission } from "../../utils/permissions";
-import { getProfilesCached, type ProfileListItem } from "../../utils/profileListCache";
+import { getProfilesSummaryCached, type ProfileSummaryItem } from "../../utils/profileListCache";
+import { summarizeProjectDomains } from "../../utils/projectDomains";
+import { applyProjectRunLiveUpdate, subscribeProjectRunLive } from "../../utils/projectRunLiveStore";
 import { resolveDisplayRole } from "../../utils/roles";
 import appLogo from "../../assets/logo-crawler.svg";
 import Button from "../ui/Button";
+import Card from "../ui/Card";
 import ClearableInput from "../ui/ClearableInput";
+import ProjectRunBadge, { getProjectRunBadgeMeta } from "../ui/ProjectRunBadge";
 import ScrollableRegion from "../ui/ScrollableRegion";
 import RoleBadge from "../ui/RoleBadge";
 
@@ -14,22 +19,20 @@ export default function SidebarLeft() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout, refreshMe } = useAuth();
-  const [profiles, setProfiles] = useState<ProfileListItem[]>([]);
+  const [profiles, setProfiles] = useState<ProfileSummaryItem[]>([]);
   const [search, setSearch] = useState("");
   const lastMeRefreshRef = useRef(0);
 
-  const inProfilesDomain =
-    location.pathname === "/" ||
-    location.pathname === "/compare" ||
-    location.pathname.startsWith("/profiles/");
-
   useEffect(() => {
-    if (!inProfilesDomain) return;
     const force = location.pathname.startsWith("/profiles/new");
-    getProfilesCached(force)
+    getProfilesSummaryCached(force)
       .then(setProfiles)
       .catch(() => setProfiles([]));
-  }, [inProfilesDomain, location.pathname]);
+  }, [location.pathname]);
+
+  useEffect(() => subscribeProjectRunLive((update) => {
+    setProfiles((prev) => prev.map((row) => applyProjectRunLiveUpdate(row, update)));
+  }), []);
 
   useEffect(() => {
     const now = Date.now();
@@ -41,7 +44,12 @@ export default function SidebarLeft() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return profiles;
-    return profiles.filter((p) => p.name.toLowerCase().includes(q) || p.start_url.toLowerCase().includes(q));
+    return profiles.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.start_url.toLowerCase().includes(q) ||
+        (p.allowed_domains_csv || "").toLowerCase().includes(q),
+    );
   }, [profiles, search]);
 
   const inSettings =
@@ -134,11 +142,11 @@ export default function SidebarLeft() {
           active={location.pathname.startsWith("/profiles/new")}
           fullWidth
         >
-          + {"\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0444\u0438\u043b\u044c"}
+          + {"\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442"}
         </Button>
 
         <ClearableInput
-          placeholder={"\u041f\u043e\u0438\u0441\u043a \u043f\u0440\u043e\u0444\u0438\u043b\u0435\u0439..."}
+          placeholder={"\u041f\u043e\u0438\u0441\u043a \u043f\u0440\u043e\u0435\u043a\u0442\u043e\u0432..."}
           value={search}
           onChange={setSearch}
           containerStyle={{ marginTop: 12 }}
@@ -149,6 +157,9 @@ export default function SidebarLeft() {
         style={{
           flex: 1,
           marginTop: 12,
+          paddingTop: 2,
+          paddingInline: 2,
+          paddingBottom: 2,
           display: "flex",
           flexDirection: "column",
           gap: 10,
@@ -157,31 +168,58 @@ export default function SidebarLeft() {
       >
         {filtered.map((p) => {
           const active = location.pathname === `/profiles/${p.id}`;
+          const statusMeta = getProjectRunBadgeMeta(p.last_run?.status);
           return (
-            <div
+            <Card
               key={p.id}
-              onClick={() => navigate(`/profiles/${p.id}`)}
+              onClick={() => navigate(`/profiles/${p.id}`, { state: { projectName: p.name } })}
+              interactive
+              className="project-row"
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
-                  navigate(`/profiles/${p.id}`);
+                  e.preventDefault();
+                  navigate(`/profiles/${p.id}`, { state: { projectName: p.name } });
                 }
               }}
               style={{
+                "--project-row-base-bg": statusMeta.rowBaseBg,
+                "--project-row-base-border": statusMeta.rowBaseBorder,
+                "--project-row-hover-bg": statusMeta.rowHoverBg,
+                "--project-row-hover-border": statusMeta.rowHoverBorder,
                 padding: "10px 12px",
-                borderRadius: 12,
-                border: active ? "1px solid #6aa0ff" : "1px solid rgba(255,255,255,0.08)",
-                background: active ? "rgba(106, 160, 255, 0.12)" : "rgba(255,255,255,0.04)",
-                cursor: "pointer",
+                border: active ? `1px solid ${statusMeta.rowActiveBorder}` : `1px solid ${statusMeta.rowBaseBorder}`,
+                background: active ? statusMeta.rowActiveBg : statusMeta.rowBaseBg,
+                boxShadow: active ? `0 0 0 1px ${statusMeta.rowActiveBorder} inset` : undefined,
                 display: "flex",
                 flexDirection: "column",
                 gap: 4,
-              }}
+              } as CSSProperties}
             >
-              <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.2 }}>{p.name}</div>
-              <div style={{ fontSize: 12, opacity: 0.7, wordBreak: "break-word" }}>{p.start_url}</div>
-            </div>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "start", gap: 8 }}>
+                <div
+                  title={p.name}
+                  style={{
+                    fontWeight: 700,
+                    fontSize: 14,
+                    lineHeight: 1.2,
+                    minWidth: 0,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {p.name}
+                </div>
+                <div style={{ flexShrink: 0 }}>
+                  <ProjectRunBadge status={p.last_run?.status} compact />
+                </div>
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.7, wordBreak: "break-word" }}>
+                {summarizeProjectDomains(p.allowed_domains_csv, p.start_url)}
+              </div>
+            </Card>
           );
         })}
       </ScrollableRegion>

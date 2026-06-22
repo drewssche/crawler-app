@@ -9,7 +9,12 @@ import { eventChannelLabel, eventReadStatusLabel, eventSeverityLabel } from "../
 import { normalizeError } from "../utils/errors";
 import { getEventRelevance } from "../utils/relevance";
 import { apiPost } from "../api/client";
-import { getMonitoringFocusMeta, loadMonitoringContext, type FocusHistoryResponse } from "../utils/monitoringContext";
+import {
+  getMonitoringFocusMeta,
+  loadMonitoringContext,
+  type FocusHistoryResponse,
+  type MonitoringFocusSnapshot,
+} from "../utils/monitoringContext";
 import { getUserAndTrustCatalogsCached } from "../utils/catalogCache";
 import { loadUserContextByEmail, loadUserContextById } from "../utils/userContext";
 import { useEventFeed } from "../hooks/useEventFeed";
@@ -69,6 +74,7 @@ export default function EventsPage() {
   const [drawerEvent, setDrawerEvent] = useState<EventItem | null>(null);
   const [monitoringFocus, setMonitoringFocus] = useState<FocusHistoryResponse | null>(null);
   const [monitoringFocusRangeMinutes, setMonitoringFocusRangeMinutes] = useState(60);
+  const [monitoringFocusSnapshot, setMonitoringFocusSnapshot] = useState<MonitoringFocusSnapshot | null>(null);
   const [monitoringErrorRows, setMonitoringErrorRows] = useState<Array<{ labels: string; value: number }>>([]);
   const [drawerAvailableActions, setDrawerAvailableActions] = useState<BulkAction[]>([]);
   const [actionCatalog, setActionCatalog] = useState<Record<BulkAction, ActionCatalogItem>>({} as Record<BulkAction, ActionCatalogItem>);
@@ -131,6 +137,7 @@ export default function EventsPage() {
     setDrawerUser(null);
     setDrawerEvent(item);
     setMonitoringFocus(null);
+    setMonitoringFocusSnapshot(null);
     setMonitoringErrorRows([]);
     setDrawerAvailableActions([]);
     if (!item.is_read) {
@@ -167,10 +174,12 @@ export default function EventsPage() {
             if (!isCurrent()) return;
             setMonitoringFocus(ctx.history);
             setMonitoringFocusRangeMinutes(ctx.rangeMinutes);
+            setMonitoringFocusSnapshot(ctx.snapshot);
             setMonitoringErrorRows(ctx.errorRows);
           })(),
         );
       } else {
+        setMonitoringFocusSnapshot(null);
         setMonitoringFocusRangeMinutes(60);
       }
 
@@ -491,6 +500,7 @@ export default function EventsPage() {
               focus={monitoringFocus}
               errorRows={monitoringErrorRows}
               rangeMinutes={monitoringFocusRangeMinutes}
+              snapshot={monitoringFocusSnapshot}
               onOpenFocus={() => openMonitoringContext(drawerEvent)}
               onShowSimilar={() => applySimilarFilterFromEvent(drawerEvent)}
               onMarkHandled={() => markIncidentHandled(drawerEvent)}
@@ -533,7 +543,6 @@ export default function EventsPage() {
     </div>
   );
 }
-
 
 
 

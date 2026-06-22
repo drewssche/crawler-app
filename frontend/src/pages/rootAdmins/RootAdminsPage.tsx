@@ -8,8 +8,7 @@ import Card from "../../components/ui/Card";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import ClearableInput from "../../components/ui/ClearableInput";
 import ListTotalMeta from "../../components/ui/ListTotalMeta";
-import ModalActionRow from "../../components/ui/ModalActionRow";
-import ModalShell from "../../components/ui/ModalShell";
+import FormModal from "../../components/ui/FormModal";
 import ApplicabilityHint from "../../components/ui/ApplicabilityHint";
 import InlineInfoRow from "../../components/ui/InlineInfoRow";
 import SelectableListRow from "../../components/ui/SelectableListRow";
@@ -558,14 +557,17 @@ export default function RootAdminsPage() {
         </CompactActionCard>
       )}
 
-      <ModalShell
+      <FormModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        width="min(420px, 92vw)"
-        zIndex={20}
-        contentStyle={{ padding: 14, background: "#1a1a1a", display: "grid", gap: 10 }}
+        title={TXT.addModalTitle}
+        actions={(
+          <>
+            <Button variant="ghost" onClick={() => setModalOpen(false)}>{TXT.cancel}</Button>
+            <Button variant="primary" onClick={addEmail}>Добавить</Button>
+          </>
+        )}
       >
-        <h3 style={{ marginTop: 0, marginBottom: 0 }}>{TXT.addModalTitle}</h3>
         <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@company.com" style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
         <input value={addReason} onChange={(e) => setAddReason(e.target.value)} placeholder={addReasonMeta.placeholder} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -574,11 +576,7 @@ export default function RootAdminsPage() {
           ))}
         </div>
         <MetaText opacity={0.78}>{addReasonMeta.hint}</MetaText>
-        <ModalActionRow style={{ marginTop: 0 }}>
-          <Button variant="ghost" size="sm" onClick={() => setModalOpen(false)}>{TXT.cancel}</Button>
-          <Button variant="primary" size="sm" onClick={addEmail}>OK</Button>
-        </ModalActionRow>
-      </ModalShell>
+      </FormModal>
 
       <SlidePanel open={drawerOpen} onClose={() => setDrawerOpen(false)}>
         <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
@@ -679,14 +677,15 @@ export default function RootAdminsPage() {
       </SlidePanel>
       <ConfirmDialog
         open={confirmState.open}
-        title="Подтвердите действие"
+        title={confirmState.scope === "bulk" ? "Удалить root-admin из списка?" : "Удалить root-admin?"}
         description={
           confirmState.scope === "bulk"
-            ? `Удалить выбранные записи из root-admin: ${removableSelected.length}`
-            : `${TXT.confirmRemove} ${confirmState.email || ""} из списка root-admin`
+            ? `Выбранных записей к удалению: ${removableSelected.length}. Действие необратимо.`
+            : `${TXT.confirmRemove} ${confirmState.email || ""} из списка root-admin. Действие необратимо.`
         }
-        confirmText="Да"
-        cancelText="Нет"
+        confirmText="Удалить"
+        cancelText="Отмена"
+        confirmVariant="danger"
         loading={drawerActionLoading}
         onCancel={() => {
           if (drawerActionLoading) return;

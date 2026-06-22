@@ -4,6 +4,7 @@ import {
   detectSpikeTimestamps,
   monitoringRecommendation,
   type FocusHistoryResponse,
+  type MonitoringFocusSnapshot,
   type MonitoringErrorRow,
 } from "../../utils/monitoringContext";
 import InteractiveLineChart from "./InteractiveLineChart";
@@ -15,6 +16,7 @@ type Props = {
   focus: FocusHistoryResponse | null;
   errorRows: MonitoringErrorRow[];
   rangeMinutes: number;
+  snapshot: MonitoringFocusSnapshot | null;
   onOpenFocus: () => void;
   onShowSimilar: () => void;
   onMarkHandled: () => void;
@@ -25,6 +27,7 @@ export default function MonitoringContextCard({
   focus,
   errorRows,
   rangeMinutes,
+  snapshot,
   onOpenFocus,
   onShowSimilar,
   onMarkHandled,
@@ -32,6 +35,20 @@ export default function MonitoringContextCard({
   if (!focus && errorRows.length === 0) return null;
 
   const rec = monitoringRecommendation(item);
+
+  const intervalErrors = Number(item.meta?.errors_delta ?? 0);
+  const intervalRequests = Number(item.meta?.requests_delta ?? 0);
+  const intervalRate = Number(item.meta?.error_rate ?? 0);
+  const hasIntervalMeta = Number.isFinite(intervalErrors) && Number.isFinite(intervalRequests) && Number.isFinite(intervalRate)
+    && (intervalErrors > 0 || intervalRequests > 0 || intervalRate > 0);
+
+  const rangeLabel = rangeMinutes >= 10080
+    ? "7 дней"
+    : rangeMinutes >= 1440
+      ? "24 часа"
+      : rangeMinutes >= 60
+        ? `${Math.round(rangeMinutes / 60)} ч`
+        : `${rangeMinutes} мин`;
 
   return (
     <Card style={{ borderColor: "rgba(243,198,119,0.35)", background: "rgba(243,198,119,0.06)" }}>
@@ -76,8 +93,23 @@ export default function MonitoringContextCard({
                   return <div style={{ fontSize: 11, opacity: 0.75 }}>Момент события: {markerTime}</div>;
                 })()}
                 <div style={{ fontSize: 11, opacity: 0.75 }}>
-                  Пунктирная линия — момент события, светлые маркеры — локальные всплески; окно графика: {rangeMinutes >= 10080 ? "7 дней" : rangeMinutes >= 1440 ? "24 часа" : "1 час"}.
+                  Пунктирная линия — момент события, светлые маркеры — локальные всплески; окно графика: {rangeLabel}.
                 </div>
+                {snapshot && (
+                  <div style={{ fontSize: 11, opacity: 0.82, display: "grid", gap: 2 }}>
+                    <div>
+                      В момент всплеска: {focus.query || "метрика"}={snapshot.eventValue.toFixed(2)} (в {formatEventMarkerLocalShort(snapshot.eventTs)})
+                    </div>
+                    <div>
+                      Локальный прирост к предыдущей точке: {snapshot.deltaPrev >= 0 ? "+" : ""}{snapshot.deltaPrev.toFixed(2)}; пик в окне {snapshot.peakValue.toFixed(2)} ({formatEventMarkerLocalShort(snapshot.peakTs)}).
+                    </div>
+                  </div>
+                )}
+                {hasIntervalMeta && (
+                  <div style={{ fontSize: 11, opacity: 0.82 }}>
+                    За интервал детектора: errors +{intervalErrors.toFixed(0)}, requests +{intervalRequests.toFixed(0)}, error-rate {intervalRate.toFixed(1)}%.
+                  </div>
+                )}
               </div>
             ) : (
               <div style={{ fontSize: 12, opacity: 0.75 }}>Недостаточно данных для графика.</div>

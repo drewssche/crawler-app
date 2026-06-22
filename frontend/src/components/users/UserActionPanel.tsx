@@ -214,6 +214,20 @@ export default function UserActionPanel({
   }
 
   const confirmDescription = effectiveAction ? actionLabel(effectiveAction, meta?.label) : "";
+  const isDeleteAction = effectiveAction === "delete_soft" || effectiveAction === "delete_hard";
+  const isBlockAction = effectiveAction === "block";
+  const confirmTitle = isDeleteAction
+    ? selectedCount > 1
+      ? "Удалить пользователей?"
+      : "Удалить пользователя?"
+    : isBlockAction
+      ? selectedCount > 1
+        ? "Заблокировать пользователей?"
+        : "Заблокировать пользователя?"
+      : "Подтвердите действие";
+  const confirmText = isDeleteAction ? "Удалить" : isBlockAction ? "Заблокировать" : "Применить";
+  const cancelText = "Отмена";
+  const confirmVariant = isDeleteAction || isBlockAction ? "danger" : "primary";
 
   return (
     <>
@@ -345,10 +359,11 @@ export default function UserActionPanel({
       </Card>
       <ConfirmDialog
         open={confirmOpen}
-        title="Подтвердите действие"
+        title={confirmTitle}
         description={confirmDescription}
-        confirmText="Да"
-        cancelText="Нет"
+        confirmText={confirmText}
+        cancelText={cancelText}
+        confirmVariant={confirmVariant}
         loading={running}
         onCancel={() => {
           if (running) return;

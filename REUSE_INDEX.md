@@ -47,6 +47,7 @@
 
 - `frontend/src/components/ui/ClearableInput.tsx`
   Поисковые поля с очисткой `×`.
+  Дополнительно подключен в `ProfileDashboardPage -> Структура` для фильтрации дерева URL.
 
 - `frontend/src/components/ui/SectionHeaderRow.tsx`
   Shared row-wrapper для заголовков секций (`title + actions`) без локального дублирования flex-layout.
@@ -192,6 +193,12 @@
   Единый набор коротких UI-разделителей/текстовых токенов.
   Сейчас: `UI_BULLET = " • "` (применяется в UserDetails/Session/Device строках, чтобы исключить raw-escape и кодировочные артефакты).
 
+- `frontend/src/utils/projectDomains.ts`
+  Shared утилиты для create-project ввода доменов:
+  нормализация (`domain`/`URL` -> `domain`), дедупликация, автогенерация имени проекта, сбор `start_url`.
+  Дополнительно: summary helper `summarizeProjectDomains` (`first-domain +N`) для project-list представления.
+  Используется в `ProfileNewPage`, `WorkspaceHomePage`, `SidebarLeft`.
+
 - `frontend/src/pages/ActivityLogPage.tsx` (email datalist lazy-suggest)
   Паттерн снижения стартовой нагрузки: вместо preload всех пользователей на маунте
   используется debounced lookup (`q`, top-20) для подсказок email в фильтрах.
@@ -205,6 +212,11 @@
   Shared store unread-счетчиков Event Center (`notifications/actions/total`) с подпиской и fallback-fetch.
   `SidebarRight` публикует значения из polling, `SettingsPage` читает/подписывается без отдельного независимого цикла запросов.
 
+- `frontend/src/utils/projectRunLiveStore.ts`
+  Shared lightweight live-store статусов прогонов проекта (publish/subscribe + apply helper для profile-summary строк).
+  Используется для синхронизации optimistic/final run-статусов между `ProfileDashboardPage`, `SidebarLeft`, `WorkspaceHomePage`
+  без page-level polling дублей в списках.
+
 - `frontend/src/utils/eventCenterPollingManager.ts`
   Shared singleton transport-manager Event Center:
   `SSE-first` (`/events/center/stream`) + автоматический fallback/reconnect на polling (`/events/center` top-N).
@@ -216,8 +228,32 @@
   Снижает повторные вызовы редко меняющихся источников и убирает последовательные wait-цепочки.
 
 - `frontend/src/utils/profileListCache.ts`
-  Shared TTL-кэш списка профилей (`/profiles`) для `SidebarLeft`.
-  Убирает повторную загрузку на каждый route-change и сохраняет актуальность через короткий TTL/force-обновление.
+  Shared TTL-кэш профилей с summary-contract:
+  - `getProfilesSummaryCached` -> `/profiles/summary` (включая `last_run`/`runs_total`);
+  - `getProfilesCached` -> легкий map списка из summary без дополнительного запроса.
+  Используется в `SidebarLeft`, `WorkspaceHomePage`, `AppLayout` (breadcrumbs) для снижения дублей запросов.
+
+- `frontend/src/components/ui/ProjectRunBadge.tsx`
+  Shared badge для статуса прогона проекта (`Не запускался/Идет прогон/Активен/Ошибка`) + компактный режим для списков.
+  Дополнительно экспортирует status-meta для soft status-tint строк (`base/hover/active`) в `Workspace/SidebarLeft`.
+  В compact-режиме используется фиксированная геометрия иконки (`30x30`), чтобы `✓/!/•` не зависели от длины title строки.
+  Используется в `ProfileDashboardPage`, `SidebarLeft`, `WorkspaceHomePage`.
+
+- `frontend/src/components/ui/ProjectInfoBadge.tsx`
+  Shared info-chip для project-list метаданных (например `прогонов: N`) с токенами, согласованными с `ProjectRunBadge`.
+  Используется в `WorkspaceHomePage`.
+
+- `frontend/src/components/ui/ConfirmDialog.tsx` (`confirmVariant`)
+  Confirm modal получил семантический вариант подтверждения (`primary|danger`) для единообразия destructive-подтверждений.
+  Используется в `WorkspaceHomePage`, `ProfileDashboardPage`, `RootAdminsPage`, `UserActionPanel`.
+
+- `frontend/src/components/ui/FormModal.tsx`
+  Shared form-modal shell (`ModalShell` + title + body + action row) для легкой унификации form-модалок.
+  Первый call-site: `RootAdminsPage` (add-modal).
+
+- `frontend/src/components/ui/CardFooterActions.tsx`
+  Shared footer row для card-level действий (правое выравнивание, стабильный gap).
+  Используется в `WorkspaceHomePage` (кнопка `Удалить`) и `ProfileDashboardPage` (`Опасная зона`).
 
 - `frontend/src/utils/permissionsMatrixCache.ts`
   Shared TTL-кэш матрицы прав (`/auth/permissions-matrix`) для `RolePermissionsHint`.
@@ -264,6 +300,29 @@
   для silent-cancel без шумных ошибок в UI.
 
 - `frontend/src/hooks/useWorkspaceInfiniteScroll.ts`
+  Единый scroll-trigger для инкрементальной догрузки (`N + N` при достижении нижнего порога).
+  Подключен в `Users`, `Events`, `Activity`, `RootAdmins`, а также в `ProfileDashboardPage -> Структура`
+  для lazy-рендера дерева (`20 + еще 20 при прокрутке`), без создания отдельной механики.
+
+- `frontend/src/components/ui/StructureStatusIcon.tsx`
+  Shared иконка статуса узла структуры (`added/changed/deleted/error/unchanged`) с акцентной палитрой.
+  Используется в `ProfileDashboardPage -> Структура` вместо текстовых badge-меток.
+
+- `frontend/src/components/ui/ProjectStructureTree.tsx`
+  Shared tree-view для структуры проекта (`domain -> directories -> file`) с:
+  - default-collapsed каталогами;
+  - `+/-` раскрытием веток;
+  - кликом по узлу (open URL);
+  - фильтрацией по строке поиска;
+  - per-node lazy-догрузкой детей (`20 + 20`) только для раскрытых веток c auto-load по scroll-sentinel;
+  - сбросом раскрытой ветки к стартовому окну при повторном сворачивании.
+
+- `frontend/src/components/ui/StructureLegendHint.tsx`
+  Shared hint-блок легенды иконок структуры (reuses `HintCard` + `HintTable` visual pattern).
+
+- `frontend/src/components/ui/HighlightedText.tsx`
+  Shared подсветка match-фрагментов поискового запроса (case-insensitive, безопасный split без regex-инъекций).
+  Pilot-подключение: `ProfileDashboardPage -> Структура` (labels tree nodes).
   Единый hook автодогрузки по скроллу (`workspace-scroll-container` first + fallback window + short-content prefetch).
   Подключен в `EventsPage`, `ActivityLogPage`, `MonitoringPage`.
 

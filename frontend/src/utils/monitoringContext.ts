@@ -9,6 +9,8 @@ export type FocusHistoryResponse = {
   source: string;
   query: string;
   series: HistoryPoint[];
+  range_minutes?: number;
+  step_seconds?: number;
   error?: string;
 };
 
@@ -16,6 +18,93 @@ type MetricItem = { labels: Record<string, string>; value: number };
 type MetricsResponse = { counters: Record<string, MetricItem[]> };
 
 export type MonitoringErrorRow = { labels: string; value: number };
+
+export type MonitoringFocusSnapshot = {
+  eventTs: number;
+  eventValue: number;
+  deltaPrev: number;
+  peakTs: number;
+  peakValue: number;
+};
+
+function nearestPointIndex(points: HistoryPoint[], ts: number): number {
+  if (points.length <= 1) return 0;
+  let nearest = 0;
+  let nearestDiff = Math.abs(points[0].ts - ts);
+  for (let i = 1; i < points.length; i += 1) {
+    const diff = Math.abs(points[i].ts - ts);
+    if (diff < nearestDiff) {
+      nearestDiff = diff;
+      nearest = i;
+    }
+  }
+  return nearest;
+}
+
+function resolveStepSeconds(points: HistoryPoint[], hint?: number): number {
+  if (typeof hint === "number" && Number.isFinite(hint) && hint >= 10) return Math.floor(hint);
+  if (points.length < 2) return 30;
+  const deltas: number[] = [];
+  for (let i = 1; i < points.length; i += 1) {
+    const delta = points[i].ts - points[i - 1].ts;
+    if (delta > 0 && Number.isFinite(delta)) deltas.push(delta);
+  }
+  if (deltas.length === 0) return 30;
+  deltas.sort((a, b) => a - b);
+  return Math.max(10, Math.floor(deltas[Math.floor(deltas.length / 2)]));
+}
+
+function buildCenteredWindow(
+  points: HistoryPoint[],
+  markerTs: number,
+  targetRangeMinutes: number,
+  stepHint?: number,
+): { series: HistoryPoint[]; rangeMinutes: number } | null {
+  if (points.length < 2 || !Number.isFinite(markerTs)) return null;
+  const minTs = points[0].ts;
+  const maxTs = points[points.length - 1].ts;
+  if (markerTs < minTs || markerTs > maxTs) return null;
+
+  const stepSeconds = resolveStepSeconds(points, stepHint);
+  const safeRangeMinutes = Math.max(5, Math.floor(targetRangeMinutes));
+  const targetPoints = Math.max(7, Math.floor((safeRangeMinutes * 60) / stepSeconds) + 1);
+
+  if (points.length <= targetPoints) {
+    const fullRangeMinutes = Math.max(1, Math.round((maxTs - minTs) / 60));
+    return { series: points, rangeMinutes: fullRangeMinutes };
+  }
+
+  const centerIdx = nearestPointIndex(points, markerTs);
+  const half = Math.floor(targetPoints / 2);
+  let start = Math.max(0, centerIdx - half);
+  let end = start + targetPoints - 1;
+  if (end >= points.length) {
+    end = points.length - 1;
+    start = Math.max(0, end - targetPoints + 1);
+  }
+  const series = points.slice(start, end + 1);
+  if (series.length < 2) return null;
+  const rangeMinutes = Math.max(1, Math.round((series[series.length - 1].ts - series[0].ts) / 60));
+  return { series, rangeMinutes };
+}
+
+function buildFocusSnapshot(points: HistoryPoint[], markerTs: number): MonitoringFocusSnapshot | null {
+  if (points.length < 2 || !Number.isFinite(markerTs)) return null;
+  const idx = nearestPointIndex(points, markerTs);
+  const point = points[idx];
+  const prev = points[Math.max(0, idx - 1)];
+  let peak = points[0];
+  for (const item of points) {
+    if (item.value > peak.value) peak = item;
+  }
+  return {
+    eventTs: point.ts,
+    eventValue: Number(point.value || 0),
+    deltaPrev: Number(point.value || 0) - Number(prev.value || 0),
+    peakTs: peak.ts,
+    peakValue: Number(peak.value || 0),
+  };
+}
 
 export function detectSpikeTimestamps(points: HistoryPoint[]): number[] {
   if (points.length < 3) return [];
@@ -97,6 +186,7 @@ export async function loadMonitoringContext(item: EventItem): Promise<{
   history: FocusHistoryResponse;
   errorRows: MonitoringErrorRow[];
   rangeMinutes: number;
+  snapshot: MonitoringFocusSnapshot | null;
 }> {
   const { focusMetric, focusPath } = getMonitoringFocusMeta(item);
   const metricName = focusMetric || "http_errors_total";
@@ -157,5 +247,16 @@ export async function loadMonitoringContext(item: EventItem): Promise<{
     .slice(0, 8)
     .map(({ labels, value }) => ({ labels, value }));
 
-  return { history, errorRows: rows, rangeMinutes: selectedRange };
+  const centeredWindow = markerTs
+    ? buildCenteredWindow(history.series, markerTs, 15, history.step_seconds)
+    : null;
+  const historyForCard = centeredWindow ? { ...history, series: centeredWindow.series } : history;
+  const snapshot = markerTs ? buildFocusSnapshot(historyForCard.series, markerTs) : null;
+
+  return {
+    history: historyForCard,
+    errorRows: rows,
+    rangeMinutes: centeredWindow?.rangeMinutes || selectedRange,
+    snapshot,
+  };
 }

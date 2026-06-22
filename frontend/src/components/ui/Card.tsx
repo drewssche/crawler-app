@@ -1,7 +1,7 @@
 import { forwardRef } from "react";
 import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
 
-type CardVariant = "default" | "hint" | "warning";
+type CardVariant = "default" | "hint" | "warning" | "danger";
 
 type Props = HTMLAttributes<HTMLDivElement> & {
   children: ReactNode;
@@ -23,6 +23,10 @@ const VARIANT_STYLE: Record<CardVariant, CSSProperties> = {
   warning: {
     border: "1px solid rgba(255,166,0,0.45)",
     background: "rgba(255,255,255,0.03)",
+  },
+  danger: {
+    border: "1px solid rgba(230,127,127,0.42)",
+    background: "rgba(230,127,127,0.06)",
   },
 };
 
