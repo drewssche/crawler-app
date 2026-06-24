@@ -57,6 +57,9 @@ Monitoring использует shared loaders/config/chart components; тяжё
   - `История`: persisted runs/diff history only.
   - `Настройки`: real profile/scope/limits/schedule availability and danger zone.
   - Не показывать сохраняемые controls до появления реального backend API.
+- Workspace project rows показывают только достоверные summary-поля: domain scope, run status/time, pages, changes и runs count.
+  Destructive actions не размещаются в списке; они находятся в `Проект → Настройки → Опасная зона`.
+  Строка обязана поддерживать mouse + Enter/Space и адаптивный перенос метаданных.
 - Duplicate canonical scope: объяснимый conflict с переходом в существующий проект и возможностью исправить ввод.
 - Active/failed run — локальное состояние проекта, не глобальная блокировка.
 - Failed run показывает безопасную причину и действия `Повторить / Проверить адрес / Технические детали`.

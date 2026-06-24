@@ -15,9 +15,9 @@
   - viewer Event Center скрыт при отсутствии `events.view`;
   - Friendly project search в Workspace/Sidebar;
   - project information architecture `Основная | История | Настройки`.
-- Последние проверки: backend `40 passed, 2 skipped`; Alembic current=head; frontend tests `9 passed`; frontend production build passed; targeted ESLint passed; `git diff --check` passed.
+- Последние проверки: backend `40 passed, 2 skipped`; Alembic current=head; frontend tests `12 passed`; frontend production build passed; targeted ESLint passed; `git diff --check` passed.
 - Общий frontend lint имеет ранее существовавшие ошибки вне текущих изменений; не считать их регрессией этой волны.
-- Следующий рекомендуемый UX-пункт: **Workspace project rows/cards density redesign**.
+- Следующий рекомендуемый UX-пункт: **Page intelligence — первый vertical slice context drawer страницы**.
 
 ## Working Rules
 
@@ -32,9 +32,6 @@
 - [ ] Нет активного пункта.
 
 ## Next — UX/Product
-
-- [ ] **P1 Workspace project rows/cards density redesign** (`MEDIUM`).
-  Компактные decision-useful строки: domains, last run/status, pages, added/changed/deleted/errors, next schedule. Delete — в overflow/settings; без декоративных badge.
 
 - [ ] **P1/P2 Page intelligence + subscriptions** (`MEDIUM-HIGH`, epic).
   Context drawer страницы, snapshot/meta/status/links/resources, subscriptions, occurrence search, target fingerprint и понятный compare UX.
@@ -78,6 +75,11 @@
 
 ## Recently Done
 
+- [x] **P1 Workspace project rows/cards density redesign**.
+  - Что было: высокие project cards с отдельными domain pills, одним счётчиком и постоянной кнопкой удаления; важные run-данные не читались с первого взгляда.
+  - Что стало: компактная keyboard-accessible строка показывает имя, краткий domain scope, status, время последнего прогона, страницы, изменения и число прогонов; layout переносится на узкой ширине.
+  - Как проверить: открыть Workspace с проектами разных статусов; клик/Enter/Space открывают проект, поиск и подсветка сохраняются, destructive action в строке отсутствует и доступен в `Проект → Настройки`.
+  - Вклад в цели: больше проектов в viewport и быстрее читается состояние (`high` UX); удалён лишний destructive control и один UI-компонент из bundle (`medium`).
 - [x] **P1 Project information architecture — `Основная | История | Настройки`**.
   - Что было: четыре вкладки `Сводка | Расписание | Структура | История`; структура требовала отдельного перехода, а расписание было несохраняемым UI-прототипом.
   - Что стало: `Основная` объединяет последний прогон, KPI и структуру; `История` показывает реальные runs без фиктивного domain-фильтра; `Настройки` содержит реальные profile/scope/limit параметры, честный статус расписания и danger zone.
