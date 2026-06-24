@@ -23,7 +23,7 @@ function parentPathFor(pathname: string) {
   const path = pathname.split("?")[0];
   if (path === "/" || path === "") return null;
   if (path === "/settings") return null;
-  if (path === "/users" || path === "/logs" || path === "/monitoring" || path === "/events" || path === "/root-admins") return "/settings";
+  if (path === "/users" || path === "/logs" || path === "/monitoring" || path === "/events" || path === "/root-admins" || path === "/ui-debug") return "/settings";
   if (path === "/compare") return "/";
   if (path === "/profiles/new") return "/";
   if (/^\/profiles\/[0-9]+$/.test(path)) return "/";
@@ -52,7 +52,8 @@ export default function AppLayout() {
     path === "/logs" ||
     path === "/monitoring" ||
     path === "/events" ||
-    path === "/root-admins";
+    path === "/root-admins" ||
+    path === "/ui-debug";
   const canViewEvents = hasPermission(user?.role, "events.view");
 
   const crumbs: Array<{ label: string; path: string }> = [];
@@ -69,6 +70,8 @@ export default function AppLayout() {
       crumbs.push({ label: "\u0426\u0435\u043d\u0442\u0440 \u0441\u043e\u0431\u044b\u0442\u0438\u0439", path: "/events" });
     } else if (path === "/root-admins") {
       crumbs.push({ label: "\u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u044b", path: "/root-admins" });
+    } else if (path === "/ui-debug") {
+      crumbs.push({ label: "UI Debug Center", path: "/ui-debug" });
     }
   } else {
     crumbs.push({ label: "\u0420\u0430\u0431\u043e\u0447\u0430\u044f \u043e\u0431\u043b\u0430\u0441\u0442\u044c", path: "/" });

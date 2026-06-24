@@ -10,6 +10,7 @@ import ProfileNewPage from "./pages/ProfileNewPage";
 import RootAdminsPage from "./pages/RootAdminsPage";
 import SettingsPage from "./pages/SettingsPage";
 import WorkspaceHomePage from "./pages/WorkspaceHomePage";
+import UiDebugPage from "./pages/UiDebugPage";
 
 const UsersPage = lazy(() => import("./pages/UsersPage"));
 const ActivityLogPage = lazy(() => import("./pages/ActivityLogPage"));
@@ -33,7 +34,14 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<WorkspaceHomePage />} />
+        <Route
+          index
+          element={
+            <RequirePermission permission="data.view">
+              <WorkspaceHomePage />
+            </RequirePermission>
+          }
+        />
         <Route
           path="settings"
           element={
@@ -42,9 +50,30 @@ export default function App() {
             </RequirePermission>
           }
         />
-        <Route path="profiles/new" element={<ProfileNewPage />} />
-        <Route path="profiles/:id" element={<ProfileDashboardPage />} />
-        <Route path="compare" element={<ComparePage />} />
+        <Route
+          path="profiles/new"
+          element={
+            <RequirePermission permission="profiles.edit">
+              <ProfileNewPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="profiles/:id"
+          element={
+            <RequirePermission permission="data.view">
+              <ProfileDashboardPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="compare"
+          element={
+            <RequirePermission permission="data.view">
+              <ComparePage />
+            </RequirePermission>
+          }
+        />
         <Route
           path="users"
           element={
@@ -90,6 +119,14 @@ export default function App() {
           element={
             <RequirePermission permission="root_admins.manage">
               <RootAdminsPage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="ui-debug"
+          element={
+            <RequirePermission permission="users.manage">
+              <UiDebugPage />
             </RequirePermission>
           }
         />

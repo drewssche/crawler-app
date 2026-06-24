@@ -10,6 +10,9 @@ import {
   subscribeEventCenterUnread,
 } from "../utils/eventCenterUnreadStore";
 
+const UI_DEBUG_CLIENT_ENABLED =
+  String(import.meta.env.VITE_ENABLE_UI_DEBUG ?? "false").toLowerCase() === "true";
+
 function SettingsItem({
   title,
   subtitle,
@@ -242,6 +245,18 @@ export default function SettingsPage() {
               status={dynamicHints.monitoring}
               sourceOk={diagMonitoringOk}
               onClick={() => navigate("/monitoring")}
+            />
+          </Card>
+        )}
+
+        {canManageUsers && UI_DEBUG_CLIENT_ENABLED && (
+          <Card>
+            <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>Разработка</div>
+            <SettingsItem
+              title="UI Debug Center"
+              subtitle="Fixture-only проверка ролей, toast, событий и редких состояний без изменения данных."
+              status="DEV"
+              onClick={() => navigate("/ui-debug")}
             />
           </Card>
         )}

@@ -12,8 +12,12 @@
 - links/resources + status.
 2. Зафиксировать anti-goals:
 - без auth-контекстов,
-- без cross-domain compare,
-- без сложного UI diff.
+- первый storage slice без сложного UI diff;
+- cross-site compare не входит в первый storage slice, но schema/API не должны блокировать будущую модель `Project -> ProjectSite[]`.
+
+> Update 2026-06-24: прежняя трактовка `allowed_domains_csv` как нескольких сравниваемых сайтов отклонена.
+> Сравниваемые/наблюдаемые сайты моделируются отдельными `ProjectSite`; `allowed_domains` остаётся техническим allowlist сайта.
+> Полный порядок внедрения и section scope зафиксированы в корневом `TODO.md`.
 
 ## Этап 1. Backend storage (минимальный)
 
@@ -35,7 +39,7 @@
 ## Этап 2. Crawl pipeline MVP-1
 
 1. На run:
-- запустить обход доменов проекта,
+- запустить обход каждого `ProjectSite` в его canonical scope (`whole_site` или `path_prefix`),
 - собрать артефакты,
 - нормализовать шумные поля (timestamp/nonce-подобные).
 2. Для каждой страницы:
@@ -62,7 +66,11 @@
 - выдавать достаточно полей для будущего UI `Визуальный/Код`.
 5. Project list summary endpoint:
 - единый `/profiles/summary` с полями `runs_total` + `last_run` для списков (sidebar/workspace) без `N+1`.
-6. Delete project endpoint policy:
+6. Site-level contracts:
+- list/create/update `ProjectSite`;
+- отдельные status/pages/coverage/failure для каждого сайта;
+- project-level aggregation не заменяет site-level diagnostics.
+7. Delete project endpoint policy:
 - delete-flow выполняется в одной транзакции;
 - запись в `project_deletion_log` обязательна;
 - статистика из `project_stats_history` не удаляется.

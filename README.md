@@ -27,6 +27,29 @@ docker compose down
 docker compose down -v
 ```
 
+## UI Debug Center (только development)
+
+Для fixture-only проверки ролей, toast, запросов доступа, событий и редких UI-состояний добавьте в `.env`:
+
+```env
+APP_ENV=development
+UI_DEBUG_ENABLED=true
+VITE_ENABLE_UI_DEBUG=true
+```
+
+Затем пересоберите frontend/backend:
+
+```bash
+docker compose up -d --build backend frontend
+```
+
+Открыть: `Настройки → UI Debug Center`.
+
+- доступ: admin/root-admin;
+- реальные роли и данные не изменяются;
+- backend жёстко отключает режим при `APP_ENV=production`;
+- настоящая impersonation намеренно не реализована.
+
 ## Метрики
 
 - JSON метрики backend: `GET /metrics`

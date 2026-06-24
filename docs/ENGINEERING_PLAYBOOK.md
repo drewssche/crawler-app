@@ -34,7 +34,20 @@ Shared-state хранится в DB/backend. Локальный frontend state �
 - Source of truth: `backend/app/core/permissions.py`.
 - Enforcement выполняется backend `require_permission`; скрытие frontend не является защитой.
 - Frontend: `hasPermission` + route guards + условный mount недоступных data surfaces.
+- Capability labels are not permissions. Any capability shown in the matrix (`data.view`, `crawler.run`, `profiles.edit`) must exist in backend/frontend permission sets and guard concrete endpoints.
+- Target role contract:
+  - viewer: read accessible project/site/run/page data;
+  - editor: viewer + edit project/site and start/retry runs;
+  - admin: editor + users/events/audit/monitoring;
+  - root-admin: admin + root-admin management.
 - При изменении ролей обновлять backend matrix, frontend guards и tests; запускать `python tools/check_rbac_parity.py`.
+
+### Dev UI Debug Contract
+
+- Fixture-based UI Debug Center may preview roles/states but never changes the actor's backend permissions.
+- It is enabled only by explicit development flags, carries a permanent warning banner and is absent from production builds/routes.
+- Synthetic toasts/events/access requests are local fixtures by default; no DB writes or real notifications.
+- Real impersonation requires complete endpoint RBAC, project membership, root-admin authorization, short-lived audited tokens and production hard-disable.
 
 ## 5. Lists, Feeds and Drawers
 
@@ -52,6 +65,17 @@ Monitoring использует shared loaders/config/chart components; тяжё
 
 ## 7. Project UX
 
+- Project is a container; a monitored website is `ProjectSite`.
+  A project has one or more sites, while anomalies and crawl diagnostics remain site-scoped.
+- Each `ProjectSite` owns its `start_url`, crawl scope, technical allowlist and limits.
+  `allowed_domains` is not a list of sites to compare.
+- Scope modes:
+  - `whole_site`;
+  - `path_prefix` with segment-boundary validation and redirect re-check.
+- Existing projects migrate to one primary site. Ambiguous legacy extra domains require user confirmation before becoming separate sites.
+- Compare is a full-width project route (`/profiles/:id/compare`), not a cramped card in Workspace.
+  It supports arbitrary left/right site+page+version selection, visual/code/structure modes and responsive focus mode.
+- Single-site anomaly detection is independent from compare and requires a reliable per-site baseline.
 - Project information architecture: `Основная | История | Настройки`.
   - `Основная`: run state, decision-useful metrics and current structure.
   - `История`: persisted runs/diff history only.

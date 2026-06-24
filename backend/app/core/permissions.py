@@ -1,6 +1,9 @@
 ﻿from typing import Literal
 
 Permission = Literal[
+    "data.view",
+    "crawler.run",
+    "profiles.edit",
     "events.view",
     "audit.view",
     "users.manage",
@@ -8,10 +11,18 @@ Permission = Literal[
 ]
 
 PERMISSIONS_BY_ROLE: dict[str, set[Permission]] = {
-    "viewer": set(),
-    "editor": set(),
-    "admin": {"events.view", "audit.view", "users.manage"},
-    "root-admin": {"events.view", "audit.view", "users.manage", "root_admins.manage"},
+    "viewer": {"data.view"},
+    "editor": {"data.view", "crawler.run", "profiles.edit"},
+    "admin": {"data.view", "crawler.run", "profiles.edit", "events.view", "audit.view", "users.manage"},
+    "root-admin": {
+        "data.view",
+        "crawler.run",
+        "profiles.edit",
+        "events.view",
+        "audit.view",
+        "users.manage",
+        "root_admins.manage",
+    },
 }
 
 
@@ -28,6 +39,9 @@ def has_permission(role: str | None, permission: Permission) -> bool:
 
 
 PERMISSION_LABELS: dict[Permission, str] = {
+    "data.view": "Просмотр проектов и данных",
+    "crawler.run": "Запуск прогонов",
+    "profiles.edit": "Редактирование проектов",
     "events.view": "Просмотр центра событий",
     "audit.view": "Просмотр журнала действий",
     "users.manage": "Управление пользователями",

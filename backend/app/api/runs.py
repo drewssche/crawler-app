@@ -12,7 +12,9 @@ from app.core.paging import build_paged_response, paginate_query
 from app.db.models.page import Page
 from app.db.models.profile import Profile
 from app.db.models.run import Run
+from app.db.models.user import User
 from app.db.session import get_db
+from app.core.security import require_permission
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -94,7 +96,11 @@ def _is_allowed_url(url: str, allowed_domains: set[str], excluded_ext: tuple[str
 
 
 @router.post("/start/{profile_id}")
-def start_run(profile_id: int, db: Session = Depends(get_db)):
+def start_run(
+    profile_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("crawler.run")),
+):
     profile = db.get(Profile, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -263,6 +269,7 @@ def list_runs(
     page: int | None = None,
     page_size: int = 20,
     db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("data.view")),
 ):
     query = db.query(Run).filter(Run.profile_id == profile_id).order_by(Run.id.desc())
     paged = paginate_query(query, page=page, page_size=page_size)
@@ -278,6 +285,7 @@ def list_pages(
     page: int | None = None,
     page_size: int = 20,
     db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("data.view")),
 ):
     query = db.query(Page).filter(Page.run_id == run_id).order_by(Page.id.asc())
     paged = paginate_query(query, page=page, page_size=page_size)

@@ -134,6 +134,109 @@ def test_event_center_forbidden_for_viewer():
     engine.dispose()
 
 
+def test_project_and_run_endpoints_enforce_role_permissions():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        viewer = _make_user(email="project-viewer@test.local", role="viewer", is_approved=True)
+        editor = _make_user(email="project-editor@test.local", role="editor", is_approved=True)
+        profile = Profile(name="Protected", start_url="https://protected.test", allowed_domains_csv="protected.test")
+        db.add_all([viewer, editor, profile])
+        db.commit()
+        db.refresh(profile)
+        run = Run(profile_id=profile.id, status="RUNNING", started_at=datetime.utcnow())
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        page = Page(
+            run_id=run.id,
+            url="https://protected.test/",
+            status_code=200,
+            content_type="text/html",
+            html="<html></html>",
+            html_hash="hash",
+        )
+        db.add(page)
+        db.commit()
+        profile_id = profile.id
+        run_id = run.id
+
+    client = TestClient(app)
+    viewer_headers = _auth_header("project-viewer@test.local", role="viewer")
+    editor_headers = _auth_header("project-editor@test.local", role="editor")
+
+    assert client.get(f"/profiles/{profile_id}").status_code == 401
+    assert client.get(f"/runs/by-profile/{profile_id}").status_code == 401
+    assert client.get(f"/runs/{run_id}/pages").status_code == 401
+    assert client.post(f"/runs/start/{profile_id}").status_code == 401
+
+    assert client.get(f"/profiles/{profile_id}", headers=viewer_headers).status_code == 200
+    assert client.get(f"/runs/by-profile/{profile_id}", headers=viewer_headers).status_code == 200
+    assert client.get(f"/runs/{run_id}/pages", headers=viewer_headers).status_code == 200
+    assert client.post(f"/runs/start/{profile_id}", headers=viewer_headers).status_code == 403
+    assert client.post(
+        "/profiles",
+        json={"name": "Denied", "start_url": "https://denied.test", "allowed_domains_csv": "denied.test"},
+        headers=viewer_headers,
+    ).status_code == 403
+    assert client.delete(f"/profiles/{profile_id}", headers=viewer_headers).status_code == 403
+
+    assert client.post(f"/runs/start/{profile_id}", headers=editor_headers).status_code == 409
+    created = client.post(
+        "/profiles",
+        json={"name": "Allowed", "start_url": "https://allowed.test", "allowed_domains_csv": "allowed.test"},
+        headers=editor_headers,
+    )
+    assert created.status_code == 200
+    assert client.delete(f"/profiles/{created.json()['id']}", headers=editor_headers).status_code == 200
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_ui_debug_capabilities_require_admin_and_non_production_flags(monkeypatch):
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                _make_user(email="debug-viewer@test.local", role="viewer", is_approved=True),
+                _make_user(email="debug-admin@test.local", role="admin", is_admin=True, is_approved=True),
+            ]
+        )
+        db.commit()
+
+    client = TestClient(app)
+    viewer_headers = _auth_header("debug-viewer@test.local", role="viewer")
+    admin_headers = _auth_header("debug-admin@test.local", role="admin")
+
+    assert client.get("/auth/ui-debug-capabilities", headers=viewer_headers).status_code == 403
+
+    monkeypatch.setenv("UI_DEBUG_ENABLED", "true")
+    monkeypatch.setenv("APP_ENV", "development")
+    enabled = client.get("/auth/ui-debug-capabilities", headers=admin_headers)
+    assert enabled.status_code == 200
+    enabled_data = _extract_success_data(enabled)
+    assert enabled_data["enabled"] is True
+    assert enabled_data["fixture_only"] is True
+
+    monkeypatch.setenv("APP_ENV", "production")
+    production = client.get("/auth/ui-debug-capabilities", headers=admin_headers)
+    assert production.status_code == 200
+    assert _extract_success_data(production)["enabled"] is False
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_http_errors_metric_includes_404_status():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()
@@ -225,6 +328,7 @@ def test_run_start_seeds_all_allowed_domains(monkeypatch):
     app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
 
     with SessionLocal() as db:
+        db.add(_make_user(email="runs-multi@test.local", role="editor", is_approved=True))
         profile = Profile(
             name="Multi",
             start_url="https://a.test",
@@ -262,11 +366,12 @@ def test_run_start_seeds_all_allowed_domains(monkeypatch):
     monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
 
     client = TestClient(app)
-    response = client.post(f"/runs/start/{profile_id}")
+    editor_headers = _auth_header("runs-multi@test.local", role="editor")
+    response = client.post(f"/runs/start/{profile_id}", headers=editor_headers)
     assert response.status_code == 200
     run_id = response.json()["run_id"]
 
-    pages_response = client.get(f"/runs/{run_id}/pages")
+    pages_response = client.get(f"/runs/{run_id}/pages", headers=editor_headers)
     assert pages_response.status_code == 200
     pages = pages_response.json()
     urls = {row["url"] for row in pages}
@@ -332,6 +437,7 @@ def test_run_lock_is_scoped_to_project(monkeypatch):
     app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
 
     with SessionLocal() as db:
+        db.add(_make_user(email="runs-lock@test.local", role="editor", is_approved=True))
         first = Profile(name="First", start_url="https://first.test", allowed_domains_csv="first.test", max_pages=1)
         second = Profile(name="Second", start_url="https://second.test", allowed_domains_csv="second.test", max_pages=1)
         db.add_all([first, second])
@@ -366,10 +472,11 @@ def test_run_lock_is_scoped_to_project(monkeypatch):
     monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
     client = TestClient(app)
 
-    blocked = client.post(f"/runs/start/{first_id}")
+    editor_headers = _auth_header("runs-lock@test.local", role="editor")
+    blocked = client.post(f"/runs/start/{first_id}", headers=editor_headers)
     assert blocked.status_code == 409
     assert _extract_error_payload(blocked)["error"]["code"] == "run_already_active"
-    allowed = client.post(f"/runs/start/{second_id}")
+    allowed = client.post(f"/runs/start/{second_id}", headers=editor_headers)
     assert allowed.status_code == 200
 
     app.dependency_overrides.clear()
@@ -386,6 +493,7 @@ def test_empty_crawl_marks_run_failed(monkeypatch):
     app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
 
     with SessionLocal() as db:
+        db.add(_make_user(email="runs-empty@test.local", role="editor", is_approved=True))
         profile = Profile(name="Empty", start_url="https://empty.test", allowed_domains_csv="empty.test", max_pages=1)
         db.add(profile)
         db.commit()
@@ -407,7 +515,10 @@ def test_empty_crawl_marks_run_failed(monkeypatch):
 
     monkeypatch.setattr(runs_api.httpx, "Client", FailingClient)
     client = TestClient(app)
-    response = client.post(f"/runs/start/{profile_id}")
+    response = client.post(
+        f"/runs/start/{profile_id}",
+        headers=_auth_header("runs-empty@test.local", role="editor"),
+    )
     assert response.status_code == 502
 
     with SessionLocal() as db:
@@ -444,6 +555,7 @@ def test_pages_changed_counts_deleted_urls(monkeypatch):
     app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
 
     with SessionLocal() as db:
+        db.add(_make_user(email="runs-diff@test.local", role="editor", is_approved=True))
         profile = Profile(name="Diff", start_url="https://diff.test", allowed_domains_csv="diff.test", max_pages=1)
         db.add(profile)
         db.commit()
@@ -489,7 +601,10 @@ def test_pages_changed_counts_deleted_urls(monkeypatch):
 
     monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
     client = TestClient(app)
-    response = client.post(f"/runs/start/{profile_id}")
+    response = client.post(
+        f"/runs/start/{profile_id}",
+        headers=_auth_header("runs-diff@test.local", role="editor"),
+    )
     assert response.status_code == 200
 
     with SessionLocal() as db:

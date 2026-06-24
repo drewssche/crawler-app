@@ -14,6 +14,8 @@ import { getProfilesSummaryCached, type ProfileSummaryItem } from "../utils/prof
 import { applyProjectRunLiveUpdate, subscribeProjectRunLive } from "../utils/projectRunLiveStore";
 import { isMeaningfulProjectSearch, searchProjects, shouldShowProjectMatchHint } from "../utils/projectSearch";
 import { summarizeProjectDomains } from "../utils/projectDomains";
+import { useAuth } from "../hooks/auth";
+import { hasPermission } from "../utils/permissions";
 
 function lastRunLabel(project: ProfileSummaryItem): string {
   const run = project.last_run;
@@ -27,6 +29,7 @@ function lastRunLabel(project: ProfileSummaryItem): string {
 
 export default function WorkspaceHomePage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [projects, setProjects] = useState<ProfileSummaryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -34,6 +37,7 @@ export default function WorkspaceHomePage() {
 
   const filtered = useMemo(() => searchProjects(projects, search), [projects, search]);
   const searchActive = isMeaningfulProjectSearch(search);
+  const canEditProjects = hasPermission(user?.role, "profiles.edit");
 
   useEffect(() => {
     getProfilesSummaryCached(false)
@@ -53,9 +57,11 @@ export default function WorkspaceHomePage() {
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <div style={{ fontSize: 18, fontWeight: 800 }}>Проекты</div>
-            <Button variant="primary" onClick={() => navigate("/profiles/new")}>
-              + Создать проект
-            </Button>
+            {canEditProjects && (
+              <Button variant="primary" onClick={() => navigate("/profiles/new")}>
+                + Создать проект
+              </Button>
+            )}
           </div>
 
           <ClearableInput

@@ -25,6 +25,7 @@ from app.core.security import (
     hash_password,
     hash_trusted_device_token,
     verify_login_code,
+    require_permission,
 )
 from app.core.utils import send_auth_code_email
 from app.db.models.login_code import LoginCode
@@ -432,6 +433,25 @@ def me(request: Request, current_user: User = Depends(get_current_user)):
 def permissions_matrix(request: Request, _: User = Depends(get_current_user)):
     return success_response_payload(request, data=permissions_matrix_payload())
 
+
+@router.get("/ui-debug-capabilities")
+def ui_debug_capabilities(
+    request: Request,
+    _: User = Depends(require_permission("users.manage")),
+):
+    environment = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "development").strip().lower()
+    enabled = (
+        os.getenv("UI_DEBUG_ENABLED", "false").lower() == "true"
+        and environment not in {"prod", "production"}
+    )
+    return success_response_payload(
+        request,
+        data={
+            "enabled": enabled,
+            "fixture_only": True,
+            "environment": environment,
+        },
+    )
 
 
 

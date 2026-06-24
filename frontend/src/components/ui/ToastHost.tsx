@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/purity -- toast expiry and hover pause intentionally use wall-clock time */
 import { useEffect, useMemo, useState } from "react";
 import Button from "./Button";
 import IconGhostButton from "./IconGhostButton";
@@ -6,7 +7,7 @@ export type ToastItem = {
   id: string;
   title: string;
   body: string;
-  accent?: "info" | "warning" | "danger" | "neutral";
+  accent?: "info" | "success" | "warning" | "danger" | "neutral";
   actionLabel?: string;
   onAction?: () => void;
   secondaryActionLabel?: string;
@@ -186,6 +187,8 @@ export default function ToastHost({ items, onClose, autoCloseMs = 6000 }: Props)
             background:
               item.accent === "danger"
                 ? "linear-gradient(180deg, rgba(224,92,92,0.20), rgba(29,29,29,0.96))"
+                : item.accent === "success"
+                ? "linear-gradient(180deg, rgba(110,199,181,0.18), rgba(29,29,29,0.96))"
                 : item.accent === "warning"
                 ? "linear-gradient(180deg, rgba(240,168,94,0.18), rgba(29,29,29,0.96))"
                 : item.accent === "info"

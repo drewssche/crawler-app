@@ -18,6 +18,8 @@ import { MetaText, StatusText } from "../components/ui/StatusText";
 import { formatOperationalDateTime } from "../utils/datetime";
 import { invalidateProfilesCache } from "../utils/profileListCache";
 import { publishProjectRunLive } from "../utils/projectRunLiveStore";
+import { useAuth } from "../hooks/auth";
+import { hasPermission } from "../utils/permissions";
 
 type ProjectProfile = {
   id: number;
@@ -106,6 +108,7 @@ function formatTimeAgo(raw?: string | null): string {
 
 export default function ProfileDashboardPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = useState<ProjectProfile | null>(null);
   const [runs, setRuns] = useState<ProjectRun[]>([]);
@@ -126,6 +129,8 @@ export default function ProfileDashboardPage() {
   const [lastRunCoverage, setLastRunCoverage] = useState<{ ok: number; total: number } | null>(null);
   const [lastRunCoverageLoading, setLastRunCoverageLoading] = useState(false);
   const [failureDetailsOpen, setFailureDetailsOpen] = useState(false);
+  const canRunCrawler = hasPermission(user?.role, "crawler.run");
+  const canEditProject = hasPermission(user?.role, "profiles.edit");
 
   async function fetchRunPages(runId: number): Promise<ProjectPage[]> {
     const rows = await apiGet<ProjectPage[]>(`/runs/${runId}/pages`);
@@ -374,7 +379,7 @@ export default function ProfileDashboardPage() {
                     <ProjectRunBadge status={lastRun?.status} />
                   </div>
                 }
-                actions={
+                actions={canRunCrawler ? (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <CardActionButton
                       variant="primary"
@@ -387,7 +392,7 @@ export default function ProfileDashboardPage() {
                       {runPending ? "Запуск..." : hasRunning ? "Прогон выполняется" : "Запустить прогон"}
                     </CardActionButton>
                   </div>
-                }
+                ) : undefined}
               />
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <MetaText opacity={0.86}>
@@ -410,7 +415,7 @@ export default function ProfileDashboardPage() {
               options={[
                 { value: "main", label: "Основная" },
                 { value: "history", label: "История" },
-                { value: "settings", label: "Настройки" },
+                ...(canEditProject ? [{ value: "settings" as const, label: "Настройки" }] : []),
               ]}
             />
           </Card>
@@ -424,7 +429,7 @@ export default function ProfileDashboardPage() {
                   {!runsLoading && !lastRun && (
                     <div style={{ display: "grid", gap: 8 }}>
                       <MetaText>Прогонов пока нет. Запустите первый сбор, чтобы получить структуру и метрики проекта.</MetaText>
-                      <div>
+                      {canRunCrawler && <div>
                         <CardActionButton
                           variant="primary"
                           onClick={() => void handleStartRun()}
@@ -432,7 +437,7 @@ export default function ProfileDashboardPage() {
                         >
                           {runPending ? "Запуск..." : "Запустить первый прогон"}
                         </CardActionButton>
-                      </div>
+                      </div>}
                     </div>
                   )}
                   {!runsLoading && lastRun && (
@@ -451,7 +456,7 @@ export default function ProfileDashboardPage() {
                           <div style={{ display: "grid", gap: 8 }}>
                             <div style={{ fontWeight: 700 }}>Прогон не завершен</div>
                             <MetaText>{lastRun.failure_message || "Не удалось получить страницы сайта."}</MetaText>
-                            <CardFooterActions>
+                            {canRunCrawler && <CardFooterActions>
                               <CardActionButton
                                 variant="primary"
                                 onClick={() => void handleStartRun()}
@@ -471,7 +476,7 @@ export default function ProfileDashboardPage() {
                               >
                                 {failureDetailsOpen ? "Скрыть детали" : "Технические детали"}
                               </CardActionButton>
-                            </CardFooterActions>
+                            </CardFooterActions>}
                             {failureDetailsOpen && (
                               <MetaText opacity={0.68}>
                                 Код: {lastRun.failure_code || "unknown_error"}; run #{lastRun.id}; адрес: {project.start_url}
@@ -619,7 +624,7 @@ export default function ProfileDashboardPage() {
             </Card>
           )}
 
-          {activeTab === "settings" && (
+          {activeTab === "settings" && canEditProject && (
             <div style={{ display: "grid", gap: 12 }}>
               <Card>
                 <div style={{ display: "grid", gap: 10 }}>

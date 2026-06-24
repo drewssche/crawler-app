@@ -9,6 +9,7 @@
     "test:project-search": "node --experimental-strip-types --test tests/projectSearch.test.mjs",
     "test:project-ui": "node --test tests/projectInformationArchitecture.test.mjs",
     "test:workspace-ui": "node --test tests/workspaceProjectRows.test.mjs",
+    "test:roles-ui": "node --test tests/roleVisibility.test.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

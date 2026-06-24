@@ -52,7 +52,8 @@ export default function SidebarLeft() {
     location.pathname.startsWith("/logs") ||
     location.pathname.startsWith("/monitoring") ||
     location.pathname.startsWith("/events") ||
-    location.pathname.startsWith("/root-admins");
+    location.pathname.startsWith("/root-admins") ||
+    location.pathname.startsWith("/ui-debug");
 
   const inWorkspace =
     location.pathname === "/" ||
@@ -61,6 +62,7 @@ export default function SidebarLeft() {
 
   const envLabel = (import.meta.env.MODE || "dev").toUpperCase();
   const canOpenSettings = hasPermission(user?.role, "users.manage");
+  const canEditProjects = hasPermission(user?.role, "profiles.edit");
 
   return (
     <aside
@@ -130,20 +132,22 @@ export default function SidebarLeft() {
 
         <hr style={{ margin: "10px 0", borderColor: "#3333" }} />
 
-        <Button
-          onClick={() => navigate("/profiles/new")}
-          variant="primary"
-          active={location.pathname.startsWith("/profiles/new")}
-          fullWidth
-        >
-          + {"\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442"}
-        </Button>
+        {canEditProjects && (
+          <Button
+            onClick={() => navigate("/profiles/new")}
+            variant="primary"
+            active={location.pathname.startsWith("/profiles/new")}
+            fullWidth
+          >
+            + {"\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442"}
+          </Button>
+        )}
 
         <ClearableInput
           placeholder={"\u041f\u043e\u0438\u0441\u043a \u043f\u0440\u043e\u0435\u043a\u0442\u043e\u0432..."}
           value={search}
           onChange={setSearch}
-          containerStyle={{ marginTop: 12 }}
+          containerStyle={{ marginTop: canEditProjects ? 12 : 0 }}
         />
       </div>
 

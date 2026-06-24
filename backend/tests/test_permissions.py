@@ -65,6 +65,10 @@ def test_normalize_role_unknown_defaults_to_viewer():
 
 
 def test_has_permission_matrix_basics():
+    assert has_permission("viewer", "data.view") is True
+    assert has_permission("viewer", "crawler.run") is False
+    assert has_permission("editor", "crawler.run") is True
+    assert has_permission("editor", "profiles.edit") is True
     assert has_permission("admin", "users.manage") is True
     assert has_permission("admin", "root_admins.manage") is False
     assert has_permission("root-admin", "root_admins.manage") is True
@@ -92,7 +96,6 @@ def test_frontend_permissions_matrix_matches_backend():
     assert set(frontend.keys()) == set(backend.keys())
     for role in backend:
         assert frontend[role] == backend[role]
-
 
 
 

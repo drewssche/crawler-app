@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.security import get_current_user
+from app.core.security import require_permission
 from app.core.api_response import success_response_payload
 from app.core.paging import build_paged_response, paginate_query
 from app.db.session import get_db
@@ -34,7 +34,7 @@ def list_profiles(
     page: int | None = None,
     page_size: int = 20,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(require_permission("data.view")),
 ):
     query = db.query(Profile).order_by(Profile.id.desc())
     paged = paginate_query(query, page=page, page_size=page_size)
@@ -48,7 +48,7 @@ def list_profiles(
 def create_profile(
     payload: ProfileCreate,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(require_permission("profiles.edit")),
 ):
     requested_scope = _canonical_profile_scope(str(payload.start_url), payload.allowed_domains_csv)
     for existing in db.query(Profile).all():
@@ -76,7 +76,7 @@ def create_profile(
 def list_profiles_summary(
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(require_permission("data.view")),
 ):
     last_run_sq = (
         db.query(
@@ -138,7 +138,11 @@ def list_profiles_summary(
 
 
 @router.get("/{profile_id}", response_model=ProfileOut)
-def get_profile(profile_id: int, db: Session = Depends(get_db)):
+def get_profile(
+    profile_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("data.view")),
+):
     obj = db.get(Profile, profile_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -149,7 +153,7 @@ def get_profile(profile_id: int, db: Session = Depends(get_db)):
 def delete_profile(
     profile_id: int,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(require_permission("profiles.edit")),
 ):
     obj = db.get(Profile, profile_id)
     if not obj:
