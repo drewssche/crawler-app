@@ -43,17 +43,19 @@ docker compose down -v
 
 ## Паттерны и контракты
 
-Подробный свод механик, паттернов реюза, DoD и PR-checklist вынесен в:
+Актуальные инженерные контракты, reuse-карта, DoD и verification minimum объединены в:
 
-- `PATTERNS.md`
-- `REUSE_INDEX.md`
+- `docs/ENGINEERING_PLAYBOOK.md`
+- `TODO.md` — только текущий контекст и открытый backlog
 - `RBAC_MAP.md`
 - `docs/README.md`
 - `docs/governance/FEATURE_INTAKE_PLAYBOOK.md`
 - `docs/audits/AUDIT_DISCOVERY_2026-02-24.md`
 
 Критичный governance-контракт:
-- `PATTERNS.md` -> `1.2 Super-Priority: Server-Load & Multi-User Sync First`.
+- `docs/ENGINEERING_PLAYBOOK.md` -> `Priorities` и `Delivery Contract`.
+
+Полные исторические snapshots прежних `TODO/PATTERNS/REUSE_INDEX` находятся в `docs/archive/`.
 
 Этот файл (`README.md`) оставляем кратким: запуск/эксплуатация/точки входа.
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiDelete, apiGet, apiPost } from "../api/client";
+import { ApiError, apiDelete, apiGet, apiPost } from "../api/client";
 import Card from "../components/ui/Card";
 import CardActionButton from "../components/ui/CardActionButton";
 import CardFooterActions from "../components/ui/CardFooterActions";
@@ -13,6 +13,7 @@ import StructureLegendHint from "../components/ui/StructureLegendHint";
 import ProjectStructureTree from "../components/ui/ProjectStructureTree";
 import SegmentedControl from "../components/ui/SegmentedControl";
 import SectionHeaderRow from "../components/ui/SectionHeaderRow";
+import UiSelect from "../components/ui/UiSelect";
 import { MetaText, StatusText } from "../components/ui/StatusText";
 import { formatOperationalDateTime } from "../utils/datetime";
 import { invalidateProfilesCache } from "../utils/profileListCache";
@@ -23,6 +24,12 @@ type ProjectProfile = {
   name: string;
   start_url: string;
   allowed_domains_csv: string;
+  exclude_paths_csv: string;
+  exclude_ext_csv: string;
+  respect_robots: boolean;
+  max_pages: number;
+  concurrency: number;
+  is_enabled: boolean;
 };
 
 type ProjectRun = {
@@ -33,6 +40,8 @@ type ProjectRun = {
   finished_at: string | null;
   pages_total: number;
   pages_changed: number;
+  failure_code: string | null;
+  failure_message: string | null;
 };
 
 type ProjectPage = {
@@ -43,7 +52,7 @@ type ProjectPage = {
   html_hash: string;
 };
 
-type ProjectTab = "summary" | "schedule" | "structure" | "history";
+type ProjectTab = "main" | "history" | "settings";
 
 type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "error";
 
@@ -107,12 +116,8 @@ export default function ProfileDashboardPage() {
   const [runsError, setRunsError] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
-  const [activeTab, setActiveTab] = useState<ProjectTab>("summary");
-  const [scheduleEnabled, setScheduleEnabled] = useState(false);
-  const [scheduleFrequency, setScheduleFrequency] = useState<"daily" | "weekdays" | "every_12h">("daily");
-  const [scheduleWindow, setScheduleWindow] = useState<"01:00-05:00" | "00:00-06:00" | "23:00-04:00">("01:00-05:00");
+  const [activeTab, setActiveTab] = useState<ProjectTab>("main");
   const [selectedDomain, setSelectedDomain] = useState<string>("all");
-  const [historyDomain, setHistoryDomain] = useState<string>("all");
   const [structureSearch, setStructureSearch] = useState("");
   const [pagesLoading, setPagesLoading] = useState(false);
   const [pagesError, setPagesError] = useState("");
@@ -120,6 +125,7 @@ export default function ProfileDashboardPage() {
   const [prevRunPages, setPrevRunPages] = useState<ProjectPage[]>([]);
   const [lastRunCoverage, setLastRunCoverage] = useState<{ ok: number; total: number } | null>(null);
   const [lastRunCoverageLoading, setLastRunCoverageLoading] = useState(false);
+  const [failureDetailsOpen, setFailureDetailsOpen] = useState(false);
 
   async function fetchRunPages(runId: number): Promise<ProjectPage[]> {
     const rows = await apiGet<ProjectPage[]>(`/runs/${runId}/pages`);
@@ -189,6 +195,8 @@ export default function ProfileDashboardPage() {
           finished_at: null,
           pages_total: 0,
           pages_changed: 0,
+          failure_code: null,
+          failure_message: null,
         },
         ...prev,
       ];
@@ -204,7 +212,14 @@ export default function ProfileDashboardPage() {
       await apiPost(`/runs/start/${project.id}`, {});
       await loadRuns(String(project.id), true);
     } catch (e) {
-      setRunsError(String(e));
+      await loadRuns(String(project.id), true);
+      if (e instanceof ApiError && e.code === "run_already_active") {
+        setRunsError("Для этого проекта уже выполняется прогон. Другие проекты можно запускать независимо.");
+      } else if (e instanceof ApiError && e.status !== 502) {
+        setRunsError(e.message);
+      } else if (!(e instanceof ApiError)) {
+        setRunsError("Не удалось запустить прогон.");
+      }
     } finally {
       setRunPending(false);
     }
@@ -236,6 +251,8 @@ export default function ProfileDashboardPage() {
   const pagesLast = lastRun?.pages_total ?? 0;
   const changedShareLast = pagesLast > 0 ? (changedLast / pagesLast) * 100 : 0;
   const lastRunDuration = lastRun ? formatDuration(lastRun.started_at, lastRun.finished_at) : "—";
+  const lastRunId = lastRun?.id ?? null;
+  const prevRunId = prevRun?.id ?? null;
   const coveragePercent = lastRunCoverage && lastRunCoverage.total > 0
     ? (lastRunCoverage.ok / lastRunCoverage.total) * 100
     : 0;
@@ -244,17 +261,16 @@ export default function ProfileDashboardPage() {
 
   useEffect(() => {
     if (!domainOptions.includes(selectedDomain)) setSelectedDomain("all");
-    if (!domainOptions.includes(historyDomain)) setHistoryDomain("all");
-  }, [domainOptions, historyDomain, selectedDomain]);
+  }, [domainOptions, selectedDomain]);
 
   useEffect(() => {
-    if (!lastRun) {
+    if (lastRunId === null) {
       setLastRunCoverage(null);
       return;
     }
     let cancelled = false;
     setLastRunCoverageLoading(true);
-    fetchRunPages(lastRun.id)
+    fetchRunPages(lastRunId)
       .then((rows) => {
         if (cancelled) return;
         const ok = rows.filter((row) => row.status_code >= 200 && row.status_code < 300).length;
@@ -271,19 +287,19 @@ export default function ProfileDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [lastRun?.id]);
+  }, [lastRunId]);
 
   useEffect(() => {
-    if (activeTab !== "structure") return;
-    if (!lastRun) return;
+    if (activeTab !== "main") return;
+    if (lastRunId === null) return;
     let cancelled = false;
     async function loadPages() {
       setPagesLoading(true);
       setPagesError("");
       try {
         const [lastRows, prevRows] = await Promise.all([
-          fetchRunPages(lastRun.id),
-          prevRun ? fetchRunPages(prevRun.id) : Promise.resolve([] as ProjectPage[]),
+          fetchRunPages(lastRunId),
+          prevRunId !== null ? fetchRunPages(prevRunId) : Promise.resolve([] as ProjectPage[]),
         ]);
         if (cancelled) return;
         setLastRunPages(lastRows);
@@ -292,15 +308,14 @@ export default function ProfileDashboardPage() {
         if (cancelled) return;
         setPagesError(String(e));
       } finally {
-        if (cancelled) return;
-        setPagesLoading(false);
+        if (!cancelled) setPagesLoading(false);
       }
     }
     void loadPages();
     return () => {
       cancelled = true;
     };
-  }, [activeTab, lastRun?.id, prevRun?.id]);
+  }, [activeTab, lastRunId, prevRunId]);
 
   const structureRows = useMemo<StructureRow[]>(() => {
     const prevByUrl = new Map<string, string>();
@@ -367,6 +382,7 @@ export default function ProfileDashboardPage() {
                         void handleStartRun();
                       }}
                       disabled={runPending || hasRunning}
+                      title={hasRunning ? "Этот проект уже сканируется. Другие проекты можно запускать независимо." : undefined}
                     >
                       {runPending ? "Запуск..." : hasRunning ? "Прогон выполняется" : "Запустить прогон"}
                     </CardActionButton>
@@ -375,9 +391,14 @@ export default function ProfileDashboardPage() {
               />
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <MetaText opacity={0.86}>
-                  Режим MVP-1: ручной старт доступен сейчас, автозапуск по расписанию добавим следующим шагом.
+                  Ручной запуск доступен сейчас. Параметры сканирования и статус расписания находятся в настройках проекта.
                 </MetaText>
               </div>
+              {hasRunning && (
+                <MetaText opacity={0.72}>
+                  Сейчас сканируется только этот проект. В других проектах запуск остается доступен.
+                </MetaText>
+              )}
               <ProjectDomainPills csv={project.allowed_domains_csv} fallbackUrl={project.start_url} />
             </div>
           </Card>
@@ -387,23 +408,97 @@ export default function ProfileDashboardPage() {
               value={activeTab}
               onChange={(next) => setActiveTab(next)}
               options={[
-                { value: "summary", label: "Сводка" },
-                { value: "schedule", label: "Расписание" },
-                { value: "structure", label: "Структура" },
+                { value: "main", label: "Основная" },
                 { value: "history", label: "История" },
+                { value: "settings", label: "Настройки" },
               ]}
             />
           </Card>
 
-          {activeTab === "summary" && (
+          {activeTab === "main" && (
             <>
               <Card>
                 <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ fontWeight: 700 }}>KPI проекта</div>
+                  <div style={{ fontWeight: 700 }}>Последний прогон</div>
+                  {runsError ? <StatusText tone="danger">{runsError}</StatusText> : null}
+                  {!runsLoading && !lastRun && (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <MetaText>Прогонов пока нет. Запустите первый сбор, чтобы получить структуру и метрики проекта.</MetaText>
+                      <div>
+                        <CardActionButton
+                          variant="primary"
+                          onClick={() => void handleStartRun()}
+                          disabled={runPending || hasRunning}
+                        >
+                          {runPending ? "Запуск..." : "Запустить первый прогон"}
+                        </CardActionButton>
+                      </div>
+                    </div>
+                  )}
+                  {!runsLoading && lastRun && (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <MetaText>Статус: {lastRun.status}</MetaText>
+                      <MetaText>Старт: {formatOperationalDateTime(lastRun.started_at)}</MetaText>
+                      <MetaText>
+                        Завершение: {lastRun.finished_at ? formatOperationalDateTime(lastRun.finished_at) : "еще выполняется"}
+                      </MetaText>
+                      <MetaText>Длительность: {formatDuration(lastRun.started_at, lastRun.finished_at)}</MetaText>
+                      <MetaText>
+                        Страниц: {lastRun.pages_total}, изменений: {lastRun.pages_changed}
+                      </MetaText>
+                      {lastRun.status === "FAILED" && (
+                        <Card variant="danger" style={{ padding: 12 }}>
+                          <div style={{ display: "grid", gap: 8 }}>
+                            <div style={{ fontWeight: 700 }}>Прогон не завершен</div>
+                            <MetaText>{lastRun.failure_message || "Не удалось получить страницы сайта."}</MetaText>
+                            <CardFooterActions>
+                              <CardActionButton
+                                variant="primary"
+                                onClick={() => void handleStartRun()}
+                                disabled={runPending || hasRunning}
+                              >
+                                Повторить
+                              </CardActionButton>
+                              <CardActionButton
+                                variant="secondary"
+                                onClick={() => window.open(project.start_url, "_blank", "noopener,noreferrer")}
+                              >
+                                Проверить адрес
+                              </CardActionButton>
+                              <CardActionButton
+                                variant="ghost"
+                                onClick={() => setFailureDetailsOpen((open) => !open)}
+                              >
+                                {failureDetailsOpen ? "Скрыть детали" : "Технические детали"}
+                              </CardActionButton>
+                            </CardFooterActions>
+                            {failureDetailsOpen && (
+                              <MetaText opacity={0.68}>
+                                Код: {lastRun.failure_code || "unknown_error"}; run #{lastRun.id}; адрес: {project.start_url}
+                              </MetaText>
+                            )}
+                          </div>
+                        </Card>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </Card>
+
+              <Card>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <SectionHeaderRow
+                    title={<div style={{ fontWeight: 700 }}>Показатели последнего прогона</div>}
+                    actions={lastRun?.finished_at ? (
+                      <MetaText opacity={0.68}>{formatOperationalDateTime(lastRun.finished_at)}</MetaText>
+                    ) : undefined}
+                  />
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
                     <Card style={{ padding: 10, display: "grid", alignContent: "space-between", minHeight: 108 }}>
                       <MetaText opacity={0.7} style={{ minHeight: 38 }}>Доля изменений (последний прогон)</MetaText>
-                      <div style={{ fontWeight: 800, fontSize: 22 }}>{changedShareLast.toFixed(1)}%</div>
+                      <div style={{ fontWeight: 800, fontSize: 22 }}>
+                        {lastRun && pagesLast > 0 ? `${changedShareLast.toFixed(1)}%` : "—"}
+                      </div>
                     </Card>
                     <Card style={{ padding: 10, display: "grid", alignContent: "space-between", minHeight: 108 }}>
                       <MetaText opacity={0.7} style={{ minHeight: 38 }}>Последний успешный прогон</MetaText>
@@ -445,26 +540,157 @@ export default function ProfileDashboardPage() {
               </Card>
 
               <Card>
+                <div style={{ display: "grid", gap: 10 }}>
+                  <SectionHeaderRow
+                    title={
+                      <div>
+                        <div style={{ fontWeight: 700 }}>Структура сайта</div>
+                        <MetaText opacity={0.68}>Текущий срез последнего прогона</MetaText>
+                      </div>
+                    }
+                    actions={(
+                      <UiSelect
+                        value={selectedDomain}
+                        onChange={(e) => setSelectedDomain(e.target.value)}
+                        style={{ minWidth: 180 }}
+                      >
+                        <option value="all">Домен: все</option>
+                        {domains.map((d) => (
+                          <option key={d} value={d}>{d}</option>
+                        ))}
+                      </UiSelect>
+                    )}
+                  />
+                  <ListTotalMeta label="Узлов (текущий срез)" total={structureRows.length} />
+                  {pagesLoading && <MetaText>Загрузка структуры...</MetaText>}
+                  {pagesError && <StatusText tone="danger">{pagesError}</StatusText>}
+                  {!pagesLoading && (
+                    <>
+                      <StructureLegendHint />
+                      <ClearableInput
+                        value={structureSearch}
+                        onChange={setStructureSearch}
+                        placeholder="Поиск по URL/пути (meta-поиск добавим после подключения snapshots)..."
+                      />
+                    </>
+                  )}
+                  {!pagesLoading && !pagesError && structureRows.length === 0 && (
+                    <MetaText>Структура пока недоступна: выполните как минимум один прогон.</MetaText>
+                  )}
+                  {!pagesLoading && !pagesError && structureRows.length > 0 && structureRowsFiltered.length > 0 && (
+                    <ProjectStructureTree rows={structureRowsFiltered} query={structureSearch} />
+                  )}
+                  {!pagesLoading && !pagesError && structureRows.length > 0 && structureRowsFiltered.length === 0 && (
+                    <MetaText>По текущему поиску совпадений не найдено.</MetaText>
+                  )}
+                </div>
+              </Card>
+            </>
+          )}
+
+          {activeTab === "history" && (
+            <Card>
+              <div style={{ display: "grid", gap: 10 }}>
+                <SectionHeaderRow
+                  title={<div style={{ fontWeight: 700 }}>История прогонов</div>}
+                  actions={<ListTotalMeta label="Прогонов" total={runs.length} />}
+                />
                 <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ fontWeight: 700 }}>Последний прогон</div>
-                  {runsError ? <StatusText tone="danger">{runsError}</StatusText> : null}
-                  {!runsLoading && !lastRun && (
-                    <MetaText>Прогонов пока нет. После настройки расписания первый прогон запускается вручную.</MetaText>
-                  )}
-                  {!runsLoading && lastRun && (
-                    <div style={{ display: "grid", gap: 6 }}>
-                      <MetaText>Статус: {lastRun.status}</MetaText>
-                      <MetaText>Старт: {formatOperationalDateTime(lastRun.started_at)}</MetaText>
-                      <MetaText>
-                        Завершение: {lastRun.finished_at ? formatOperationalDateTime(lastRun.finished_at) : "еще выполняется"}
-                      </MetaText>
-                      <MetaText>Длительность: {formatDuration(lastRun.started_at, lastRun.finished_at)}</MetaText>
-                      <MetaText>
-                        Страниц: {lastRun.pages_total}, изменений: {lastRun.pages_changed}
-                      </MetaText>
-                    </div>
-                  )}
-                  <MetaText opacity={0.65}>Время страницы: {formatOperationalDateTime(new Date().toISOString())}</MetaText>
+                  {runs.map((run) => (
+                    <Card key={run.id} style={{ padding: 10 }}>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                          <div style={{ fontWeight: 700 }}>run #{run.id}</div>
+                          <ProjectRunBadge status={run.status} />
+                        </div>
+                        <MetaText>Старт: {formatOperationalDateTime(run.started_at)}</MetaText>
+                        <MetaText>Завершение: {run.finished_at ? formatOperationalDateTime(run.finished_at) : "еще выполняется"}</MetaText>
+                        <MetaText>Длительность: {formatDuration(run.started_at, run.finished_at)}</MetaText>
+                        <MetaText>Страниц: {run.pages_total}, изменений: {run.pages_changed}</MetaText>
+                        {run.status === "FAILED" && run.failure_message && (
+                          <StatusText tone="danger">{run.failure_message}</StatusText>
+                        )}
+                      </div>
+                    </Card>
+                  ))}
+                  {runs.length === 0 && <MetaText>История пока пуста.</MetaText>}
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {activeTab === "settings" && (
+            <div style={{ display: "grid", gap: 12 }}>
+              <Card>
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div style={{ fontWeight: 700 }}>Основные параметры</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                    <Card style={{ padding: 10, display: "grid", gap: 6 }}>
+                      <MetaText opacity={0.68}>Название</MetaText>
+                      <div style={{ fontWeight: 700 }}>{project.name}</div>
+                    </Card>
+                    <Card style={{ padding: 10, display: "grid", gap: 6 }}>
+                      <MetaText opacity={0.68}>Стартовый адрес</MetaText>
+                      <div style={{ wordBreak: "break-word" }}>{project.start_url}</div>
+                    </Card>
+                    <Card style={{ padding: 10, display: "grid", gap: 6 }}>
+                      <MetaText opacity={0.68}>Состояние проекта</MetaText>
+                      <StatusText tone={project.is_enabled ? "success" : "warning"}>
+                        {project.is_enabled ? "Активен" : "Отключен"}
+                      </StatusText>
+                    </Card>
+                  </div>
+                  <div>
+                    <MetaText opacity={0.68} style={{ marginBottom: 6 }}>Разрешенные домены</MetaText>
+                    <ProjectDomainPills csv={project.allowed_domains_csv} fallbackUrl={project.start_url} />
+                  </div>
+                  <MetaText opacity={0.68}>
+                    Редактирование названия и области сканирования появится вместе с безопасным update API и проверкой canonical scope.
+                  </MetaText>
+                </div>
+              </Card>
+
+              <Card>
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div style={{ fontWeight: 700 }}>Сканирование и лимиты</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+                    <Card style={{ padding: 10 }}>
+                      <MetaText opacity={0.68}>Лимит страниц</MetaText>
+                      <div style={{ marginTop: 6, fontWeight: 800, fontSize: 20 }}>{project.max_pages}</div>
+                    </Card>
+                    <Card style={{ padding: 10 }}>
+                      <MetaText opacity={0.68}>Параллельность</MetaText>
+                      <div style={{ marginTop: 6, fontWeight: 800, fontSize: 20 }}>{project.concurrency}</div>
+                    </Card>
+                    <Card style={{ padding: 10 }}>
+                      <MetaText opacity={0.68}>robots.txt</MetaText>
+                      <div style={{ marginTop: 6, fontWeight: 700 }}>{project.respect_robots ? "Соблюдается" : "Игнорируется"}</div>
+                    </Card>
+                  </div>
+                  <MetaText opacity={0.68}>
+                    Исключения путей: {project.exclude_paths_csv || "не заданы"}
+                  </MetaText>
+                  <MetaText opacity={0.68}>
+                    Исключения расширений: {project.exclude_ext_csv || "не заданы"}
+                  </MetaText>
+                </div>
+              </Card>
+
+              <Card variant="hint">
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ fontWeight: 700 }}>Расписание</div>
+                  <MetaText>
+                    Сейчас прогоны запускаются вручную. Автозапуск появится после backend-контракта расписаний и защиты от дублирующих запусков.
+                  </MetaText>
+                  <div>
+                    <CardActionButton
+                      variant="primary"
+                      onClick={() => void handleStartRun()}
+                      disabled={runPending || hasRunning}
+                    >
+                      {hasRunning ? "Прогон выполняется" : "Запустить сейчас"}
+                    </CardActionButton>
+                  </div>
                 </div>
               </Card>
 
@@ -484,153 +710,7 @@ export default function ProfileDashboardPage() {
                   </CardFooterActions>
                 </div>
               </Card>
-            </>
-          )}
-
-          {activeTab === "schedule" && (
-            <Card>
-              <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ fontWeight: 700 }}>Расписание</div>
-                <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 12, opacity: 0.82 }}>Автозапуск</span>
-                    <select
-                      className="ui-select"
-                      value={scheduleEnabled ? "on" : "off"}
-                      onChange={(e) => setScheduleEnabled(e.target.value === "on")}
-                    >
-                      <option value="off">Выключен</option>
-                      <option value="on">Включен</option>
-                    </select>
-                  </label>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 12, opacity: 0.82 }}>Частота</span>
-                    <select
-                      className="ui-select"
-                      value={scheduleFrequency}
-                      onChange={(e) => setScheduleFrequency(e.target.value as typeof scheduleFrequency)}
-                      disabled={!scheduleEnabled}
-                    >
-                      <option value="daily">Ежедневно</option>
-                      <option value="weekdays">По будням</option>
-                      <option value="every_12h">Каждые 12 часов</option>
-                    </select>
-                  </label>
-                  <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 12, opacity: 0.82 }}>Окно запуска</span>
-                    <select
-                      className="ui-select"
-                      value={scheduleWindow}
-                      onChange={(e) => setScheduleWindow(e.target.value as typeof scheduleWindow)}
-                      disabled={!scheduleEnabled}
-                    >
-                      <option value="01:00-05:00">01:00-05:00</option>
-                      <option value="00:00-06:00">00:00-06:00</option>
-                      <option value="23:00-04:00">23:00-04:00</option>
-                    </select>
-                  </label>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <CardActionButton variant="primary" disabled title="Сохранение расписания подключим после backend-контракта.">
-                    Сохранить расписание
-                  </CardActionButton>
-                </div>
-                <MetaText opacity={0.72}>
-                  Прототип UI: сначала утвердим модель расписания, затем подключим сохранение в API.
-                </MetaText>
-              </div>
-            </Card>
-          )}
-
-          {activeTab === "structure" && (
-            <Card>
-              <div style={{ display: "grid", gap: 10 }}>
-                <SectionHeaderRow
-                  title={<div style={{ fontWeight: 700 }}>Структура</div>}
-                  actions={(
-                    <select
-                      className="ui-select"
-                      value={selectedDomain}
-                      onChange={(e) => setSelectedDomain(e.target.value)}
-                      style={{ minWidth: 180 }}
-                    >
-                      <option value="all">Домен: все</option>
-                      {domains.map((d) => (
-                        <option key={d} value={d}>{d}</option>
-                      ))}
-                    </select>
-                  )}
-                />
-                <ListTotalMeta label="Узлов (текущий срез)" total={structureRows.length} />
-                {pagesLoading && <MetaText>Загрузка структуры...</MetaText>}
-                {pagesError && <StatusText tone="danger">{pagesError}</StatusText>}
-                {!pagesLoading && (
-                  <>
-                    <StructureLegendHint />
-                    <ClearableInput
-                      value={structureSearch}
-                      onChange={setStructureSearch}
-                      placeholder="Поиск по URL/пути (meta-поиск добавим после подключения snapshots)..."
-                    />
-                  </>
-                )}
-                {!pagesLoading && !pagesError && structureRows.length === 0 && (
-                  <MetaText>Структура пока недоступна: выполните как минимум один прогон.</MetaText>
-                )}
-                {!pagesLoading && !pagesError && structureRows.length > 0 && structureRowsFiltered.length > 0 && (
-                  <ProjectStructureTree rows={structureRowsFiltered} query={structureSearch} />
-                )}
-                {!pagesLoading && !pagesError && structureRows.length > 0 && structureRowsFiltered.length === 0 && (
-                  <MetaText>По текущему поиску совпадений не найдено.</MetaText>
-                )}
-              </div>
-            </Card>
-          )}
-
-          {activeTab === "history" && (
-            <Card>
-              <div style={{ display: "grid", gap: 10 }}>
-                <SectionHeaderRow
-                  title={<div style={{ fontWeight: 700 }}>История прогонов</div>}
-                  actions={(
-                    <select
-                      className="ui-select"
-                      value={historyDomain}
-                      onChange={(e) => setHistoryDomain(e.target.value)}
-                      style={{ minWidth: 180 }}
-                    >
-                      <option value="all">Домен: все</option>
-                      {domains.map((d) => (
-                        <option key={d} value={d}>{d}</option>
-                      ))}
-                    </select>
-                  )}
-                />
-                {historyDomain !== "all" && (
-                  <MetaText opacity={0.7}>
-                    На этапе MVP-1 прогон общий по доменам проекта. Фильтр домена подготовлен для следующей итерации.
-                  </MetaText>
-                )}
-                <ListTotalMeta label="Прогонов" total={runs.length} />
-                <div style={{ display: "grid", gap: 8 }}>
-                  {runs.map((run) => (
-                    <Card key={run.id} style={{ padding: 10 }}>
-                      <div style={{ display: "grid", gap: 6 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                          <div style={{ fontWeight: 700 }}>run #{run.id}</div>
-                          <ProjectRunBadge status={run.status} />
-                        </div>
-                        <MetaText>Старт: {formatOperationalDateTime(run.started_at)}</MetaText>
-                        <MetaText>Завершение: {run.finished_at ? formatOperationalDateTime(run.finished_at) : "еще выполняется"}</MetaText>
-                        <MetaText>Длительность: {formatDuration(run.started_at, run.finished_at)}</MetaText>
-                        <MetaText>Страниц: {run.pages_total}, изменений: {run.pages_changed}</MetaText>
-                      </div>
-                    </Card>
-                  ))}
-                  {runs.length === 0 && <MetaText>История пока пуста.</MetaText>}
-                </div>
-              </div>
-            </Card>
+            </div>
           )}
         </>
       )}

@@ -1,0 +1,607 @@
+# PATTERNS — full snapshot 2026-06-22
+
+Единый контракт разработки для проекта `crawler-app`.
+
+## 1. Reuse First
+
+- Сначала ищем существующий паттерн/компонент/хелпер.
+- Если паттерн есть, переиспользуем; не дублируем логику.
+- Если паттерна нет, выносим reusable-решение и применяем минимум в 2 местах.
+
+## 1.1 Audit-правило: No-Regression Refactor
+
+- Любой аудит/реюз/чистка кода выполняются без изменения текущего поведения.
+- Сначала фиксируем “как сейчас работает”, потом выносим в реюз, не меняя UX/логику.
+- Если требуется изменение поведения, это отдельная согласованная задача.
+- Для критичных сценариев (события/monitoring/drawer) фиксируем анти-регресс правила в `PATTERNS.md` и/или `REUSE_INDEX.md`.
+
+### Audit Regression Checklist (обязательно перед рефактором)
+
+1. Зафиксировать текущий UX:
+`скрин/описание` ключевых состояний + “что считается корректным”.
+2. Выделить критичные сценарии и анти-регресс правила.
+3. Вынести логику в reusable-модуль без изменения поведения.
+4. Проверить UI вручную:
+`EventsPage`, `SidebarRight`, `ActivityLogPage`, `MonitoringPage`, `UsersPage`.
+5. Проверить экспорт/действия:
+файлы скачиваются, кнопки/лейблы не изменены.
+6. Зафиксировать результат в `REUSE_INDEX.md`:
+что вынесли, где применяется, какие правила нельзя ломать.
+
+## 1.2 Super-Priority: Server-Load & Multi-User Sync First
+
+- Для любой новой фичи и любой правки существующей логики приоритет №1:
+  - не увеличивать нагрузку на сервер;
+  - по возможности снижать нагрузку (кол-во запросов, тяжелые query-path, частоту polling, лишние counts);
+  - не деградировать клиентскую производительность (лишние рендеры/пересчеты/загрузки).
+- Multi-user baseline обязателен:
+  - состояние, влияющее на других админов/пользователей, хранится и синхронизируется через backend/БД;
+  - локальное UI-состояние не может быть source of truth для shared-сценариев;
+  - конкурентные действия (несколько админов одновременно) должны давать консистентный итог без race-drift.
+- Запрещено мерджить изменения, если:
+  - появился новый лишний запрос в hot-path без необходимости;
+  - добавлен дублирующий запрос без dedupe/кэша;
+  - изменен shared-state поток без проверки многопользовательского сценария.
+
+### 1.2.1 Required Checklist (каждая фича/правка)
+
+1. Server load check:
+   описать, какие запросы/агрегации добавлены или убраны, и почему это безопасно по нагрузке.
+2. Client perf check:
+   подтвердить отсутствие лишних ререндеров/повторных загрузок в измененном флоу.
+3. Multi-user sync check:
+   явно указать, где источник истины (`DB/backend`) и как обрабатывается конкурентный доступ.
+4. Validation check:
+   выполнить минимум `build/tests` по затронутому модулю и зафиксировать результат в отчете.
+5. Docs check:
+   при изменении контракта обновить `PATTERNS.md`/`REUSE_INDEX.md`/wave-док.
+
+## 2. Backend-driven правила
+
+- UI не хранит бизнес-правила безопасности.
+- Applicability, critical, reason-policy, presets, labels приходят из backend-каталогов.
+- Добавление нового admin-действия: registry/catalog + handler на backend.
+- Загрузка backend-каталогов (`actions/trust/audit actions`) выполняется через единый frontend TTL-кэш с dedupe in-flight запросов, а не через разрозненные локальные `apiGet` в каждой странице.
+- Загрузка user-context в drawer (`email/id -> details + available-actions`) выполняется через единый reusable loader (`loadUserContextByEmail/loadUserContextById`), чтобы не дублировать цепочку запросов в страницах.
+
+## 3. RBAC и роли
+
+- Любая функция проверяется по ролям и разрешениям.
+- Матрица прав единая и используется backend+frontend.
+- UI показывает действия только для разрешенных ролей.
+- Хаб `Настройки` доступен только ролям с `users.manage` (admin/root-admin); для остальных скрывается и закрыт по роуту.
+
+### 3.1 RBAC Map (структура)
+
+- Source of truth по permissions: `backend/app/core/permissions.py` (`PERMISSIONS_BY_ROLE`, `Permission`, `permissions_matrix_payload`).
+- Runtime role-resolution: `backend/app/core/security.py` (`get_user_role` + runtime override через `ADMIN_EMAILS`).
+- Enforcement в API: `Depends(require_permission(...))` в `backend/app/api/*` и `backend/app/main.py`.
+- Публичный контракт матрицы: `GET /auth/permissions-matrix` в `backend/app/api/auth.py`.
+- Frontend permission-check: `frontend/src/utils/permissions.ts` (`hasPermission`) + route guard `frontend/src/components/RequirePermission.tsx` + guards в `frontend/src/App.tsx`.
+- UI role-отображение: `frontend/src/utils/roles.ts`, `frontend/src/components/ui/RoleBadge.tsx`, `frontend/src/components/ui/RolePermissionsHint.tsx`.
+- Anti-drift правило: при изменении ролей/permissions обновляем backend matrix, frontend checks, route guards и тесты (`backend/tests/test_permissions.py`, интеграционные RBAC-кейсы).
+- Перед merge обязательно запускать parity-check из корня репозитория: `python tools/check_rbac_parity.py` (backend vs frontend матрица прав).
+## 4. Audit + Events + Monitoring (тройной след)
+
+Любая важная функция должна быть интегрирована сразу в три канала:
+
+- Audit-log: кто, что, когда, над кем, reason.
+- Event Center: событие с deep-link.
+- Monitoring: метрики успех/ошибка/объем.
+- Для тяжелых monitoring-агрегатов (`/metrics`, `/admin/monitoring/history`, `/admin/monitoring/history/focus`)
+  используем короткий backend TTL-кэш с явными правилами инвалидции:
+  - пассивная инвалидция по TTL;
+  - активная инвалидция при изменении monitoring-настроек;
+  - опциональный `force_refresh` для явного bypass в диагностических сценариях.
+
+### 4.1 Monitoring Metrics Lifecycle (keep/remove rule)
+
+- Удаляем только те monitoring-счетчики, которые:
+  - не используются в текущем UI/экспорте/диагностике;
+  - не нужны для multi-user операционных сценариев;
+  - не участвуют в anomaly/alerting потоках.
+- Сохраняем операционные счетчики:
+  - `events_*` (нагрузка и действия в Event Center),
+  - `*_result_total` (результаты действий/авторизации по статусам),
+  - `monitoring_anomaly_total` и метрики, которые feed'ят anomaly-flow.
+- Перед удалением счетчика обязательно:
+  - собрать карту использования (`code + docs + tests`);
+  - зафиксировать решение `keep/remove` в audit-артефакте;
+  - выполнить no-regression проверку (`backend tests`, `frontend build`, monitoring smoke).
+
+### 4.2 Scan Data Lifecycle (retention + delete policy)
+
+- Полные raw-артефакты сканирования (`html/dom/screenshot/resources`) храним только для `latest + previous` run по каждому проекту.
+- Более старые run очищаются от raw payload по retention-политике, но их агрегированная статистика сохраняется.
+- При удалении проекта:
+  - delete-flow выполняется только в транзакции;
+  - в audit обязательно пишется `project_deletion_log` (`who/when/reason + retention summary`);
+  - долгосрочная статистика проекта не удаляется (нужна для периодических отчетов и анализа импакта).
+- Sensitive crawler state (cookie/token) не хранится в открытом виде; только mask/hash при диагностической необходимости.
+
+## 5. Deep-link + highlight
+
+- Событие должно вести в релевантный экран.
+- Экран назначения обязан уметь подсветить релевантную запись/карточку.
+- Переходы единообразны в Sidebar Event Center и в полной странице Центра событий.
+
+## 6. Unread/read паттерн
+
+- Единое поведение: `клик по карточке -> mark read -> deep-link`.
+- Read/hidden state хранится в БД per-user (для multi-admin).
+- Статус `обработано` для событий хранится в БД per-user (`event_user_state.is_handled/handled_at`), а не только в локальном UI.
+- Для событийных лент используем отдельный фильтр `Только необработанные` (работает поверх прочих фильтров и не ломает deep-link).
+- Один админ не меняет read-state другого админа.
+- Unread-счетчики Event Center в frontend читаются через shared store/кэш (не через независимые запросы из разных экранов в одной вкладке).
+- Транспорт Event Center централизован: `SSE-first` (push), при недоступности push автоматически включается fallback polling.
+  Управление транспортом выполняется через единый singleton manager (один активный транспорт на вкладку/приложение), а не через локальные `setInterval` в нескольких экранах.
+
+## 7. Паттерн списков и автоподгрузки
+
+- Стандарт: `base 20 + scroll incremental load`.
+- Применяется для лент/таблиц (Users, Events, Activity и т.д.).
+- Локальные селекты `20/50/100/Все` не используем там, где утвержден этот паттерн.
+- Для экранов внутри workspace автодогрузка вешается на скролл-контейнер workspace, а не на `window`, чтобы не ломаться при внутреннем скролле layout.
+- Для списков с автодогрузкой используем единый hook `useWorkspaceInfiniteScroll` (workspace-container first, fallback window, short-content prefetch),
+  а не локальные `addEventListener("scroll")` в каждой странице.
+- Для selectable-списков в админке (`Users`, `RootAdmins`) используем общий row-компонент `SelectableListRow`
+  (чекбокс + контент + `Открыть` + hover/highlight, без постоянной светлой рамки), чтобы плотность/анимации строк не расходились между страницами.
+- Любая новая лента/таблица с incremental-load обязана сразу подключать `useWorkspaceInfiniteScroll` и `useIncrementalPager` (если есть server-pagination).
+- Для непагинированных сервером списков (`Users`, `RootAdmins`) используем тот же `useWorkspaceInfiniteScroll` для инкрементального рендера (windowing по количеству карточек),
+  чтобы не рендерить весь DOM сразу на больших наборах.
+- Для page-level лент (`Events`, `Activity`) используем единый pagination-hook (`load/reset/append + next-page guard + anti-race request-seq`), чтобы не дублировать логику загрузчиков.
+- Для page-level загрузчиков используем доменные shared-hooks поверх этого pagination-hook:
+  `useUsersList`, `useEventFeed`, `useActivityFeed` (guard/cancel/retry единообразны, без локального дублирования fetch-pipeline на страницах).
+- Для async загрузки drawer-контекста используем общий guarded-lifecycle hook (`useGuardedAsyncState`)
+  вместо локальных `requestSeq/active` блоков в каждой странице.
+- Для page-level загрузчиков обязателен `AbortController`: при смене фильтров/контекста отменяем устаревшие in-flight запросы (не только игнорируем ответ), чтобы снижать лишнюю серверную нагрузку.
+- Исключение для правого `SidebarRight`: в компактной панели держим фиксированное окно `top-20` для `Уведомлений` и `Ленты действий` (без локальной бесконечной догрузки); полный объем доступен на странице `Центр событий`.
+
+## 8. Паттерн действий карточек
+
+- Общие действия: открыть источник, read/unread, скрыть/показать.
+- Контекстные действия идут через общий popover/menu компонент.
+- Не делаем отдельные уникальные кнопочные схемы для одинаковых сценариев.
+- Для `ActivityLogPage` и `EventsPage`: primary-клик по карточке открывает контекст в `SlidePanel`; переход на источник выполняется явной кнопкой `Открыть источник`.
+- Для toast-уведомлений при свернутом правом сайдбаре: используем контекст события (`title/body/severity`), primary-клик/кнопка `Открыть` выполняют релевантное действие события (не общий переход на страницу).
+- Для toast-уведомлений: `pause on hover` обязателен для длинного текста; таймер и progress-бар замораживаются на время ховера.
+- Для toast-уведомлений на desktop добавляем вторичное действие `Открыть контекст` (drawer), primary-действие остается `Открыть источник`.
+- Для событий `monitoring.anomaly` в `SlidePanel` добавляем контекст наблюдаемости: мини-график по `focus_metric` и список связанных ошибок (по `focus_path`, если задан).
+- Для `monitoring.anomaly` в контексте события обязательно показываем блок `Рекомендация`: `что делать`, `почему`, список следующих шагов.
+- В графике мониторинга в drawer показываем маркер момента события (если `event_ts/detected_at_utc` есть в `meta`) и явное пояснение `live-динамика vs момент события`.
+- Для monitoring-контекста график загружается только через общий loader (`loadMonitoringContext`) с обязательным fallback:
+  `60m -> 24h -> 7d`; при пустом ряде с `focus_path` выполняется повтор без `focus_path`.
+  Это предотвращает регресс «график пропал» и применяется одинаково в `EventsPage` и `SidebarRight`.
+- Для `monitoring.anomaly` в drawer добавляем быстрые действия: `Открыть фокус в Мониторинге`, `Показать похожие события`, `Отметить как обработанное`.
+- Для старых monitoring-событий без `event_ts/detected_at_utc` используем fallback-маркер по `created_at` события с явной подписью в UI.
+- Для `ActivityLogPage` в drawer обязателен блок `Быстрые действия` (контекстные фильтры: по действию/пользователю/IP) как следующий шаг после просмотра записи.
+- Для `ActivityLogPage` в drawer добавляем контекстные security-операции по пользователю (`revoke_sessions`, `revoke_trusted_devices`) и локальную пометку `обработано`.
+- Блок `Быстрые действия` в drawer реализуется через reusable `ContextQuickActions` и переиспользуется в `EventsPage`/`ActivityLogPage`.
+- Для user-контекста в `ActivityLogPage` drawer используем тот же `UserActionPanel`, что и в `UsersPage` (никаких отдельных ad-hoc кнопок действий).
+- Для user-контекста в `EventsPage`/`UserDetailsDrawer` используем единый reusable-блок `UserActionPanel` (action + reason + presets + dynamic hint).
+- Для `UsersPage` bulk-actions и drawer-контекстов используем один и тот же `UserActionPanel`, чтобы исключить расхождения по UI/UX.
+- Для deep-link контекста на целевых страницах обязательно есть явный `Сбросить контекст`, чтобы убрать highlight/focus и вернуться к обычному режиму.
+- В layout-компонентах (например, `SidebarLeft`) не привязываем сетевые загрузки к каждому `location.pathname`; используем доменные триггеры роутов + короткий TTL-кэш для данных навигации.
+
+## 9. UI консистентность
+
+- Единые базовые компоненты (кнопки, segmented control, карточки, списки, фильтры).
+- При правках текстов/лейблов/подсказок не удаляем релевантные подсказки “для упрощения”.
+  Сначала проверяем, где они уже используются, и выносим в общий источник (catalog/helper), чтобы одна и та же подсказка подключалась в нескольких местах.
+- Для текстовых подсказок и описаний действий используем централизованный словарь/каталог (по домену), а не локальные строки в каждой странице.
+  Если централизованного места еще нет, создаем его как reusable и применяем минимум в 2 местах.
+- Все выпадающие списки используем только через reusable `UiSelect`; прямые `<select>` в страницах/feature-компонентах не используем.
+- `UiSelect` визуально и по анимациям согласован с `Button`: hover/focus состояния, единая граница/радиус/тональность, кастомная стрелка.
+- Поисковые/фильтровые текстовые поля выполняем через reusable `ClearableInput` (кнопка `×` для мгновенной очистки справа).
+- Время из API (`created_at`) форматируем через единый helper (`naive UTC -> local`) для консистентности между карточками и системным временем UI.
+- Сырые enum-значения backend (`notification/action`, `info/warning/danger` и т.п.) в UI не показываем напрямую:
+  используем единый mapping-helper для человекочитаемых русских подписей.
+- Одинаковые hover/active/selected состояния.
+- Бейджи `AccentPill` имеют единый размер: `font-size: 12px`, `line-height: 1.2`, `padding: 2px 8px`.
+- Временные toast-уведомления показываем с плавным `fade/slide` входом и выходом; резкое исчезновение без transition не используем.
+- Короткие фиксированные наборы фильтров (`all/notification/action` и аналогичные) оформляем через `SegmentedControl`, а не через `select`.
+- Для строк списков: мягкий hover + кликабельность строки там, где это уместно.
+- Для email-подсказок в фильтрах журналов/лент не загружаем полный список пользователей на маунте:
+  используем lazy-suggest по вводу (`q` + debounce + ограничение top-N).
+- Для `UsersPage` и `UserDetailsDrawer` используем единые reusable-блоки:
+  `UserStatusPills` (статусы без инфошума), `UserTrustPills`, `SessionSummaryCard`, `DeviceSummaryCard`.
+  Краткую строку сессии в списках рендерим через общий `UserListSessionMeta` и используем одинаково в `UsersPage` и `RootAdminsPage`:
+  `сессия: <дата> • IP: <ip> • UA: <браузер> (браузер) • <ОС> (ОС) • устройств: <N>`.
+  Для консистентной высоты карточек `UserListSessionMeta` рендерится для `approved` пользователей; для `pending` строка не показывается.
+  При отсутствии данных у `approved` показываем прочерки (`-`).
+  Identity-ряд (`роль + Вы + есть в БД/только ADMIN_EMAILS`) рендерим через reusable `IdentityBadgeRow`.
+  Цвета/акценты пользовательских бейджей берём из единой матрицы (`userBadgeCatalog`), а не задаём локально в страницах.
+  Цвета бейджей задаются по семантическим группам (а не вперемешку):
+  `role/relevance -> холодный identity-спектр с различимыми оттенками по роли`, `status -> зелёный/красный/нейтральный`, `trust -> фиолетовый диапазон`.
+  Локальное переопределение цвета бейджа в страницах запрещено, кроме явно оговоренных warning/danger сценариев.
+  Для drawer-контекстов группы бейджей рендерим через общий layout `UserBadgeGroups` в порядке:
+  `identity -> status -> trust`, чтобы структура и визуальный ритм не расходились между экранами.
+  Для trust-контекста в drawer используем детальный reusable-блок `TrustPolicyDetailsCard` (`описание + Код/Срок/Риск`);
+  одиночный trust-бейдж в drawer не дублируем.
+  Для trust-деталей (`Код/Срок/Риск`) используем общий рендер:
+  `Код/Срок/Риск` остаются в trust-палитре (без локального warning-override).
+  Для trust/time-бейджей используем разделенный источник:
+  trust-палитра (policy-бейдж + `Код/Срок/Риск`) берется из `trust_policy_catalog`,
+  time-палитра (`срок доверия` / `статус устройства`) берется из `userBadgeCatalog`.
+  Time/device бейджи выведены из compact user-UX; в compact-контексте оставляем только trust-policy бейдж.
+  Матрица бейджей хранит не только цвета, но и `label/priority`, чтобы порядок и подписи были едиными на всех экранах.
+  `RoleBadge` также берёт стиль и label из `userBadgeCatalog` (без локальной tone-логики), чтобы роли и статусы были в одном цветовом контракте.
+  Формат role-лейблов унифицирован: без префикса `роль:`, текст с заглавной буквы (`Наблюдатель`, `Редактор`, `Администратор`, `Root-admin`).
+  Approve-бейдж (`доступ подтверждён: да/нет`) не используем: статус подтверждения не дублируем в бейджах.
+  `RelevanceBadge` (`Вы` / `Выбранный пользователь`) также берёт стиль и label из `userBadgeCatalog`.
+  В `UserDetailsDrawer` показываем все релевантные статусы пользователя: для удалённого пользователя при `is_blocked=true` бейдж `заблокирован` также отображается.
+  В user-контекстах (`UsersPage`, `EventsPage`, `ActivityLogPage`) бейдж `Вы` показываем и в списке, и в drawer-контексте для текущего пользователя.
+  Технические индикаторы безопасности (например `Версия токена (JWT)`) сопровождаем короткой tooltip-подсказкой о влиянии на сессии.
+  Для inline-разделителей внутри кратких строк используем `UI_BULLET = " • "` из `frontend/src/utils/uiText.ts` (не raw-escape в JSX).
+  В `UserActionPanel` селект является единственным названием действия: не дублируем заголовок/бейдж действия внутри инфо-карточки.
+  В `UserActionPanel` показываем только релевантные действия: soft-delete обозначаем как `Удалить`, hard-delete показываем только в контексте уже удалённых.
+  Доверенные устройства в drawer: default `последнее + еще N`, полное раскрытие только по явному действию.
+  Для доверенных устройств в drawer поддерживаем контекстные действия (`отозвать устройство`, `отозвать все кроме последнего`) с записью в аудит.
+  Блок истории входов в drawer показываем как компактный preview (до 5 уникальных записей), полный список открываем в профильном журнале.
+- Для event-карточек в лентах: единая сетка `header / body / footer` и одинаковая высота карточек.
+- Event-meta бейджи (`канал / уровень / read / handled`) в drawer-контекстах рендерим через reusable `EventMetaPills`
+  (не дублируем локальные наборы `AccentPill` в `EventsPage` и `SidebarRight`).
+- В правом `SidebarRight` не размещаем вторичные фильтры (например `security/unhandled`) в заголовке ленты, чтобы не перегружать компактный интерфейс; такие фильтры находятся на полноэкранных страницах.
+- Бейджи (`Вы`, `Выбранный`) не должны менять высоту карточки; длинный текст режется через line-clamp/ellipsis.
+- Для `Уведомлений` в правом Центре событий допустима адаптивная высота карточки (не фикс), но с ограничением текста (`title/body line-clamp`) и без переполнения.
+- Бейдж релевантности (`Вы`) размещается в первой зоне карточки в фиксированном слоте, чтобы заголовок и кнопки не прыгали между карточками.
+- Поля `UA` во всех экранах показываем в коротком виде + явная подпись `UA (идентификатор браузера/устройства)`; полный `user-agent` даем в `title`/tooltip.
+- KPI-карточки на мониторинге кликабельны и ведут к фильтрации/фокусу таблицы метрик по выбранной метрике.
+- HTTP status-метки (`2xx/3xx/4xx/5xx`) в таблицах/дифф-контекстах рендерим через shared-contract
+  (`httpStatusVisual` + `HttpStatusBadge`), без page-level color hardcode.
+- Для страницы `Настройки`: группировка по доменам (`Доступ`, `События`, `Наблюдаемость`) и динамический сабтекст/статус на каждом пункте.
+- Для `SettingsPage` используем мини-самодиагностику источников: если конкретный API-источник недоступен, на соответствующей карточке показываем явный индикатор ошибки с пояснением.
+- Для `SettingsPage` загрузка статистики выполняется параллельно по независимым доменам (`users/root-admins/events/audit/monitoring`) + через короткий TTL-кэш для редко меняющихся счетчиков.
+- Для статичных/редко меняющихся справочников UI (`permissions-matrix`, каталоги, списки навигации) используем shared TTL-кэш, а не прямой `apiGet` при каждом маунте компонента.
+- Для тяжелых страниц (`Users`, `Activity`, `Monitoring`, `Events`) используем route-level code-splitting (`React.lazy` + `Suspense`) в `App.tsx`, чтобы снижать initial bundle без изменения UX.
+- Response-типы backend-каталогов (`actions/trust/audit/available-actions`) централизуем в `frontend/src/types/catalog.ts`.
+
+## 10. Loading / Empty / Error
+
+Для каждого нового блока обязательно:
+
+- loading state,
+- empty state,
+- error state,
+- отсутствие layout-jump при смене состояния.
+- Для audit/login-контекста формулировки actor/target должны быть человекочитаемыми (`Вы (email)`, `Кто`, `Кому`), а не только сырой `email -> email`.
+- Для IP-полей в аудите и входах всегда указываем контекст источника (`IP инициатора действия` / `IP клиента входа`), а для private range добавляем пометку `внутренняя сеть`.
+
+### 10.1 Формат UI smoke-проверки (обязательно для отчета)
+
+- В итоговом отчете по задаче всегда указываем не только “что проверить”, но и маршрут кликов в UI:
+  `Страница -> блок -> действие (клик/ховер/выбор) -> ожидаемый результат`.
+- Формат шага проверки:
+  `Куда зайти`, `Куда нажать`, `Что должно измениться`, `Что не должно сломаться`.
+- Для изменений в drawer/action-подсказках минимум 3 сценария:
+  базовый (обычный пользователь),
+  self-кейс (`Вы`),
+  restricted-кейс (действие недоступно/скрыто по роли или статусу).
+- Если менялась только механика реюза (без UX-изменений), в проверке явно пишем:
+  “визуально/поведенчески без изменений, проверено по шагам”.
+- Каждый итоговый отчет по задаче обязателен в формате:
+  `Что было -> Что стало -> Как проверить -> Вклад в цели`.
+  Для `Вклад в цели` указываем эффект по целям оптимизации
+  (снижение нагрузки/упрощение/реюз) и оценку масштаба (`high/medium/low` или `%`, если измеримо).
+
+## 11. Критичные действия
+
+- Для критичных admin-операций включается подтверждение.
+- Подтверждение выполняем только через единый `ConfirmDialog` (кастомный UI), нативные браузерные `confirm/alert/prompt` не используем.
+- `reason` обязательно или настоятельно рекомендуется по политике действия.
+- reason сохраняется в audit-log.
+- Если действие заведомо неприменимо (self / последний админ / нарушает инвариант), control скрывается и заменяется поясняющим статусом, а не просто `disabled`.
+- Для полей `reason` в admin-операциях используем пресеты причин (чипы) + ручной ввод.
+- Source of truth для политики reason в bulk-действиях: backend action-catalog (`reason_mode`: `required/recommended/optional`); frontend рендер/валидация поля reason не должны хардкодить обязательность вне этого контракта.
+- Для управления списком системных администраторов (`/admin/settings/admin-emails`) reason-mode определяется backend policy по критичности изменения:
+  удаление другого root-admin -> `required`,
+  добавление root-admin -> `required`,
+  no-op изменение -> `optional`.
+  UI не хардкодит обязательность и следует backend policy-контракту.
+- Presets и hint-тексты для `reason` также backend-driven: frontend не хранит локальные списки пресетов для `admin-emails`,
+  а использует контракт `reason_policy` (`modes + presets + hints`) из API.
+- Для `Users`/context drawers (`Events`, `Activity`, `SidebarRight`) reason/presets/details берутся только из backend action catalog.
+- Applicability действий для выборки пользователей также backend-driven: frontend не вычисляет локально `isActionApplicable`,
+  а использует payload `/admin/users/actions/available` (`actions`, `applicable_by_action`, `applicable_by_user`).
+- В drawer-панелях блоки действий рендерятся компактно по контенту; избегаем пустого вертикального растяжения карточек.
+- Кнопки-линки внутри drawer (`Открыть...`) используем компактные (`size=sm`) и выравниваем по контенту (`fit-content`).
+
+## 12. Миграции и совместимость
+
+- Изменения БД только через Alembic миграции.
+- Для индексных изменений: сначала workload-аудит, затем `EXPLAIN (ANALYZE, BUFFERS)` до/после на staging-данных.
+- Учитываем обратную совместимость и старые записи.
+
+## 13. Кодировка и русский язык (обязательно)
+
+- Все файлы с русским текстом: только `UTF-8`.
+- Смешанные кодировки запрещены.
+- Любая mojibake исправляется в рамках текущей задачи.
+- Если видим кракозябры, обязательная проверка источника на `cp1251` и явная перекодировка в `UTF-8 without BOM`.
+
+## 14. Контракт новой функции
+
+Перед закрытием фичи проверяем:
+
+- RBAC/permissions,
+- action catalog (если есть действие),
+- audit-log,
+- event center,
+- monitoring метрики,
+- UX состояния (loading/empty/error),
+- тесты (unit/integration),
+- миграции,
+- отсутствие проблем кодировки.
+
+## 15. PR-checklist (минимум)
+
+- Какие роли имеют доступ?
+- Какие permissions изменились?
+- Добавлен ли action в catalog?
+- Пишется ли audit-log?
+- Эмитится ли событие в Event Center?
+- Добавлены/обновлены ли метрики?
+- Проверены ли loading/empty/error?
+- Какие паттерны переиспользованы?
+- Какие тесты добавлены?
+- Есть ли миграции и совместимость?
+- Проверена ли UTF-8 кодировка и отсутствие mojibake?
+
+## 16. Итеративный аудит оптимизаций
+
+- Аудит выполняем итерациями: `обнаружение -> фиксация в TODO -> приоритизация -> внедрение -> верификация -> обновление PATTERNS/REUSE`.
+- Базовый принцип: `Simplify First`.
+  Сначала проверяем, что можно:
+  - удалить (dead code / legacy);
+  - объединить (дублирующие хелперы/типы/загрузчики);
+  - переиспользовать (существующий reusable).
+  И только если этого недостаточно, добавляем новую механику/компонент/хук.
+- Каждая итерация должна добавлять в `TODO.md` только новые пункты; дубли уже зафиксированных задач запрещены.
+- Перед добавлением нового пункта обязательная сверка с:
+  - `TODO.md` (нет ли уже такого пункта в `Next`/`Done`);
+  - `REUSE_INDEX.md` (нет ли уже закрытого/текущего реюза);
+  - `PATTERNS.md` (нет ли уже действующего контракта).
+- Формат записи пункта аудита в `TODO.md`:
+  - `priority` (`HIGH/MEDIUM/LOW`);
+  - `scope` (конкретные страницы/компоненты/утилиты);
+  - `problem` (что создает лишнюю нагрузку/сложность);
+  - `goal` (какой эффект нужен: меньше запросов/рендеров/файлов/строк);
+  - `change idea` (какой реюз/механика/удаление планируется);
+  - `simplification` (что именно упрощаем: удаляем/сливаем/централизуем);
+  - `risk` (потенциальный регресс);
+  - `verification` (как проверяем: typecheck + smoke + метрики/сценарий).
+- Для каждого пункта указывать конкретные file refs (путь + при необходимости строка), а не абстрактные описания.
+- Статусы вести явно:
+  - `Next`: запланировано;
+  - `In Progress`: не более одного активного крупного пункта;
+  - `Done`: закрыто с кратким итогом эффекта.
+- Если в ходе аудита найдено, что пункт не нужен, переносим его в `Неактуально` с краткой причиной.
+- Любая оптимизация без изменения UX/бизнес-поведения выполняется по правилу `No-Regression Refactor`; изменение поведения оформляется отдельным согласованием.
+- Те же правила применяются к backend-аудиту:
+  - `reuse-first` (сначала ищем общий helper/query-builder/cache);
+  - не допускаем full-scan + python-фильтрацию там, где можно перенести фильтры/пагинацию в SQL;
+  - для тяжелых агрегатов фиксируем TTL-кэш и явные правила инвалидции;
+  - каждый backend-пункт фиксируем с file refs и форматом отчета
+    `что было -> что стало -> как проверить -> вклад в цели`.
+
+### 16.1 Stop-criteria (порог завершения аудита)
+
+- Чтобы не уходить в бесконечную спираль упрощений, аудит ведем ограниченными волнами.
+- Одна волна аудита = до `5` реализованных пунктов (`HIGH/MEDIUM/LOW`) или до `2` крупных структурных рефакторов.
+- После каждой волны обязательна мини-ретроспектива в `TODO.md`:
+  - что дало измеримый эффект;
+  - какие риски/регрессы появились;
+  - что осталось с высоким ROI.
+- Условие остановки текущей волны и перехода к финалу:
+
+## 17. Button Semantics
+
+- Используем единый семантический контракт кнопок через `frontend/src/components/ui/Button.tsx`.
+- Эталон `primary` (визуал/анимация): стиль кнопки `+ Создать проект` (плотный темный фон, синий контур, мягкий glow на hover, короткий lift).
+- Разрешенные варианты:
+  - `primary`: главное действие блока (`Сохранить`, `Применить`, `Подтвердить`);
+  - `accent`: навигационно-контекстный акцент (`Рабочая область`, `Настройки`, ключевые CTA в сайдбарах/рабочих панелях); контрастный темный стиль, без голубого glow (neutral hover/active).
+  - `secondary`: важное, но вторичное действие (`Обновить`, `Открыть`, `Показать похожие`);
+  - `ghost`: вспомогательное действие без акцента;
+  - `danger`: деструктивные действия;
+  - `export`: экспортные действия (`CSV/XLSX`) с индикацией процесса через `exportProgress`;
+  - `panel-toggle`: раскрытие/сворачивание блоков (`Раскрыть/Скрыть`, `Фильтры`, `Показать все/Свернуть`) с `active`-состоянием.
+- Для экспорта запрещены page-level кастомные кнопки: используем только `variant="export"` и `exportProgress`.
+- Для collapsible-блоков используем только `variant="panel-toggle"` и `active`, чтобы не было style-drift между страницами.
+- Size-map кнопок (консистентность обязательна):
+  - `sm`: inline/локальные действия внутри карточек и строк;
+  - `md`: default и section-level toggles (`Настроить пороги`, `Раскрыть/Скрыть`, `Фильтры`);
+  - для одинаковой семантики на разных страницах используем один и тот же size.
+- Tabs/segmented-контролы: визуальный эталон — вкладки страницы `Пользователи`; используем единый `SegmentedControl` без page-level переопределений shell/button-стилей.
+  - в двух подряд проходах не найдено `HIGH` задач;
+  - ожидаемый эффект новых пунктов только `LOW` и в сумме < ~10% по целевым метрикам (запросы/рендеры/TTFB/объем кода);
+  - стоимость изменений выше ожидаемой пользы (по времени/риску).
+- Максимальный порог без отдельного согласования:
+  - не более `3` волн подряд для одного домена (frontend-аудит);
+  - дальше только по явному подтверждению пользователя.
+- Финал аудита обязателен:
+  - фиксируем раздел `Audit Final` в `TODO.md` с итогом `что было -> что стало -> как проверено -> что сознательно не трогали`;
+  - оставшиеся пункты переводим либо в `Future`, либо в `Неактуально` с причиной.
+- Для каждой завершенной итерации (не только финала) применяем тот же формат отчета:
+  `что было -> что стало -> как проверить -> вклад в цели`,
+  чтобы прогресс по целям был сопоставим между волнами.
+
+## PowerShell Russian Text Rule (Encoding-safe)
+- Do not pass raw Cyrillic directly in PowerShell command arguments for file edits.
+- For Russian text edits, use `tools/utf8_edit.py` with escaped text (`\uXXXX`) and write UTF-8 files only.
+- Before commit for docs/text edits, run:
+  - `python tools/check_utf8.py <changed files>`
+  - `python tools/check_utf8.py --check-mojibake <changed files>`
+  - If mojibake is found, run: `python tools/fix_mojibake.py <changed files>` (or directory with `--recursive`).
+  - For suspected lossy lines with long `????????`, rely on full-file fix + recheck cycle, not manual per-line edits.
+
+## Backend Decomposition Pattern
+- Before commit for text/docs changes, run `python tools/check_utf8.py` (at minimum for changed files).
+- Before introducing a new reusable module/function, run cross-module reuse scan in related layers (api/services/core/hooks/utils) and prefer extending existing helpers first.
+- Reuse gate: `extend > create`; create new module only when at least 2 call-sites are confirmed or boundary isolation is required.
+- When extraction is done, replace local duplicates with calls to shared helper and sync `REUSE_INDEX.md` + `TODO.md`.
+- Large API modules must be split by responsibility into service modules: `queries`, `serializers`, `actions`, `monitoring/settings`.
+- API route layer remains thin: validate input, call service, format response.
+- Split must be `no-regression`: keep route contracts and response schema unchanged.
+
+## Button Reuse Audit Rule
+- For each audit wave, run a cross-page scan of buttons in `frontend/src/pages/*` and `frontend/src/components/*`.
+- Classify each finding: `reused`, `candidate`, or `explicit exception`.
+- New visual button behavior must be introduced only via shared patterns (`Button.tsx` variants or shared inline button component), not page-level literals.
+- Any unavoidable page-level button style must be documented in `TODO.md` with reason and planned cleanup status.
+
+## Selector Reuse Audit Rule
+- For each selector mini-wave, run a cross-page scan in `frontend/src/pages/*` and `frontend/src/components/*` for `UiSelect` and raw `<select>`.
+- Canonical contract: feature/pages use only `frontend/src/components/ui/UiSelect.tsx`; raw `<select>` is allowed only inside this shared component.
+- Classify findings as `used/missed/legacy/exception` and store them in `docs/ui/UI_SELECTOR_FULL_SWEEP_MATRIX.md` with UI route visibility.
+- Do not introduce `toolbar/modal/dense` selector wrappers until there are at least 2 stable call-sites with the same layout contract.
+
+
+
+- For infinite-scroll feeds use the `count-less append` pattern: first page uses `include_total=true`, pages `page>1` use `include_total=false`, so `count()` is not executed on every append request.
+- Keep UI counter contract `Loaded: N of M` by using total from page 1; for append pages without total use `hasMore` fallback (full page implies possible next page).
+- Apply this pattern to all relevant server-paginated feeds (`events`, `activity`, `users`, `root-admins`) unless there is an explicit realtime-total requirement.
+
+### Infinite-Scroll Optimization Sweep (required)
+- When count-less append is introduced for one feed, run the same review for all pages that use `useIncrementalPager`, and record plan/status in `TODO.md`.
+- For each page, document: before/after, UI counter contract, and regression verification.
+- For `FUTURE re-audit` waves, produce an explicit cross-page HIGH reconciliation matrix (`done + open`) with PATTERNS/REUSE linkage and page-level applicability (`applied / not applicable / gap`).
+
+## Active Intake Playbook (2026-02-24)
+- Detailed feature intake flow for new feature work: `docs/governance/FEATURE_INTAKE_PLAYBOOK.md`.
+- Keep `TODO.md` section `Next` as a single source for open items; do not append new open tasks to file tail.
+- For intake issues spanning pages (Monitoring/Activity/Users/Settings), implement in this order:
+  1. source-of-truth alignment (backend contract),
+  2. shared reusable helper/hook,
+  3. caller migration,
+  4. regression check and docs sync (`TODO.md`, `REUSE_INDEX.md`).
+- Extension rule for new features: `extend existing reusable > create new module`.
+- Mandatory acceptance checks for this intake wave:
+  - monitoring error visibility includes real 4xx/404 paths,
+  - export UX has pending state and no disruptive navigation,
+  - time rendering follows `local + UTC offset` contract across pages,
+  - Users/RootAdmins session-device metadata stays parity-consistent.
+
+## Time Presentation Contract
+- Default for operational UI (`Events`, `Activity`, `Monitoring`, `Sidebar`, drawers, cards):
+  render local user time with seconds and explicit offset: `HH:mm:ss (UTC±offset)` or full `DD.MM.YYYY, HH:mm:ss (UTC±offset)`.
+- Scheduling/planning screens (future feature): render dual time `local + UTC` to avoid timezone ambiguity.
+- Source of truth: shared datetime helpers in `frontend/src/utils/datetime.ts`; avoid local `toLocaleString/toLocaleTimeString` in page code.
+
+## Cross-Module Feature Extension Checklist
+- Scope first: define affected modules (`Monitoring`, `Events`, `Audit`, `RBAC`, `Settings`) and expected contract deltas.
+- Extend existing contract before new module:
+  - backend: reuse existing catalog/service (`admin_bulk`, `reason_policy`, `admin_monitoring`, summary endpoints);
+  - frontend: reuse existing hooks/utils (`catalogCache`, `settingsStatsCache`, `useIncrementalPager`, `useScheduledResetAndLoad`, `reasonPolicy`, `datetime`).
+- Add/adjust source-of-truth endpoint payload first, then migrate callers.
+- Keep route/page layer thin:
+  - no business rules in page components;
+  - UI uses backend-driven applicability/reason/labels/status.
+- Verification minimum for each extension:
+  - API contract check (payload shape + required fields),
+  - UI smoke route (`куда зайти -> что нажать -> что должно измениться`),
+  - no-regression checks (`tsc`, targeted tests where available).
+- Documentation sync is mandatory:
+  - update `TODO.md` (`что было/что стало/как проверить/вклад`),
+  - update `REUSE_INDEX.md` with concrete file refs for new/extended reusable blocks.
+
+## Project Search Contract
+- Project lists must use `frontend/src/utils/projectSearch.ts`; do not add page-level `toLowerCase().includes(...)` filters.
+- Search fields: project name, start URL and every allowed domain.
+- Normalization contract: `NFKC`, lowercase, `ё -> е`, collapsed whitespace; URL/domain matching ignores scheme, leading `www.` and trailing slash.
+- Generate at most three explainable query variants: original, RU -> EN layout and EN -> RU layout. Do not add fuzzy/Levenshtein matching without observed production cases.
+- Ranking contract: direct exact, prefix/segment-prefix, substring, then keyboard-layout match; equal ranks preserve API order.
+- Render the effective query through shared `HighlightedText`; if the matching field is collapsed/not visible, show a compact `Совпадение: ...` hint.
+- Empty meaningful searches must offer `Очистить поиск`; punctuation-only input is a no-op.
+
+## Monitoring Chart Interaction Contract
+- Use one shared interactive chart component (`frontend/src/components/monitoring/InteractiveLineChart.tsx`) for Monitoring page and drawer contexts.
+- Hover behavior is area-based by X-position:
+  - active point snaps to line under cursor X even if pointer is above/below line;
+  - crosshair (X/Y) appears with hover, no always-on point cloud in compact charts.
+- Render explicit time ticks under chart (not tooltip-only).
+- Click-to-zoom contract:
+  - compact card click opens enlarged in-page chart;
+  - enlarged chart closes by click on enlarged area (toggle, no extra caption/button).
+- Event-context charts (drawer) reuse the same component and may add marker lines:
+  - event timestamp marker;
+  - optional local spike markers from shared helper (`detectSpikeTimestamps`).
+
+## Monitoring Range Control Contract
+- Default range control uses quick presets (`15m/1h/6h/24h`) to keep interaction lightweight.
+- Optional precise mode uses slider `1..24h` (step `1h`) and must not replace quick presets.
+- Effective range is single source in page-state (`preset OR precise-slider`), reused by all monitoring history/focus loaders.
+
+## Monitoring Chart Config Contract
+- Chart titles/colors/keys are stored in shared config (`frontend/src/utils/monitoringChartConfig.ts`), not duplicated in page literals.
+- Default visible monitoring charts are scoped to operational pair (`http_requests`, `http_errors`);
+  extra series stay accessible via metrics table/export instead of always-on cards.
+
+## Event Card Actions Contract
+- Buttons inside event cards are canonicalized via shared `EventCardActions` (`frontend/src/components/ui/EventCardActions.tsx`).
+- Visual baseline (current approved look): compact dense row, `sm` sizing, existing hover/press animation, no page-level restyling.
+- `EventCardActions` must compose shared `CardActionButton` (`frontend/src/components/ui/CardActionButton.tsx`) so card-button spacing/size/radius come from one source.
+- Mandatory reuse:
+  - `EventsPage` event cards;
+  - `SidebarRight` notification/action cards.
+- If a new card needs different behavior, extend `EventCardActions` first; do not rebuild local button rows.
+
+## Sidebar Toggle Button Contract
+- Right sidebar collapse/expand control uses shared `SidebarToggleButton` (`frontend/src/components/ui/SidebarToggleButton.tsx`).
+- It composes base `Button` (`variant="accent"`, `size="sm"`) and enforces fixed square geometry for consistent alignment.
+- Do not use page-level inline styles for this control in layout files.
+- Collapsed and expanded header states must keep the same visual baseline (same top offset/alignment line).
+
+## Reason Preset Button Contract
+- Preset chips for reason fields are rendered via shared `ReasonPresetButton` (`frontend/src/components/ui/ReasonPresetButton.tsx`).
+- Do not duplicate `ghost + size="sm" + borderRadius: 999` inline in pages/components.
+
+## Icon Ghost Button Contract
+- Compact dismiss/close icon controls in cards use shared `IconGhostButton` (`frontend/src/components/ui/IconGhostButton.tsx`).
+- Use this wrapper instead of local `Button` with repeated compact icon styles.
+
+## Modal Shell Contract
+- Use shared `ModalShell` (`frontend/src/components/ui/ModalShell.tsx`) for overlay/portal/animation container of modal windows.
+- `ConfirmDialog` and form modals (for example, `RootAdmins` add-modal) must compose `ModalShell` instead of local fixed-overlay markup.
+- Footer actions stay on `ModalActionRow`; do not duplicate modal overlay/transition styles in page code.
+
+## Hint Card Contract
+- Informational UI hints (tables/help blocks) use shared `HintCard` (`frontend/src/components/ui/HintCard.tsx`) for consistent accent style.
+- Reuse `HintCard` in both Settings/Users and Monitoring contexts to avoid page-level style drift.
+- Do not force accent style on surrounding functional containers (status/forms); accent applies only to hint content block.
+- Table-heavy hints should use shared `HintTable` (`frontend/src/components/ui/HintTable.tsx`) instead of local `<table>` markup.
+
+## Panel Variants Contract
+- Reuse existing `Card` as base panel primitive; do not create parallel visual panel modules.
+- Panel semantics:
+  - `variant="default"` for regular containers,
+  - `variant="hint"` for informational accent cards,
+  - `variant="warning"` for warning-border containers.
+- Clickable panels must use `interactive` on `Card` (maps to existing `.interactive-row` transitions); do not duplicate hover/transition CSS inline.
+- Preserve existing animation behavior (`interactive-row` hover/focus transitions) during refactors.
+
+## Button Taxonomy Baseline (2026-02-25)
+- Source of truth: `docs/ui/UI_BUTTON_TAXONOMY.md`.
+- Category contract:
+  - `primary`: main action;
+  - `secondary`: secondary important action;
+  - `ghost`: neutral helper action;
+  - `danger`: destructive action;
+  - `accent`: navigation/context CTA;
+  - `export`: export only (`exportProgress`);
+  - `panel-toggle`: expand/collapse only (`active`).
+- Context contract:
+  - `drawer`: `Button` variants + domain wrappers;
+  - `sidebar card actions`: `EventCardActions` + `CardActionButton` + `IconGhostButton`;
+  - `modal footer`: `ModalActionRow` + `Button` variants;
+  - `table/toolbar`: `Button` variants without page-level style overrides;
+  - `inline text actions`: `InlineActionButton`.
+- Size contract:
+  - outside controls: default `md` baseline;
+  - inside controls (cards/rows): compact via `CardActionButton` tokens.
+- Motion contract:
+  - unified hover/press animation pattern for all button categories;
+  - variant-level differences only in palette/border accents, not in interaction geometry.
+- Single-use pilot exception (agreed):
+  - `RangePresetGroup` and `ActionStateMarker` are allowed as pilot patterns before 2nd call-site;
+  - once 2nd call-site appears, they become mandatory canonical shared patterns.

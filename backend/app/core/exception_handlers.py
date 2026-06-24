@@ -11,12 +11,13 @@ def register_exception_handlers(app: FastAPI, logger: logging.Logger) -> None:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         detail = exc.detail
-        message = detail if isinstance(detail, str) else "Request failed"
+        message = detail if isinstance(detail, str) else str((detail or {}).get("message") or "Request failed")
+        code = str((detail or {}).get("code") or f"http_{exc.status_code}") if isinstance(detail, dict) else f"http_{exc.status_code}"
         return JSONResponse(
             status_code=exc.status_code,
             content=error_response_payload(
                 request,
-                code=f"http_{exc.status_code}",
+                code=code,
                 message=message,
                 details=detail,
             ),

@@ -4,7 +4,6 @@ node_modules/
 *.pyc
 .vscode/
 dist/
-TODO.md
 .DS_Store
 
 # Understand Anything: share the reusable graph, keep local scratch data out of Git.

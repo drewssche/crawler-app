@@ -1,8 +1,10 @@
-﻿import os
+﻿import hashlib
+import os
 import tempfile
 from collections.abc import Generator
 from datetime import datetime
 
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -15,6 +17,7 @@ from app.db.models.admin_audit_log import AdminAuditLog
 from app.db.models.event_feed import EventFeed
 from app.db.models.login_history import LoginHistory
 from app.db.models.profile import Profile
+from app.db.models.page import Page
 from app.db.models.run import Run
 from app.db.models.trusted_device import TrustedDevice
 from app.db.models.user import User
@@ -98,6 +101,30 @@ def test_admin_endpoint_forbidden_for_viewer():
 
     client = TestClient(app)
     response = client.get("/admin/users?status=all", headers=_auth_header("viewer@test.local", role="viewer"))
+    assert response.status_code == 403
+    payload = _extract_error_payload(response)
+    assert payload["error"]["code"] == "http_403"
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_event_center_forbidden_for_viewer():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="viewer-events@test.local", role="viewer", is_approved=True))
+        db.commit()
+
+    client = TestClient(app)
+    response = client.get(
+        "/events/center",
+        headers=_auth_header("viewer-events@test.local", role="viewer"),
+    )
     assert response.status_code == 403
     payload = _extract_error_payload(response)
     assert payload["error"]["code"] == "http_403"
@@ -247,6 +274,228 @@ def test_run_start_seeds_all_allowed_domains(monkeypatch):
     assert "https://b.test/" in urls
     assert any("a.test" in url for url in calls)
     assert any("b.test" in url for url in calls)
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_create_profile_rejects_duplicate_canonical_scope():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="profiles@test.local", role="editor", is_approved=True))
+        db.add(Profile(name="Existing", start_url="https://example.test/", allowed_domains_csv="example.test"))
+        db.commit()
+
+    client = TestClient(app)
+    response = client.post(
+        "/profiles",
+        json={
+            "name": "Duplicate",
+            "start_url": "https://example.test",
+            "allowed_domains_csv": "example.test",
+        },
+        headers=_auth_header("profiles@test.local", role="editor"),
+    )
+    assert response.status_code == 409
+    payload = _extract_error_payload(response)
+    assert payload["error"]["code"] == "profile_scope_conflict"
+    assert "Existing" in payload["error"]["message"]
+    assert payload["error"]["details"]["existing_project"]["name"] == "Existing"
+
+    distinct_path = client.post(
+        "/profiles",
+        json={
+            "name": "Section",
+            "start_url": "https://example.test/docs",
+            "allowed_domains_csv": "example.test",
+        },
+        headers=_auth_header("profiles@test.local", role="editor"),
+    )
+    assert distinct_path.status_code == 200
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_run_lock_is_scoped_to_project(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        first = Profile(name="First", start_url="https://first.test", allowed_domains_csv="first.test", max_pages=1)
+        second = Profile(name="Second", start_url="https://second.test", allowed_domains_csv="second.test", max_pages=1)
+        db.add_all([first, second])
+        db.commit()
+        db.refresh(first)
+        db.refresh(second)
+        db.add(Run(profile_id=first.id, status="RUNNING", started_at=datetime.utcnow()))
+        db.commit()
+        first_id = first.id
+        second_id = second.id
+
+    class FakeResponse:
+        def __init__(self, url: str):
+            self.url = url
+            self.status_code = 200
+            self.headers = {"content-type": "text/html"}
+            self.text = "<html><body>ok</body></html>"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            return FakeResponse(url)
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+
+    blocked = client.post(f"/runs/start/{first_id}")
+    assert blocked.status_code == 409
+    assert _extract_error_payload(blocked)["error"]["code"] == "run_already_active"
+    allowed = client.post(f"/runs/start/{second_id}")
+    assert allowed.status_code == 200
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_empty_crawl_marks_run_failed(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        profile = Profile(name="Empty", start_url="https://empty.test", allowed_domains_csv="empty.test", max_pages=1)
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        profile_id = profile.id
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            raise httpx.ReadTimeout("timed out", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FailingClient)
+    client = TestClient(app)
+    response = client.post(f"/runs/start/{profile_id}")
+    assert response.status_code == 502
+
+    with SessionLocal() as db:
+        run = db.query(Run).filter(Run.profile_id == profile_id).one()
+        assert run.status == "FAILED"
+        assert run.finished_at is not None
+        assert run.pages_total == 0
+        assert run.failure_code == "timeout"
+        assert run.failure_message == "Сайт не ответил за отведенное время."
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_fetch_failure_codes_are_stable_and_safe():
+    from app.api.runs import _classify_fetch_failure
+
+    request = httpx.Request("GET", "https://example.test")
+    assert _classify_fetch_failure(httpx.ReadTimeout("secret timeout details", request=request))[0] == "timeout"
+    assert _classify_fetch_failure(httpx.ConnectError("dns lookup failed", request=request))[0] == "connection_error"
+    assert _classify_fetch_failure(httpx.ConnectError("TLS certificate rejected", request=request))[0] == "tls_error"
+    code, message = _classify_fetch_failure(RuntimeError("secret stack value"))
+    assert code == "unknown_error"
+    assert "secret" not in message
+
+
+def test_pages_changed_counts_deleted_urls(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        profile = Profile(name="Diff", start_url="https://diff.test", allowed_domains_csv="diff.test", max_pages=1)
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        previous = Run(profile_id=profile.id, status="FINISHED", started_at=datetime.utcnow(), finished_at=datetime.utcnow())
+        db.add(previous)
+        db.commit()
+        db.refresh(previous)
+        db.add_all(
+            [
+                Page(
+                    run_id=previous.id,
+                    url="https://diff.test/",
+                    status_code=200,
+                    content_type="text/html",
+                    html="same",
+                    html_hash=hashlib.sha256(b"same").hexdigest(),
+                ),
+                Page(run_id=previous.id, url="https://diff.test/deleted", status_code=200, content_type="text/html", html="gone", html_hash="gone"),
+            ]
+        )
+        db.commit()
+        profile_id = profile.id
+
+    class FakeResponse:
+        url = "https://diff.test/"
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = "same"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            return FakeResponse()
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    response = client.post(f"/runs/start/{profile_id}")
+    assert response.status_code == 200
+
+    with SessionLocal() as db:
+        latest = db.query(Run).filter(Run.profile_id == profile_id).order_by(Run.id.desc()).first()
+        assert latest is not None
+        assert latest.pages_changed == 1
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

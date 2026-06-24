@@ -2,12 +2,12 @@
 
 Карта документации после упрощения дерева.
 
-## Operational Entry Points (в корне)
+## Current Entry Points
 
-- `README.md`
-- `PATTERNS.md`
-- `REUSE_INDEX.md`
-- `TODO.md`
+- `../README.md`
+- `ENGINEERING_PLAYBOOK.md` — актуальные контракты и reuse-карта
+- `../TODO.md` — текущий контекст и открытый backlog
+- `archive/` — полные исторические snapshots
 - `PROJECT_TREE_SIMPLIFICATION_PLAN_2026-02-26.md`
 
 ## Audits

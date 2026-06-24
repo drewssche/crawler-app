@@ -13,9 +13,12 @@ import ListTotalMeta from "../components/ui/ListTotalMeta";
 import ProjectDomainPills from "../components/ui/ProjectDomainPills";
 import ProjectInfoBadge from "../components/ui/ProjectInfoBadge";
 import ProjectRunBadge, { getProjectRunBadgeMeta } from "../components/ui/ProjectRunBadge";
+import HighlightedText from "../components/ui/HighlightedText";
 import { StatusText } from "../components/ui/StatusText";
 import { getProfilesSummaryCached, invalidateProfilesCache, type ProfileSummaryItem } from "../utils/profileListCache";
 import { applyProjectRunLiveUpdate, subscribeProjectRunLive } from "../utils/projectRunLiveStore";
+import { isMeaningfulProjectSearch, searchProjects, shouldShowProjectMatchHint } from "../utils/projectSearch";
+import { splitProjectDomainsCsv } from "../utils/projectDomains";
 
 export default function WorkspaceHomePage() {
   const navigate = useNavigate();
@@ -26,16 +29,8 @@ export default function WorkspaceHomePage() {
   const [deleteTarget, setDeleteTarget] = useState<ProfileSummaryItem | null>(null);
   const [deletePending, setDeletePending] = useState(false);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return projects;
-    return projects.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.start_url.toLowerCase().includes(q) ||
-        (p.allowed_domains_csv || "").toLowerCase().includes(q),
-    );
-  }, [projects, search]);
+  const filtered = useMemo(() => searchProjects(projects, search), [projects, search]);
+  const searchActive = isMeaningfulProjectSearch(search);
 
   useEffect(() => {
     setLoading(true);
@@ -90,12 +85,30 @@ export default function WorkspaceHomePage() {
           {loading && <div>Загрузка...</div>}
           {error && <StatusText tone="danger">{error}</StatusText>}
 
-          {!loading && !error && filtered.length === 0 && <EmptyState text="Проектов пока нет." />}
+          {!loading && !error && filtered.length === 0 && (
+            searchActive ? (
+              <Card variant="hint" style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontWeight: 700 }}>Проекты не найдены</div>
+                <div style={{ opacity: 0.75, fontSize: 13 }}>По запросу «{search.trim()}» нет совпадений.</div>
+                <div>
+                  <Button size="sm" variant="ghost" onClick={() => setSearch("")}>Очистить поиск</Button>
+                </div>
+              </Card>
+            ) : (
+              <EmptyState text="Проектов пока нет." />
+            )
+          )}
 
           {!loading && !error && filtered.length > 0 && (
             <div style={{ display: "grid", gap: 8 }}>
-              {filtered.map((p) => {
+              {filtered.map((match) => {
+                const p = match.project;
                 const status = getProjectRunBadgeMeta(p.last_run?.status);
+                const visibleDomains = splitProjectDomainsCsv(p.allowed_domains_csv);
+                const showMatchHint = shouldShowProjectMatchHint(match, [
+                  p.name,
+                  ...(visibleDomains.length > 0 ? visibleDomains : [p.start_url]),
+                ]);
                 return (
                   <Card
                     key={p.id}
@@ -128,12 +141,17 @@ export default function WorkspaceHomePage() {
                             maxWidth: "min(42vw, 420px)",
                           }}
                         >
-                          {p.name}
+                          <HighlightedText value={p.name} query={match.highlightQuery} />
                         </div>
                         <ProjectRunBadge status={p.last_run?.status} />
                       </div>
                     </div>
-                    <ProjectDomainPills csv={p.allowed_domains_csv} fallbackUrl={p.start_url} />
+                    <ProjectDomainPills csv={p.allowed_domains_csv} fallbackUrl={p.start_url} highlightQuery={match.highlightQuery} />
+                    {showMatchHint && match.matchedValue && (
+                      <div style={{ fontSize: 12, opacity: 0.72 }}>
+                        Совпадение: <HighlightedText value={match.matchedValue} query={match.highlightQuery} />
+                      </div>
+                    )}
                     <div>
                       <ProjectInfoBadge label={`прогонов: ${p.runs_total}`} />
                     </div>

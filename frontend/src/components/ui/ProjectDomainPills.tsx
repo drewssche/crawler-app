@@ -1,13 +1,15 @@
 import { splitProjectDomainsCsv, summarizeProjectDomains } from "../../utils/projectDomains";
+import HighlightedText from "./HighlightedText";
 import { MetaText } from "./StatusText";
 
 type Props = {
   csv: string | null | undefined;
   fallbackUrl?: string | null;
   emptyLabel?: string;
+  highlightQuery?: string;
 };
 
-export default function ProjectDomainPills({ csv, fallbackUrl, emptyLabel = "Домены не заданы." }: Props) {
+export default function ProjectDomainPills({ csv, fallbackUrl, emptyLabel = "Домены не заданы.", highlightQuery }: Props) {
   const domains = splitProjectDomainsCsv(csv);
   if (domains.length <= 0) {
     const fallback = summarizeProjectDomains(csv, fallbackUrl);
@@ -23,7 +25,7 @@ export default function ProjectDomainPills({ csv, fallbackUrl, emptyLabel = "Д�
             fontSize: 12,
           }}
         >
-          {fallback}
+          <HighlightedText value={fallback} query={highlightQuery} />
         </span>
       </div>
     );
@@ -41,7 +43,7 @@ export default function ProjectDomainPills({ csv, fallbackUrl, emptyLabel = "Д�
             fontSize: 12,
           }}
         >
-          {domain}
+          <HighlightedText value={domain} query={highlightQuery} />
         </span>
       ))}
     </div>

@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from urllib.parse import urlparse
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
+from app.core.api_response import success_response_payload
 from app.core.paging import build_paged_response, paginate_query
 from app.db.session import get_db
 from app.db.models.profile import Profile
@@ -11,6 +14,19 @@ from app.db.models.user import User
 from app.schemas.profile import ProfileCreate, ProfileOut
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
+
+
+def _canonical_profile_scope(start_url: str, allowed_domains_csv: str) -> tuple[str, tuple[str, ...]]:
+    parsed = urlparse(str(start_url).strip())
+    scheme = (parsed.scheme or "https").lower()
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or "/"
+    normalized_path = "/" if path == "/" else f"/{path.strip('/')}"
+    normalized_start = f"{scheme}://{host}{normalized_path}"
+    domains = tuple(sorted({part.strip().lower() for part in (allowed_domains_csv or "").split(",") if part.strip()}))
+    if not domains and host:
+        domains = (host,)
+    return normalized_start, domains
 
 
 @router.get("")
@@ -34,6 +50,21 @@ def create_profile(
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_user),
 ):
+    requested_scope = _canonical_profile_scope(str(payload.start_url), payload.allowed_domains_csv)
+    for existing in db.query(Profile).all():
+        if _canonical_profile_scope(existing.start_url, existing.allowed_domains_csv) == requested_scope:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "profile_scope_conflict",
+                    "message": f'Проект для этого адреса уже существует: «{existing.name}».',
+                    "existing_project": {
+                        "id": existing.id,
+                        "name": existing.name,
+                        "start_url": existing.start_url,
+                    },
+                },
+            )
     obj = Profile(**payload.model_dump(mode="json"))
     db.add(obj)
     db.commit()
@@ -43,6 +74,7 @@ def create_profile(
 
 @router.get("/summary")
 def list_profiles_summary(
+    request: Request,
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_user),
 ):
@@ -82,7 +114,7 @@ def list_profiles_summary(
         .order_by(Profile.id.desc())
         .all()
     )
-    return [
+    data = [
         {
             "id": row.id,
             "name": row.name,
@@ -102,6 +134,7 @@ def list_profiles_summary(
         }
         for row in rows
     ]
+    return success_response_payload(request, data=data)
 
 
 @router.get("/{profile_id}", response_model=ProfileOut)

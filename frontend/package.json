@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:project-search": "node --experimental-strip-types --test tests/projectSearch.test.mjs",
+    "test:project-ui": "node --test tests/projectInformationArchitecture.test.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

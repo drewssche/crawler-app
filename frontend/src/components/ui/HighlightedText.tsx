@@ -5,8 +5,8 @@ function splitMatches(value: string, query: string): Array<{ text: string; hit: 
   const needle = (query || "").trim();
   if (!needle) return [{ text: source, hit: false }];
 
-  const lowerSource = source.toLowerCase();
-  const lowerNeedle = needle.toLowerCase();
+  const lowerSource = source.toLocaleLowerCase("ru").replace(/ё/g, "е");
+  const lowerNeedle = needle.toLocaleLowerCase("ru").replace(/ё/g, "е");
   const chunks: Array<{ text: string; hit: boolean }> = [];
 
   let cursor = 0;

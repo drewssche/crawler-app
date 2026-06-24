@@ -27,6 +27,22 @@ export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+export class ApiError extends Error {
+  status: number;
+  code: string;
+  requestId?: string;
+  details?: unknown;
+
+  constructor(message: string, options: { status: number; code: string; requestId?: string; details?: unknown }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = options.status;
+    this.code = options.code;
+    this.requestId = options.requestId;
+    this.details = options.details;
+  }
+}
+
 async function request<T>(path: string, init?: RequestOptions): Promise<T> {
   const token = getToken();
   const headers = new Headers(init?.headers ?? {});
@@ -49,22 +65,25 @@ async function request<T>(path: string, init?: RequestOptions): Promise<T> {
     const fallback = await res.text();
     let payload:
       | {
-          error?: { message?: string; code?: string };
+          error?: { message?: string; code?: string; details?: unknown };
           request_id?: string;
         }
       | null = null;
     try {
       payload = JSON.parse(fallback) as {
-        error?: { message?: string; code?: string };
+        error?: { message?: string; code?: string; details?: unknown };
         request_id?: string;
       };
     } catch {
       payload = null;
     }
     const message = payload?.error?.message || fallback || `HTTP ${res.status}`;
-    const code = payload?.error?.code ? `[${payload.error.code}] ` : "";
-    const requestId = payload?.request_id ? ` (request_id: ${payload.request_id})` : "";
-    throw new Error(`${code}${message}${requestId}`);
+    throw new ApiError(message, {
+      status: res.status,
+      code: payload?.error?.code || `http_${res.status}`,
+      requestId: payload?.request_id,
+      details: payload?.error?.details,
+    });
   }
 
   if (res.status === 204) {

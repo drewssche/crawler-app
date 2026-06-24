@@ -6,6 +6,8 @@ import { apiGet } from "../../api/client";
 import SidebarLeft from "./SidebarLeft";
 import SidebarRight from "./SidebarRight";
 import { getProfilesCached } from "../../utils/profileListCache";
+import { useAuth } from "../../hooks/auth";
+import { hasPermission } from "../../utils/permissions";
 
 function normalizeProjectLabel(name: string | null | undefined, fallbackId?: number): string {
   const raw = (name || "").trim();
@@ -35,6 +37,7 @@ function parentPathFor(pathname: string) {
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [profileCrumbLabel, setProfileCrumbLabel] = useState<string | null>(null);
 
@@ -50,6 +53,7 @@ export default function AppLayout() {
     path === "/monitoring" ||
     path === "/events" ||
     path === "/root-admins";
+  const canViewEvents = hasPermission(user?.role, "events.view");
 
   const crumbs: Array<{ label: string; path: string }> = [];
 
@@ -131,7 +135,11 @@ export default function AppLayout() {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: rightCollapsed ? "260px minmax(0, 1fr) 68px" : "260px minmax(0, 1fr) 320px",
+        gridTemplateColumns: canViewEvents
+          ? rightCollapsed
+            ? "260px minmax(0, 1fr) 68px"
+            : "260px minmax(0, 1fr) 320px"
+          : "260px minmax(0, 1fr)",
         gap: 16,
         width: "100vw",
         height: "100vh",
@@ -187,16 +195,18 @@ export default function AppLayout() {
         </div>
       </main>
 
-      <aside
-        style={{
-          padding: rightCollapsed ? 8 : 16,
-          boxSizing: "border-box",
-          minHeight: 0,
-          transition: "padding 220ms cubic-bezier(0.2, 0.8, 0.2, 1)",
-        }}
-      >
-        <SidebarRight collapsed={rightCollapsed} onToggle={() => setRightCollapsed((v) => !v)} />
-      </aside>
+      {canViewEvents && (
+        <aside
+          style={{
+            padding: rightCollapsed ? 8 : 16,
+            boxSizing: "border-box",
+            minHeight: 0,
+            transition: "padding 220ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+          }}
+        >
+          <SidebarRight collapsed={rightCollapsed} onToggle={() => setRightCollapsed((v) => !v)} />
+        </aside>
+      )}
     </div>
   );
 }

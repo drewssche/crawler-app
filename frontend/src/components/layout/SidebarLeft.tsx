@@ -6,11 +6,13 @@ import { hasPermission } from "../../utils/permissions";
 import { getProfilesSummaryCached, type ProfileSummaryItem } from "../../utils/profileListCache";
 import { summarizeProjectDomains } from "../../utils/projectDomains";
 import { applyProjectRunLiveUpdate, subscribeProjectRunLive } from "../../utils/projectRunLiveStore";
+import { isMeaningfulProjectSearch, searchProjects, shouldShowProjectMatchHint } from "../../utils/projectSearch";
 import { resolveDisplayRole } from "../../utils/roles";
 import appLogo from "../../assets/logo-crawler.svg";
 import Button from "../ui/Button";
 import Card from "../ui/Card";
 import ClearableInput from "../ui/ClearableInput";
+import HighlightedText from "../ui/HighlightedText";
 import ProjectRunBadge, { getProjectRunBadgeMeta } from "../ui/ProjectRunBadge";
 import ScrollableRegion from "../ui/ScrollableRegion";
 import RoleBadge from "../ui/RoleBadge";
@@ -41,16 +43,8 @@ export default function SidebarLeft() {
     refreshMe().catch(() => null);
   }, [location.pathname, refreshMe]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return profiles;
-    return profiles.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.start_url.toLowerCase().includes(q) ||
-        (p.allowed_domains_csv || "").toLowerCase().includes(q),
-    );
-  }, [profiles, search]);
+  const filtered = useMemo(() => searchProjects(profiles, search), [profiles, search]);
+  const searchActive = isMeaningfulProjectSearch(search);
 
   const inSettings =
     location.pathname === "/settings" ||
@@ -166,9 +160,18 @@ export default function SidebarLeft() {
           overflowX: "visible",
         }}
       >
-        {filtered.map((p) => {
+        {filtered.length === 0 && searchActive && (
+          <Card variant="hint" style={{ display: "grid", gap: 8, padding: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>Проекты не найдены</div>
+            <Button size="sm" variant="ghost" onClick={() => setSearch("")}>Очистить поиск</Button>
+          </Card>
+        )}
+        {filtered.map((match) => {
+          const p = match.project;
           const active = location.pathname === `/profiles/${p.id}`;
           const statusMeta = getProjectRunBadgeMeta(p.last_run?.status);
+          const domainSummary = summarizeProjectDomains(p.allowed_domains_csv, p.start_url);
+          const showMatchHint = shouldShowProjectMatchHint(match, [p.name, domainSummary]);
           return (
             <Card
               key={p.id}
@@ -210,15 +213,20 @@ export default function SidebarLeft() {
                     textOverflow: "ellipsis",
                   }}
                 >
-                  {p.name}
+                  <HighlightedText value={p.name} query={match.highlightQuery} />
                 </div>
                 <div style={{ flexShrink: 0 }}>
                   <ProjectRunBadge status={p.last_run?.status} compact />
                 </div>
               </div>
               <div style={{ fontSize: 12, opacity: 0.7, wordBreak: "break-word" }}>
-                {summarizeProjectDomains(p.allowed_domains_csv, p.start_url)}
+                <HighlightedText value={domainSummary} query={match.highlightQuery} />
               </div>
+              {showMatchHint && match.matchedValue && (
+                <div style={{ fontSize: 11, opacity: 0.68, wordBreak: "break-word" }}>
+                  Совпадение: <HighlightedText value={match.matchedValue} query={match.highlightQuery} />
+                </div>
+              )}
             </Card>
           );
         })}
