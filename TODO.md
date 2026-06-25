@@ -61,10 +61,12 @@
   - focus workspace скрывает оба sidebar и отдаёт ширину двум рабочим панелям;
   - `Визуально` показывает sanitized snapshots в sandboxed iframe с CSP без scripts/forms/network resources;
   - `Обзор/Детально` и `Обе/Левая/Правая` предотвращают нечитаемые миниатюры;
-  - sync scroll, resize и auto-match остаются следующими расширениями.
-- Последние проверки: backend `54 passed, 2 skipped`; PostgreSQL migrations/backfill verified, все существующие runs получили `project_site_id`; RBAC parity passed; frontend tests `25 passed`; frontend production build passed; targeted ESLint passed; `git diff --check` passed.
+  - auto-match предлагает пару по normalized relative path; unique tail match получает среднюю confidence, неоднозначные варианты не предлагаются;
+  - предложение применяется только явной кнопкой и не заменяет ручной выбор;
+  - sync scroll и resize остаются следующими расширениями.
+- Последние проверки: backend `54 passed, 2 skipped`; PostgreSQL migrations/backfill verified, все существующие runs получили `project_site_id`; RBAC parity passed; frontend tests `29 passed`; frontend production build passed; targeted ESLint passed; `git diff --check` passed.
 - Общий frontend lint имеет ранее существовавшие ошибки вне текущих изменений; не считать их регрессией этой волны.
-- Следующий рекомендуемый пункт: **normalized relative-path auto-match + optional sync scroll/resize** для Compare.
+- Следующий рекомендуемый пункт: **optional sync scroll + resize panels** для Compare.
 
 ## Working Rules
 
@@ -159,7 +161,7 @@
   5. Single-site anomaly baseline/signals — MVP готов; title/canonical/robots/resources/latency signals требуют расширенного page snapshot contract.
   6. Page context drawer на существующих snapshot/index данных — MVP готов; richer persisted snapshot fields остаются.
   7. Full-width manual compare workspace — MVP `Код/Структура` готов.
-  8. Visual mode/focus workspace — готово; auto page matching, sync scroll/resize, subscriptions/outbox остаются.
+  8. Visual mode/focus workspace и auto page matching — готовы; sync scroll/resize, subscriptions/outbox остаются.
   9. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile` и compatibility endpoint `/runs/start/{profile_id}`.
 
   **Verification**
@@ -205,6 +207,11 @@
 
 ## Recently Done
 
+- [x] **P1 Compare normalized relative-path auto-match**.
+  - Что было: обе страницы всегда требовали ручного поиска даже при одинаковой структуре сайтов.
+  - Что стало: после выбора страницы Compare предлагает пару с тем же normalized path или уникальными последними сегментами; показывает confidence/reason и применяет выбор только по кнопке.
+  - Как проверить: выбрать `/products/crm/` слева при наличии `/products/crm/index.html` справа → появляется предложение высокой уверенности; два одинаковых tail-match не дают сомнительной подсказки.
+  - Вклад в цели: типовые cross-region сравнения ускорены без потери ручного контроля (`high` UX/correctness).
 - [x] **P1 Compare focus workspace + safe visual snapshots**.
   - Что было: Compare оставлял левый sidebar и не имел визуального режима; две будущие панели рисковали стать слишком узкими.
   - Что стало: оба sidebar скрываются; sanitized snapshots отображаются в sandboxed iframe; режимы `Обзор/Детально` и `Обе/Левая/Правая` дают полезную площадь на широком и узком экране.

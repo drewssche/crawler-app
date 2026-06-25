@@ -16,6 +16,8 @@ import { MetaText, StatusText } from "../components/ui/StatusText";
 import UiSelect from "../components/ui/UiSelect";
 import { formatOperationalDateTime } from "../utils/datetime";
 import { buildLineDiff } from "../utils/codeDiff";
+import { suggestPageMatch } from "../utils/pageMatch";
+import Button from "../components/ui/Button";
 
 type CompareMode = "visual" | "code" | "structure";
 type SideKey = "left" | "right";
@@ -247,6 +249,14 @@ export default function ComparePage() {
   );
   const changedLines = diff.filter((line) => line.kind !== "same").length;
   const ready = Boolean(left.snapshot && right.snapshot);
+  const rightSuggestion = useMemo(
+    () => left.url && right.pages.length ? suggestPageMatch(left.url, right.pages) : null,
+    [left.url, right.pages],
+  );
+  const leftSuggestion = useMemo(
+    () => right.url && left.pages.length ? suggestPageMatch(right.url, left.pages) : null,
+    [right.url, left.pages],
+  );
 
   return (
     <div style={{ display: "grid", gap: 12, minWidth: 0 }}>
@@ -289,6 +299,34 @@ export default function ComparePage() {
           onPageChange={(url) => void selectPage("right", url)}
         />
       </div>
+
+      {(rightSuggestion || leftSuggestion) && (
+        <Card variant="hint" style={{ display: "grid", gap: 8 }}>
+          <div style={{ fontWeight: 700 }}>Предложение пары</div>
+          {rightSuggestion && rightSuggestion.page.url !== right.url && (
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <MetaText>{rightSuggestion.reason}</MetaText>
+                <MetaText opacity={0.65}>Справа: {rightSuggestion.page.url} · уверенность {rightSuggestion.confidence === "high" ? "высокая" : "средняя"}</MetaText>
+              </div>
+              <Button size="sm" variant="primary" onClick={() => void selectPage("right", rightSuggestion.page.url)}>
+                Выбрать справа
+              </Button>
+            </div>
+          )}
+          {leftSuggestion && leftSuggestion.page.url !== left.url && (
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <MetaText>{leftSuggestion.reason}</MetaText>
+                <MetaText opacity={0.65}>Слева: {leftSuggestion.page.url} · уверенность {leftSuggestion.confidence === "high" ? "высокая" : "средняя"}</MetaText>
+              </div>
+              <Button size="sm" variant="primary" onClick={() => void selectPage("left", leftSuggestion.page.url)}>
+                Выбрать слева
+              </Button>
+            </div>
+          )}
+        </Card>
+      )}
 
       {!ready && <Card variant="hint"><MetaText>Выберите страницу с обеих сторон, чтобы начать сравнение.</MetaText></Card>}
 

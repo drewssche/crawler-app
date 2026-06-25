@@ -104,3 +104,11 @@ test("compare visual mode uses a full focus workspace and safe snapshot frames",
   assert.match(compareSource, /value: "left", label: "Левая"/);
   assert.match(compareSource, /value: "right", label: "Правая"/);
 });
+
+test("compare auto-match suggests but does not force a relative-path pair", () => {
+  assert.match(compareSource, /suggestPageMatch/);
+  assert.match(compareSource, /Предложение пары/);
+  assert.match(compareSource, /Выбрать справа/);
+  assert.match(compareSource, /Выбрать слева/);
+  assert.doesNotMatch(compareSource, /setRight\([^)]*suggestion/);
+});

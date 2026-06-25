@@ -10,7 +10,7 @@
     "test:project-ui": "node --test tests/projectInformationArchitecture.test.mjs",
     "test:workspace-ui": "node --test tests/workspaceProjectRows.test.mjs",
     "test:roles-ui": "node --test tests/roleVisibility.test.mjs",
-    "test:compare": "node --experimental-strip-types --test tests/codeDiff.test.mjs",
+    "test:compare": "node --experimental-strip-types --test tests/codeDiff.test.mjs tests/pageMatch.test.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
