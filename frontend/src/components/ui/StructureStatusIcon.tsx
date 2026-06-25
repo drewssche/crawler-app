@@ -1,9 +1,10 @@
-type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "error";
+type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "redirect" | "error";
 
 function meta(status: StructureStatus): { icon: string; color: string; label: string } {
   if (status === "changed") return { icon: "✦", color: "#f0c36a", label: "Изменено" };
   if (status === "added") return { icon: "+", color: "#6fc6ff", label: "Новая страница" };
   if (status === "deleted") return { icon: "−", color: "#ff8c9a", label: "Удалено" };
+  if (status === "redirect") return { icon: "↪", color: "#f0c36a", label: "Перенаправление" };
   if (status === "error") return { icon: "!", color: "#ff6d6d", label: "Ошибка" };
   return { icon: "•", color: "rgba(210,218,232,0.55)", label: "Без изменений" };
 }

@@ -288,6 +288,23 @@ button:focus-visible {
   transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
 }
 
+@keyframes structureLiveAdded {
+  0% {
+    opacity: 0.35;
+    transform: translateY(3px);
+    background: rgba(110, 199, 181, 0.2);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    background: transparent;
+  }
+}
+
+.structure-tree-row-live-added {
+  animation: structureLiveAdded 620ms ease-out;
+}
+
 .structure-tree-row:hover {
   border-color: rgba(106, 160, 255, 0.36);
   background: rgba(106, 160, 255, 0.08);
@@ -355,8 +372,24 @@ button:focus-visible {
   animation: projectRunSpin 900ms linear infinite;
 }
 
+@keyframes projectRunStagePulse {
+  0%, 100% {
+    opacity: 0.62;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.project-run-live-stage {
+  color: #8fb7ff;
+  animation: projectRunStagePulse 1.35s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .project-run-spinner {
+  .project-run-spinner,
+  .project-run-live-stage,
+  .structure-tree-row-live-added {
     animation: none;
   }
 }

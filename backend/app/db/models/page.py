@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -15,3 +15,10 @@ class Page(Base):
     content_type: Mapped[str] = mapped_column(String(200), default="")
     html: Mapped[str] = mapped_column(Text, default="")
     html_hash: Mapped[str] = mapped_column(String(64), default="")
+    final_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    final_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    redirect_chain_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    fetch_error_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    fetch_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    crawl_batch_no: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -19,6 +19,7 @@ from app.db.models.login_history import LoginHistory
 from app.db.models.profile import Profile
 from app.db.models.project_site import ProjectSite
 from app.db.models.page import Page
+from app.db.models.page_retry_attempt import PageRetryAttempt
 from app.db.models.run import Run
 from app.db.models.trusted_device import TrustedDevice
 from app.db.models.user import User
@@ -192,6 +193,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
         params={"url": "https://protected.test/"},
     ).status_code == 401
     assert client.post(f"/runs/start/{profile_id}").status_code == 401
+    assert client.post(f"/runs/{run_id}/retry-pages", json={}).status_code == 401
 
     assert client.get(f"/profiles/{profile_id}", headers=viewer_headers).status_code == 200
     assert client.get(f"/runs/by-profile/{profile_id}", headers=viewer_headers).status_code == 200
@@ -211,6 +213,11 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     assert snapshot.status_code == 200
     assert snapshot.json()["html"] == "<html></html>"
     assert client.post(f"/runs/start/{profile_id}", headers=viewer_headers).status_code == 403
+    assert client.post(
+        f"/runs/{run_id}/retry-pages",
+        json={},
+        headers=viewer_headers,
+    ).status_code == 403
     assert client.post(
         "/profiles",
         json={"name": "Denied", "start_url": "https://denied.test", "allowed_domains_csv": "denied.test"},
@@ -981,9 +988,170 @@ def test_empty_crawl_marks_run_failed(monkeypatch):
         run = db.query(Run).filter(Run.profile_id == profile_id).one()
         assert run.status == "FAILED"
         assert run.finished_at is not None
-        assert run.pages_total == 0
+        assert run.pages_total == 1
         assert run.failure_code == "timeout"
         assert run.failure_message == "Сайт не ответил за отведенное время."
+        failed_page = db.query(Page).filter(Page.run_id == run.id).one()
+        assert failed_page.url == "https://empty.test/"
+        assert failed_page.status_code == 0
+        assert failed_page.fetch_error_code == "timeout"
+        assert failed_page.fetch_error_message == "Сайт не ответил за отведенное время."
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_redirect_chain_is_saved_as_friendly_page_result(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="redirect@test.local", role="editor", is_approved=True))
+        profile = Profile(
+            name="Redirect",
+            start_url="https://redirect.test/old",
+            allowed_domains_csv="redirect.test",
+            max_pages=2,
+        )
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        profile_id = profile.id
+
+    class Hop:
+        url = "https://redirect.test/old"
+        status_code = 301
+        headers = {"location": "/new"}
+
+    class FinalResponse:
+        url = "https://redirect.test/new"
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = "<html><body>new</body></html>"
+        history = [Hop()]
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            return FinalResponse()
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    response = client.post(
+        f"/runs/start/{profile_id}",
+        headers=_auth_header("redirect@test.local", role="editor"),
+    )
+    assert response.status_code == 200
+
+    with SessionLocal() as db:
+        run = db.query(Run).filter(Run.profile_id == profile_id).one()
+        page = db.query(Page).filter(Page.run_id == run.id).one()
+        assert run.status == "FINISHED"
+        assert page.url == "https://redirect.test/old"
+        assert page.status_code == 301
+        assert page.final_url == "https://redirect.test/new"
+        assert page.final_status_code == 200
+        assert [hop["status_code"] for hop in page.redirect_chain_json] == [301, 200]
+        event = db.query(EventFeed).filter(EventFeed.event_type == "crawler.run.finished").one()
+        assert event.target_user_id is None
+        assert event.target_path == f"/profiles/{profile_id}"
+        assert event.meta_json["run_id"] == run.id
+        assert event.meta_json["pages_total"] == 1
+        assert event.meta_json["suppress_toast"] is True
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_page_network_failure_does_not_fail_run_with_successful_html(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="partial-failure@test.local", role="editor", is_approved=True))
+        profile = Profile(
+            name="Partial",
+            start_url="https://partial.test/",
+            allowed_domains_csv="partial.test",
+            max_pages=3,
+        )
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        profile_id = profile.id
+
+    class SuccessResponse:
+        def __init__(self, url: str):
+            self.url = url
+            self.status_code = 200
+            self.headers = {"content-type": "text/html"}
+            self.text = '<html><body><a href="/timeout">timeout</a></body></html>'
+            self.history = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            if url.endswith("/timeout"):
+                with SessionLocal() as progress_db:
+                    live_run = progress_db.query(Run).filter(Run.profile_id == profile_id).one()
+                    persisted_pages = progress_db.query(Page).filter(Page.run_id == live_run.id).all()
+                    assert live_run.status == "RUNNING"
+                    assert live_run.pages_total == 1
+                    assert live_run.pages_discovered == 2
+                    assert live_run.current_batch_no == 1
+                    assert live_run.current_url == "https://partial.test/timeout"
+                    assert live_run.progress_updated_at is not None
+                    assert [page.url for page in persisted_pages] == ["https://partial.test/"]
+                    assert persisted_pages[0].crawl_batch_no == 1
+                raise httpx.ReadTimeout("timed out", request=httpx.Request("GET", url))
+            return SuccessResponse(url)
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    response = client.post(
+        f"/runs/start/{profile_id}",
+        headers=_auth_header("partial-failure@test.local", role="editor"),
+    )
+    assert response.status_code == 200
+
+    with SessionLocal() as db:
+        run = db.query(Run).filter(Run.profile_id == profile_id).one()
+        pages = db.query(Page).filter(Page.run_id == run.id).order_by(Page.id).all()
+        assert run.status == "FINISHED"
+        assert run.pages_total == 2
+        assert run.pages_discovered == 2
+        assert run.current_batch_no == 2
+        assert run.current_url is None
+        assert run.progress_updated_at is not None
+        assert pages[0].fetch_error_code is None
+        assert pages[1].url == "https://partial.test/timeout"
+        assert pages[1].fetch_error_code == "timeout"
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
@@ -1000,6 +1168,98 @@ def test_fetch_failure_codes_are_stable_and_safe():
     code, message = _classify_fetch_failure(RuntimeError("secret stack value"))
     assert code == "unknown_error"
     assert "secret" not in message
+
+
+def test_retry_problem_page_preserves_original_result_and_records_attempt(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="retry-page@test.local", role="editor", is_approved=True))
+        profile = Profile(
+            name="Retry",
+            start_url="https://retry.test/",
+            allowed_domains_csv="retry.test",
+        )
+        db.add(profile)
+        db.flush()
+        site = _add_primary_site(db, profile)
+        run = Run(
+            profile_id=profile.id,
+            project_site_id=site.id,
+            status="FINISHED",
+            started_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+            pages_total=1,
+            pages_changed=1,
+        )
+        db.add(run)
+        db.flush()
+        page = Page(
+            run_id=run.id,
+            url="https://retry.test/missing",
+            status_code=404,
+            final_url="https://retry.test/missing",
+            final_status_code=404,
+            content_type="text/html",
+            html="",
+            html_hash="",
+        )
+        db.add(page)
+        db.commit()
+        run_id = run.id
+        page_id = page.id
+
+    class SuccessResponse:
+        url = "https://retry.test/missing"
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = "<html><body>restored</body></html>"
+        history = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            assert url == "https://retry.test/missing"
+            return SuccessResponse()
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    response = client.post(
+        f"/runs/{run_id}/retry-pages",
+        json={"urls": ["https://retry.test/missing"]},
+        headers=_auth_header("retry-page@test.local", role="editor"),
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["succeeded"] == 1
+    assert result["failed"] == 0
+    assert result["results"][0]["attempt_no"] == 1
+
+    with SessionLocal() as db:
+        original = db.get(Page, page_id)
+        attempt = db.query(PageRetryAttempt).filter(PageRetryAttempt.page_id == page_id).one()
+        assert original.status_code == 404
+        assert original.final_status_code == 404
+        assert attempt.status == "SUCCEEDED"
+        assert attempt.final_status_code == 200
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
 
 
 def test_pages_changed_counts_deleted_urls(monkeypatch):

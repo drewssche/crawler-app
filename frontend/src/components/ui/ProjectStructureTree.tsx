@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import CardActionButton from "./CardActionButton";
 import HighlightedText from "./HighlightedText";
 import StructureStatusIcon from "./StructureStatusIcon";
 
-type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "error";
+type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "redirect" | "error";
 
 export type ProjectStructureRow = {
   url: string;
   status: StructureStatus;
   statusCode: number;
+  batchNo: number | null;
 };
 
 type TreeNode = {
@@ -18,6 +20,7 @@ type TreeNode = {
   hasPage: boolean;
   pageStatus: StructureStatus | null;
   pageStatusCode: number;
+  pageBatchNo: number | null;
   children: TreeNode[];
   total: number;
   changed: number;
@@ -30,6 +33,7 @@ function statusLabel(status: StructureStatus): string {
   if (status === "changed") return "изменен";
   if (status === "added") return "добавлен";
   if (status === "deleted") return "удален";
+  if (status === "redirect") return "перенаправляет";
   if (status === "error") return "ошибка";
   return "без изменений";
 }
@@ -43,6 +47,7 @@ function createNode(key: string, label: string, url: string, isDirectory: boolea
     hasPage: false,
     pageStatus: null,
     pageStatusCode: 0,
+    pageBatchNo: null,
     children: [],
     total: 0,
     changed: 0,
@@ -65,6 +70,7 @@ function markPage(node: TreeNode, row: ProjectStructureRow): void {
   node.hasPage = true;
   node.pageStatus = row.status;
   node.pageStatusCode = row.statusCode;
+  node.pageBatchNo = row.batchNo;
 }
 
 function finalizeNode(node: TreeNode): TreeNode {
@@ -176,6 +182,23 @@ function collectDescendantKeys(node: TreeNode): string[] {
   return keys;
 }
 
+function hierarchyKeysForUrl(rawUrl: string): string[] {
+  try {
+    const parsed = new URL(rawUrl);
+    const origin = `${parsed.protocol}//${parsed.host}`;
+    const keys = [`${origin}/`];
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    for (let index = 0; index < segments.length; index += 1) {
+      const isLast = index === segments.length - 1;
+      const isDirectory = !isLast || parsed.pathname.endsWith("/");
+      keys.push(`${origin}/${segments.slice(0, index + 1).join("/")}${isDirectory ? "/" : ""}`);
+    }
+    return keys;
+  } catch {
+    return [];
+  }
+}
+
 function AutoLoadSentinel({
   enabled,
   onVisible,
@@ -216,6 +239,13 @@ function TreeRow({
   onToggle,
   onLoadMore,
   onPageSelect,
+  canRetry,
+  retryingUrl,
+  retryResultByUrl,
+  onRetryPage,
+  recentNodeKeys,
+  live,
+  currentBatchNo,
 }: {
   node: TreeNode;
   depth: number;
@@ -225,6 +255,13 @@ function TreeRow({
   onToggle: (key: string) => void;
   onLoadMore: (key: string) => void;
   onPageSelect?: (url: string) => void;
+  canRetry: boolean;
+  retryingUrl?: string | null;
+  retryResultByUrl?: Record<string, "success" | "failed" | "skipped">;
+  onRetryPage?: (url: string) => void;
+  recentNodeKeys: Set<string>;
+  live: boolean;
+  currentBatchNo: number | null;
 }) {
   const hasChildren = node.children.length > 0;
   const isExpanded = expanded.has(node.key);
@@ -239,7 +276,7 @@ function TreeRow({
   return (
     <div style={{ display: "grid", gap: 4 }}>
       <div
-        className="structure-tree-row"
+        className={`structure-tree-row${recentNodeKeys.has(node.key) ? " structure-tree-row-live-added" : ""}`}
         style={{ paddingLeft: rowPadding }}
       >
         <button
@@ -285,6 +322,43 @@ function TreeRow({
             </span>
           ) : null}
           {node.pageStatusCode >= 400 ? <span style={{ opacity: 0.86 }}>status {node.pageStatusCode}</span> : null}
+          {node.hasPage && node.pageBatchNo !== null && (
+            live && currentBatchNo !== null && node.pageBatchNo >= currentBatchNo ? (
+              <span style={{ opacity: 0.72 }}>батч {node.pageBatchNo}</span>
+            ) : (
+              <span
+                style={{ color: "#8fd18f", display: "inline-flex", alignItems: "center", gap: 3 }}
+                title={`Результат страницы сохранён в батче ${node.pageBatchNo}`}
+              >
+                ✓ готово
+              </span>
+            )
+          )}
+          {node.hasPage && retryResultByUrl?.[node.url] === "success" ? (
+            <span style={{ color: "#8fd18f" }} title="Исходный результат сохранён в истории прогона">
+              повторно доступна
+            </span>
+          ) : null}
+          {node.hasPage && retryResultByUrl?.[node.url] === "failed" ? (
+            <span style={{ color: "#e7a15a" }}>ошибка сохранилась</span>
+          ) : null}
+          {node.hasPage && retryResultByUrl?.[node.url] === "skipped" ? (
+            <span style={{ opacity: 0.72 }}>повтор временно недоступен</span>
+          ) : null}
+          {canRetry && node.hasPage && node.pageStatus === "error" && retryResultByUrl?.[node.url] !== "success" ? (
+            <CardActionButton
+              compact
+              variant="secondary"
+              disabled={Boolean(retryingUrl)}
+              title="Повторно проверить только эту страницу. Исходный результат не изменится."
+              onClick={(event) => {
+                event.stopPropagation();
+                onRetryPage?.(node.url);
+              }}
+            >
+              {retryingUrl === node.url ? "Проверяем..." : "Повторить"}
+            </CardActionButton>
+          ) : null}
         </div>
       </div>
       {hasChildren && (
@@ -307,6 +381,13 @@ function TreeRow({
                 onToggle={onToggle}
                 onLoadMore={onLoadMore}
                 onPageSelect={onPageSelect}
+                canRetry={canRetry}
+                retryingUrl={retryingUrl}
+                retryResultByUrl={retryResultByUrl}
+                onRetryPage={onRetryPage}
+                recentNodeKeys={recentNodeKeys}
+                live={live}
+                currentBatchNo={currentBatchNo}
               />
             ))}
             {isExpanded && hasMoreChildren ? (
@@ -328,20 +409,51 @@ export default function ProjectStructureTree({
   rows,
   query = "",
   onPageSelect,
+  canRetry = false,
+  retryingUrl = null,
+  retryResultByUrl = {},
+  onRetryPage,
+  live = false,
+  currentBatchNo = null,
 }: {
   rows: ProjectStructureRow[];
   query?: string;
   onPageSelect?: (url: string) => void;
+  canRetry?: boolean;
+  retryingUrl?: string | null;
+  retryResultByUrl?: Record<string, "success" | "failed" | "skipped">;
+  onRetryPage?: (url: string) => void;
+  live?: boolean;
+  currentBatchNo?: number | null;
 }) {
   const fullTree = useMemo(() => buildTree(rows), [rows]);
   const tree = useMemo(() => filterTree(fullTree, query), [fullTree, query]);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
   const [visibleByNode, setVisibleByNode] = useState<Record<string, number>>({});
+  const [recentNodeKeys, setRecentNodeKeys] = useState<Set<string>>(() => new Set());
+  const previousUrlsRef = useRef<Set<string>>(new Set(rows.map((row) => row.url)));
   const nodeIndex = useMemo(() => indexTree(tree), [tree]);
   const effectiveExpandedKeys = useMemo(
     () => query.trim() ? collectExpandableKeys(tree) : expandedKeys,
     [query, tree, expandedKeys],
   );
+
+  useEffect(() => {
+    const nextUrls = new Set(rows.map((row) => row.url));
+    if (!live) {
+      previousUrlsRef.current = nextUrls;
+      setRecentNodeKeys(new Set());
+      return;
+    }
+    const addedUrls = rows
+      .map((row) => row.url)
+      .filter((url) => !previousUrlsRef.current.has(url));
+    previousUrlsRef.current = nextUrls;
+    if (addedUrls.length === 0) return;
+    setRecentNodeKeys(new Set(addedUrls.flatMap(hierarchyKeysForUrl)));
+    const timer = window.setTimeout(() => setRecentNodeKeys(new Set()), 1800);
+    return () => window.clearTimeout(timer);
+  }, [live, rows]);
 
   return (
     <div className="structure-tree-root">
@@ -386,6 +498,13 @@ export default function ProjectStructureTree({
             }));
           }}
           onPageSelect={onPageSelect}
+          canRetry={canRetry}
+          retryingUrl={retryingUrl}
+          retryResultByUrl={retryResultByUrl}
+          onRetryPage={onRetryPage}
+          recentNodeKeys={recentNodeKeys}
+          live={live}
+          currentBatchNo={currentBatchNo}
         />
       ))}
     </div>

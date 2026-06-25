@@ -72,13 +72,54 @@ test("site anomaly UX distinguishes baseline, normal and anomaly states", () => 
 });
 
 test("structure opens an on-demand page context drawer with SEO and broken links", () => {
-  assert.match(source, /getPageContext\(lastRunId, url\)/);
+  assert.match(source, /getPageContext\(structureRunId, url\)/);
   assert.match(source, /PageContextDrawer/);
   assert.match(structureSource, /onPageSelect\(node\.url\)/);
   assert.match(pageDrawerSource, /SEO checklist/);
   assert.match(pageDrawerSource, /known_broken/);
   assert.match(pageDrawerSource, /Ассеты/);
   assert.match(pageDrawerSource, /Открыть на сайте/);
+  assert.match(pageDrawerSource, /Перенаправление/);
+  assert.match(pageDrawerSource, /Ошибка относится только к этой странице/);
+});
+
+test("problem pages support bounded single and bulk retry without replacing the original result", () => {
+  assert.match(source, /retryProblemPages\(structureRunId/);
+  assert.match(source, /Повторить проблемные/);
+  assert.match(source, /Исходный результат прогона сохранён/);
+  assert.match(source, /handleRetryStructurePage/);
+  assert.match(structureSource, /onRetryPage/);
+  assert.match(structureSource, /повторно доступна/);
+  assert.match(pageDrawerSource, /Повторные проверки/);
+  assert.match(pageDrawerSource, /Исходный результат страницы не изменяется/);
+  assert.match(pageDrawerSource, /context\.page\.can_retry/);
+});
+
+test("structure keeps users informed while a crawl or refresh is running", () => {
+  assert.match(source, /Идёт сканирование выбранного сайта/);
+  assert.match(source, /Пока показываем последнюю готовую структуру/);
+  assert.match(source, /обновится автоматически/);
+  assert.match(source, /Загружаем готовую структуру/);
+  assert.match(source, /completedRunsWithPages/);
+  assert.match(source, /Crawler обходит страницы/);
+  assert.match(source, /runElapsedSeconds/);
+  assert.match(source, /ToastHost/);
+  assert.match(source, /refreshEventCenterPollingNow/);
+  assert.match(source, /structureIsLive/);
+  assert.match(source, /Сейчас обрабатывается:/);
+  assert.match(source, /Новые страницы появляются автоматически/);
+  assert.match(source, /live=\{structureIsLive\}/);
+  assert.match(source, /Готово:/);
+  assert.match(source, /Обнаружено:/);
+  assert.match(source, /В очереди:/);
+  assert.match(source, /currentBatchNo/);
+  assert.match(source, /дерево не прокручивается само/);
+  assert.match(source, /Показать новые/);
+  assert.match(source, /Показать ошибки/);
+  assert.match(source, /Все ·/);
+  assert.match(source, /Прогон завершён — структура готова/);
+  assert.match(structureSource, /structure-tree-row-live-added/);
+  assert.match(structureSource, /✓ готово/);
 });
 
 test("manual compare supports arbitrary site run and page selection", () => {

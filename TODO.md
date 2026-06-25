@@ -64,9 +64,14 @@
   - auto-match предлагает пару по normalized relative path; unique tail match получает среднюю confidence, неоднозначные варианты не предлагаются;
   - предложение применяется только явной кнопкой и не заменяет ручной выбор;
   - sync scroll и resize остаются следующими расширениями.
-- Последние проверки: backend `54 passed, 2 skipped`; PostgreSQL migrations/backfill verified, все существующие runs получили `project_site_id`; RBAC parity passed; frontend tests `29 passed`; frontend production build passed; targeted ESLint passed; `git diff --check` passed.
+- page fetch diagnostics:
+  - каждый обнаруженный URL сохраняет исходный/конечный status, final URL, redirect chain, response time и безопасный fetch error;
+  - `301/302/307/308` отображаются отдельным жёлтым page-result с friendly-пояснением и адресом назначения;
+  - timeout/connect/TLS/redirect failures сохраняются как красный page-level result и не валят run при наличии других успешных HTML-страниц;
+  - полный run остаётся `FAILED`, если не получено ни одной пригодной HTML-страницы.
+- Последние проверки: backend `57 passed, 2 skipped`; PostgreSQL migration `c7e4a2b9d130` verified; RBAC parity passed; frontend tests `29 passed`; frontend production build passed; targeted ESLint passed; `git diff --check` passed.
 - Общий frontend lint имеет ранее существовавшие ошибки вне текущих изменений; не считать их регрессией этой волны.
-- Следующий рекомендуемый пункт: **optional sync scroll + resize panels** для Compare.
+- Следующий рекомендуемый пункт: **rich snapshot для cookies/scripts/GTM inventory**. Compare sync scroll/resize можно делать после этого как независимую UX-волну.
 
 ## Working Rules
 
@@ -122,6 +127,19 @@
   - обход одного сайта не должен исчерпывать общий лимит и скрывать второй сайт;
   - project-level run агрегирует site runs, но не смешивает их диагностику;
   - structure/history/KPI имеют фильтр `Все сайты | конкретный сайт`.
+  - каждая обнаруженная страница получает собственный crawl result, включая timeout, connect/TLS error, redirect loop и выход за scope; локальная ошибка страницы не делает весь run `FAILED`, если другие HTML-страницы успешно собраны;
+  - run становится `FAILED`, когда не получено ни одной пригодной успешной HTML-страницы либо нарушен системный контракт запуска;
+  - исходный результат страницы не перезаписывать после повторной попытки: retries сохраняются отдельными attempts внутри контекста исходного run;
+  - действия retry:
+    - `Повторить проблемные страницы` для всех подходящих failures;
+    - `Повторить` рядом с конкретной failed-страницей прямо в Structure и в подробном drawer;
+    - ручной выбор нескольких страниц;
+  - retry поддерживает фильтры `4xx/5xx`, timeout, connection/TLS, redirect errors и bounded attempts/backoff, чтобы не создавать лишнюю нагрузку на сайт.
+  - long-running UX contract: при crawl/retry/refresh UI показывает текущее действие, блокирует конфликтующие controls, сохраняет последний готовый срез и поясняет, когда данные обновятся; пустой экран без статуса не использовать.
+  - live feedback: анимированный текущий этап и elapsed time без фиктивного процента; завершение/ошибка сразу меняют UI, показывают toast и создают адресное уведомление в Event Center. Точный `обработано N из M` допускается только после backend progress/heartbeat.
+  - live Structure: run постепенно сохраняет crawl results и `current_url`; UI показывает текущий URL, добавляет готовые страницы/разделы с короткой анимацией и не считает ещё не посещённые baseline URL удалёнными. Spinner на каждом разделе не использовать: crawler не знает заранее, когда раздел полностью завершён.
+  - batch feedback: завершённые страницы предыдущих батчей получают `✓ готово`; текущий батч и URL остаются активными. Показывать `готово / обнаружено / в очереди`, но не процент от неизвестного финального количества и не галочку «раздел завершён».
+  - completed-run UX: итоговая карточка показывает страницы/new/changed/errors/duration; быстрые фильтры `Все / Новые / Ошибки` меняют дерево без потери URL-иерархии. Live updates не выполняют автопрокрутку.
 
   **Single-site anomaly monitoring**
   - baseline строится по нескольким успешным прогонам конкретного сайта/scope;
@@ -132,14 +150,43 @@
   **Page intelligence**
   - клик по узлу Structure сначала открывает read-only context drawer, не внешний сайт;
   - drawer: site/scope, URL, HTTP/status, snapshot/meta, links/resources, текущий/предыдущий run и явное действие `Открыть на сайте`;
+  - redirect URL сохраняется отдельным узлом/result, даже если конечная страница также успешно просканирована;
+  - redirect diagnostics: исходный URL, конечный URL, полная chain, количество переходов, выход за scope/loop и friendly-пояснение:
+    - `301 — постоянное перенаправление`: поисковым системам и пользователям предлагается новый постоянный адрес;
+    - `302 — временное перенаправление`: исходный адрес пока считается основным;
+    - `307 — временное перенаправление с сохранением метода запроса`;
+    - `308 — постоянное перенаправление с сохранением метода запроса`;
+  - обычный валидный redirect показывать системным жёлтым состоянием `Перенаправляет на …`; loop, длинную chain, недоступную конечную страницу или выход за scope — красным с причиной;
   - анализ выбранной страницы выполняется on-demand по сохранённому HTML, без массового пересчёта всего сайта при каждом открытии проекта;
   - links/resources: внутренние/внешние ссылки, известные broken targets текущего run, изображения/scripts/styles и отсутствующие обязательные атрибуты;
+  - cookies/scripts intelligence:
+    - cookies, установленные ответом страницы и client-side scripts, с доменом, path, expiry, SameSite/Secure/HttpOnly и friendly-пояснением назначения, если оно достоверно определено;
+    - first-party/third-party scripts, источник, категория (`необходимый`, `аналитика`, `маркетинг`, `неизвестный`) и страницы, где они обнаружены;
+    - отдельное распознавание Google Tag Manager, Google Analytics и известных tag/consent loaders без предположения, что найденный script обязательно отправил данные;
+    - извлекать и показывать обнаруженные analytics identifiers и источник: `GTM-XXXX`, `G-XXXX`, `UA-XXXX`, `AW-XXXX` и другие достоверно распознанные IDs, чтобы пользователь мог найти соответствующий контейнер/ресурс в аналитике;
+    - один script может содержать несколько IDs; UI группирует их по provider/type, показывает страницы обнаружения и не раскрывает значения cookies/tokens;
+    - behavior audit в двух фазах: `до согласия` и `после согласия`, чтобы показать какие cookies/scripts реально появляются или выполняются до/после принятия;
+    - состояния `запущен до согласия`, `ожидает согласия`, `появился после согласия`, `поведение не определено`; неизвестное не выдавать за нарушение;
+    - drawer объясняет наблюдаемое техническое поведение, но не подменяет юридическую оценку GDPR/ePrivacy;
+    - значения auth/session cookies и tokens никогда не возвращать в UI: только безопасные metadata и masked identifiers.
   - SEO checklist MVP: `title`, description, один содержательный `h1`, canonical, indexability/robots, lang, viewport, image alt и базовая структура headings;
   - SEO score `0–100` рассчитывается backend по прозрачным весам; UI показывает процент, passed/warning/failed пункты и конкретную рекомендацию, а не обещание позиции в поиске;
   - score является технической полнотой страницы, не универсальной оценкой качества контента или гарантией SEO-результата;
   - позднее расширить structured data/Open Graph/hreflang/content duplication только после стабильного snapshot contract;
   - unchanged page показывает одно состояние `Изменений нет`, без дублирования одинаковых окон;
   - subscriptions, occurrence search и target fingerprint добавляются после стабильных snapshot/diff contracts.
+
+  **Crawl personas / user contexts**
+  - один `ProjectSite` поддерживает несколько контекстов просмотра: минимум `Гость`, позднее `Авторизованный` и `Партнёр`;
+  - целевая модель: `ProjectSite → CrawlPersona → Run → Page`, чтобы результаты, baseline, retries и Compare не смешивали разные сессии;
+  - Compare позволяет выбирать persona вместе с site/run/page: гость ↔ авторизованный, партнёр ↔ партнёр другого сайта и historical compare одной persona;
+  - staged implementation:
+    1. guest context и статические безопасные headers;
+    2. encrypted cookie/session bundle с masked UI, audit и запретом viewer читать secrets;
+    3. browser-based login scenario для CSRF/dynamic forms;
+    4. MFA/manual checkpoint только как явный управляемый workflow;
+  - пароли, cookie values и tokens хранятся encrypted-at-rest, не попадают в crawl artifacts/logs/API responses и доступны только через server-side secret references;
+  - baseline и anomaly signals всегда scoped по `project_site_id + persona_id + scope`, иначе различия ролей будут ошибочно считаться аномалиями.
 
   **Compare workspace**
   - отдельный полноширинный маршрут внутри проекта: `/profiles/:id/compare`;
@@ -162,7 +209,12 @@
   6. Page context drawer на существующих snapshot/index данных — MVP готов; richer persisted snapshot fields остаются.
   7. Full-width manual compare workspace — MVP `Код/Структура` готов.
   8. Visual mode/focus workspace и auto page matching — готовы; sync scroll/resize, subscriptions/outbox остаются.
-  9. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile` и compatibility endpoint `/runs/start/{profile_id}`.
+  9. Persisted redirect chain + page-level network failures и friendly diagnostics — готово.
+  10. Bounded bulk/single-page retry attempts внутри исходного run — готово.
+  11. Rich snapshot: response timing, cookies/scripts/GTM inventory и consent behavior `до/после`.
+  12. `CrawlPersona`: guest → encrypted session bundle → browser login scenarios.
+  13. Расширить anomaly/Compare на redirect, resources, consent и persona-scoped signals.
+  14. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile` и compatibility endpoint `/runs/start/{profile_id}`.
 
   **Verification**
   - single-site whole-domain и section-only проекты не выходят за scope;
@@ -207,6 +259,16 @@
 
 ## Recently Done
 
+- [x] **P1 Bounded retry attempts for problem pages**.
+  - Что было: page-level failure сохранялся, но для проверки восстановления требовался новый полный прогон сайта.
+  - Что стало: editor/admin может повторить одну страницу прямо из Structure или drawer, либо до 50 проблемных страниц массово; максимум 3 attempts на страницу, успешный retry больше не предлагается, исходный `Page` и статус run не перезаписываются. Во время crawl остаётся последний готовый срез с явным статусом и автоматическим обновлением после завершения.
+  - Как проверить: открыть страницу с timeout/4xx → `Повторить`; либо `Структура сайта → Повторить проблемные`; в drawer появляется история attempts с HTTP/error и временем ответа.
+  - Вклад в цели: локальная ошибка восстанавливается без лишней нагрузки полного crawl (`high` reliability/UX); исходная диагностика остаётся audit-safe (`high` correctness).
+- [x] **P1 Persisted redirects and page-level fetch failures**.
+  - Что было: crawler следовал redirect, но сохранял только конечную страницу; timeout отдельной страницы терялся, хотя обход продолжался.
+  - Что стало: page-result хранит source/final status, redirect chain, final URL, response time и fetch failure; Structure показывает redirect жёлтым, drawer объясняет `301/302/307/308`, локальный network failure остаётся красным результатом страницы.
+  - Как проверить: URL с `301 → 200` остаётся в Structure и показывает назначение; успешная стартовая страница со ссылкой на timeout завершает run как `FINISHED`, а timeout URL виден отдельно.
+  - Вклад в цели: диагностика больше не теряет исходные URL и локальные failures (`high` correctness); создан фундамент точечного retry (`high` reliability).
 - [x] **P1 Compare normalized relative-path auto-match**.
   - Что было: обе страницы всегда требовали ручного поиска даже при одинаковой структуре сайтов.
   - Что стало: после выбора страницы Compare предлагает пару с тем же normalized path или уникальными последними сегментами; показывает confidence/reason и применяет выбор только по кнопке.

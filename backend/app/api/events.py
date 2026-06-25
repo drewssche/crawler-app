@@ -61,6 +61,7 @@ def _fetch_events_with_state(
         EventUserState.user_id == current_user.id,
     )
     q = q.outerjoin(EventUserState, state_join)
+    q = q.filter(or_(EventFeed.target_user_id.is_(None), EventFeed.target_user_id == current_user.id))
     if channel:
         q = q.filter(EventFeed.channel == channel)
     if security_only:
@@ -69,7 +70,8 @@ def _fetch_events_with_state(
         q = q.filter(or_(EventUserState.id.is_(None), EventUserState.is_dismissed.is_(False)))
     if only_unread:
         q = q.filter(or_(EventUserState.id.is_(None), EventUserState.is_read.is_(False)))
-        q = q.filter(or_(EventFeed.actor_user_id.is_(None), EventFeed.actor_user_id != current_user.id))
+        if channel == "action":
+            q = q.filter(or_(EventFeed.actor_user_id.is_(None), EventFeed.actor_user_id != current_user.id))
 
     q = q.order_by(EventFeed.created_at.desc(), EventFeed.id.desc())
     total = q.count() if include_total else None
@@ -80,8 +82,8 @@ def _fetch_events_with_state(
     items: list[dict] = []
     for e in events:
         st = states[e.id]
-        # Own actions are treated as already read for the actor.
-        if e.actor_user_id == current_user.id and not st.is_read:
+        # Own audit actions are treated as read; operational notifications remain visible.
+        if e.channel == "action" and e.actor_user_id == current_user.id and not st.is_read:
             now = utc_now_naive()
             st.is_read = True
             st.read_at = now
@@ -103,11 +105,13 @@ def _count_unread_events(
         EventUserState,
         and_(EventUserState.event_id == EventFeed.id, EventUserState.user_id == current_user.id),
     )
+    q = q.filter(or_(EventFeed.target_user_id.is_(None), EventFeed.target_user_id == current_user.id))
     if channel:
         q = q.filter(EventFeed.channel == channel)
     if security_only:
         q = q.filter(EventFeed.severity.in_(["warning", "danger"]))
-    q = q.filter(or_(EventFeed.actor_user_id.is_(None), EventFeed.actor_user_id != current_user.id))
+    if channel == "action":
+        q = q.filter(or_(EventFeed.actor_user_id.is_(None), EventFeed.actor_user_id != current_user.id))
     q = q.filter(or_(EventUserState.id.is_(None), EventUserState.is_dismissed.is_(False)))
     q = q.filter(or_(EventUserState.id.is_(None), EventUserState.is_read.is_(False)))
     value = q.scalar()

@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.db.models.page import Page
+from app.db.models.page_retry_attempt import PageRetryAttempt
 from app.db.models.profile import Profile
 from app.db.models.run import Run
 from app.services.page_context import build_page_context
@@ -116,3 +117,105 @@ def test_page_context_seo_score_explains_missing_fields(db_session: Session):
 
     assert context["seo"]["score"] < 40
     assert {"title", "description", "h1", "canonical", "lang", "viewport", "image_alt"} <= failed_keys
+
+
+def test_page_context_explains_redirect_status_in_friendly_language(db_session: Session):
+    profile = Profile(name="Redirect", start_url="https://redirect-context.test/old")
+    db_session.add(profile)
+    db_session.flush()
+    site = create_primary_site_for_profile(db_session, profile)
+    db_session.flush()
+    run = Run(
+        profile_id=profile.id,
+        project_site_id=site.id,
+        status="FINISHED",
+        started_at=datetime.utcnow(),
+        finished_at=datetime.utcnow(),
+        pages_total=1,
+        pages_changed=1,
+    )
+    db_session.add(run)
+    db_session.flush()
+    page = Page(
+        run_id=run.id,
+        url="https://redirect-context.test/old",
+        status_code=301,
+        final_url="https://redirect-context.test/new",
+        final_status_code=200,
+        redirect_chain_json=[
+            {
+                "url": "https://redirect-context.test/old",
+                "status_code": 301,
+                "location": "/new",
+            },
+            {
+                "url": "https://redirect-context.test/new",
+                "status_code": 200,
+                "location": None,
+            },
+        ],
+        content_type="text/html",
+        html="<html><body>new</body></html>",
+        html_hash="redirect",
+    )
+    db_session.add(page)
+    db_session.flush()
+
+    context = build_page_context(db_session, run, page)
+
+    assert context["page"]["redirect"]["hops"] == 1
+    assert context["page"]["redirect"]["target_url"] == "https://redirect-context.test/new"
+    assert "Постоянное перенаправление" in context["page"]["redirect"]["explanation"]
+
+
+def test_page_context_includes_retry_history_without_overwriting_original(db_session: Session):
+    profile = Profile(name="Retry context", start_url="https://retry-context.test/")
+    db_session.add(profile)
+    db_session.flush()
+    site = create_primary_site_for_profile(db_session, profile)
+    db_session.flush()
+    run = Run(
+        profile_id=profile.id,
+        project_site_id=site.id,
+        status="FINISHED",
+        started_at=datetime.utcnow(),
+        finished_at=datetime.utcnow(),
+        pages_total=1,
+        pages_changed=1,
+    )
+    db_session.add(run)
+    db_session.flush()
+    page = Page(
+        run_id=run.id,
+        url="https://retry-context.test/missing",
+        status_code=404,
+        final_status_code=404,
+        content_type="text/html",
+        html="",
+        html_hash="",
+    )
+    db_session.add(page)
+    db_session.flush()
+    db_session.add(
+        PageRetryAttempt(
+            run_id=run.id,
+            page_id=page.id,
+            attempt_no=1,
+            status="SUCCEEDED",
+            started_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+            status_code=200,
+            final_url=page.url,
+            final_status_code=200,
+            redirect_chain_json=[],
+            response_time_ms=125,
+        )
+    )
+    db_session.flush()
+
+    context = build_page_context(db_session, run, page)
+
+    assert context["page"]["status_code"] == 404
+    assert context["page"]["retry_attempts"][0]["status"] == "SUCCEEDED"
+    assert context["page"]["retry_attempts"][0]["final_status_code"] == 200
+    assert context["page"]["can_retry"] is False

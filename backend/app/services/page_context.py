@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
 from app.db.models.page import Page
+from app.db.models.page_retry_attempt import PageRetryAttempt
 from app.db.models.run import Run
 
 
@@ -43,7 +44,25 @@ def _check(
     }
 
 
+def _redirect_explanation(status_code: int) -> str:
+    if status_code == 301:
+        return "Постоянное перенаправление: новый адрес считается основным."
+    if status_code == 302:
+        return "Временное перенаправление: исходный адрес пока считается основным."
+    if status_code == 307:
+        return "Временное перенаправление с сохранением метода запроса."
+    if status_code == 308:
+        return "Постоянное перенаправление с сохранением метода запроса."
+    return "Страница перенаправляет запрос на другой адрес."
+
+
 def build_page_context(db: Session, run: Run, page: Page) -> dict:
+    retry_attempts = (
+        db.query(PageRetryAttempt)
+        .filter(PageRetryAttempt.page_id == page.id)
+        .order_by(PageRetryAttempt.attempt_no.desc())
+        .all()
+    )
     html = page.html or ""
     soup = BeautifulSoup(html, "lxml") if html else BeautifulSoup("", "lxml")
     title = soup.title.get_text(" ", strip=True) if soup.title else ""
@@ -90,7 +109,7 @@ def build_page_context(db: Session, run: Run, page: Page) -> dict:
     for link in links:
         known_status = run_pages.get(link["url"])
         link["known_status"] = known_status
-        link["broken"] = known_status is not None and known_status >= 400
+        link["broken"] = known_status is not None and (known_status == 0 or known_status >= 400)
 
     images = []
     for tag in soup.find_all("img"):
@@ -184,6 +203,44 @@ def build_page_context(db: Session, run: Run, page: Page) -> dict:
             "status_code": page.status_code,
             "content_type": page.content_type,
             "html_hash": page.html_hash,
+            "final_url": page.final_url or page.url,
+            "final_status_code": page.final_status_code or page.status_code,
+            "fetch_error_code": page.fetch_error_code,
+            "fetch_error_message": page.fetch_error_message,
+            "response_time_ms": page.response_time_ms,
+            "redirect": (
+                None
+                if not page.redirect_chain_json or len(page.redirect_chain_json) <= 1
+                else {
+                    "status_code": page.status_code,
+                    "target_url": page.final_url,
+                    "hops": len(page.redirect_chain_json) - 1,
+                    "chain": page.redirect_chain_json,
+                    "explanation": _redirect_explanation(page.status_code),
+                }
+            ),
+            "can_retry": (
+                bool(page.fetch_error_code)
+                or (page.final_status_code or page.status_code) >= 400
+            ) and len(retry_attempts) < 3 and (
+                not retry_attempts or retry_attempts[0].status != "SUCCEEDED"
+            ),
+            "retry_attempts": [
+                {
+                    "id": attempt.id,
+                    "attempt_no": attempt.attempt_no,
+                    "status": attempt.status,
+                    "started_at": attempt.started_at.isoformat(),
+                    "finished_at": attempt.finished_at.isoformat(),
+                    "status_code": attempt.status_code,
+                    "final_url": attempt.final_url,
+                    "final_status_code": attempt.final_status_code,
+                    "fetch_error_code": attempt.fetch_error_code,
+                    "fetch_error_message": attempt.fetch_error_message,
+                    "response_time_ms": attempt.response_time_ms,
+                }
+                for attempt in retry_attempts
+            ],
         },
         "meta": {
             "title": title,

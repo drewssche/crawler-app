@@ -439,7 +439,8 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
     const topNotification = data.notifications[0];
     if (topNotification) {
       const wasSeen = seenTopNotificationIdsRef.current.has(topNotification.id);
-      if (!wasSeen && collapsed && !isSelfEvent(topNotification, user?.email ?? "")) {
+      const suppressToast = topNotification.meta?.suppress_toast === true;
+      if (!wasSeen && collapsed && !suppressToast && !isSelfEvent(topNotification, user?.email ?? "")) {
         const toast = buildToastFromEvent(topNotification, "notification");
         setToasts((prev) => [toast, ...prev.filter((x) => x.id !== toast.id)]);
       }
@@ -876,4 +877,3 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
     </>
   );
 }
-

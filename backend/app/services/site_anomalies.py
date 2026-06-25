@@ -1,7 +1,7 @@
 from collections import defaultdict
 from dataclasses import dataclass
 
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.db.models.page import Page
@@ -68,7 +68,18 @@ def evaluate_project_site_anomalies(db: Session, site_ids: list[int]) -> dict[in
             for run_id, error_pages in (
                 db.query(
                     Page.run_id,
-                    func.sum(case((Page.status_code >= 400, 1), else_=0)),
+                    func.sum(
+                        case(
+                            (
+                                or_(
+                                    Page.status_code >= 400,
+                                    Page.fetch_error_code.is_not(None),
+                                ),
+                                1,
+                            ),
+                            else_=0,
+                        )
+                    ),
                 )
                 .filter(Page.run_id.in_(run_ids))
                 .group_by(Page.run_id)

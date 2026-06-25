@@ -22,5 +22,9 @@ class Run(Base):
 
     pages_total: Mapped[int] = mapped_column(Integer, default=0)
     pages_changed: Mapped[int] = mapped_column(Integer, default=0)
+    pages_discovered: Mapped[int] = mapped_column(Integer, default=0)
+    current_batch_no: Mapped[int] = mapped_column(Integer, default=0)
+    current_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     failure_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)

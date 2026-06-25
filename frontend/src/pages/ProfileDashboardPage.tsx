@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { listProjectSiteSummaries, type ProjectSiteSummary } from "../api/projectSites";
-import { getPageContext, type PageContext } from "../api/pageContext";
+import {
+  getPageContext,
+  retryProblemPages,
+  type PageContext,
+  type RetryPagesResult,
+} from "../api/pageContext";
 import { ApiError, apiDelete, apiGet, apiPost } from "../api/client";
 import PageContextDrawer from "../components/projects/PageContextDrawer";
 import ProjectSiteContextCards from "../components/projects/ProjectSiteContextCards";
@@ -17,6 +22,7 @@ import StructureLegendHint from "../components/ui/StructureLegendHint";
 import ProjectStructureTree from "../components/ui/ProjectStructureTree";
 import SegmentedControl from "../components/ui/SegmentedControl";
 import SectionHeaderRow from "../components/ui/SectionHeaderRow";
+import ToastHost, { type ToastItem } from "../components/ui/ToastHost";
 import UiSelect from "../components/ui/UiSelect";
 import { MetaText, StatusText } from "../components/ui/StatusText";
 import { formatOperationalDateTime } from "../utils/datetime";
@@ -24,6 +30,7 @@ import { invalidateProfilesCache } from "../utils/profileListCache";
 import { publishProjectRunLive } from "../utils/projectRunLiveStore";
 import { useAuth } from "../hooks/auth";
 import { hasPermission } from "../utils/permissions";
+import { refreshEventCenterPollingNow } from "../utils/eventCenterPollingManager";
 
 type ProjectProfile = {
   id: number;
@@ -47,6 +54,10 @@ type ProjectRun = {
   finished_at: string | null;
   pages_total: number;
   pages_changed: number;
+  pages_discovered: number;
+  current_batch_no: number;
+  current_url: string | null;
+  progress_updated_at: string | null;
   failure_code: string | null;
   failure_message: string | null;
 };
@@ -57,6 +68,12 @@ type ProjectPage = {
   url: string;
   status_code: number;
   html_hash: string;
+  final_url: string | null;
+  final_status_code: number | null;
+  fetch_error_code: string | null;
+  fetch_error_message: string | null;
+  redirect_chain_json: Array<{ url: string; status_code: number; location: string | null }> | null;
+  crawl_batch_no: number | null;
 };
 
 type ProjectRunResult = {
@@ -79,14 +96,16 @@ type ProjectRunBatch = {
 };
 
 type ProjectTab = "main" | "history" | "settings";
+type StructureViewFilter = "all" | "added" | "error";
 
-type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "error";
+type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "redirect" | "error";
 
 type StructureRow = {
   url: string;
   domain: string;
   status: StructureStatus;
   statusCode: number;
+  batchNo: number | null;
 };
 
 function parseDomains(csv: string): string[] {
@@ -151,6 +170,7 @@ export default function ProfileDashboardPage() {
   const [activeTab, setActiveTab] = useState<ProjectTab>("main");
   const [selectedDomain, setSelectedDomain] = useState<string>("all");
   const [structureSearch, setStructureSearch] = useState("");
+  const [structureViewFilter, setStructureViewFilter] = useState<StructureViewFilter>("all");
   const [pagesLoading, setPagesLoading] = useState(false);
   const [pagesError, setPagesError] = useState("");
   const [lastRunPages, setLastRunPages] = useState<ProjectPage[]>([]);
@@ -162,8 +182,28 @@ export default function ProfileDashboardPage() {
   const [pageContextLoading, setPageContextLoading] = useState(false);
   const [pageContextError, setPageContextError] = useState("");
   const [pageContext, setPageContext] = useState<PageContext | null>(null);
+  const [pageRetryPending, setPageRetryPending] = useState(false);
+  const [pageRetryMessage, setPageRetryMessage] = useState("");
+  const [pageRetrySucceeded, setPageRetrySucceeded] = useState<boolean | null>(null);
+  const [bulkRetryPending, setBulkRetryPending] = useState(false);
+  const [bulkRetryResult, setBulkRetryResult] = useState<RetryPagesResult | null>(null);
+  const [bulkRetryError, setBulkRetryError] = useState("");
+  const [structureRetryingUrl, setStructureRetryingUrl] = useState<string | null>(null);
+  const [structureRetryResultByUrl, setStructureRetryResultByUrl] = useState<
+    Record<string, "success" | "failed" | "skipped">
+  >({});
+  const [structureRetryNotice, setStructureRetryNotice] = useState("");
+  const [structureRetryNoticeTone, setStructureRetryNoticeTone] = useState<"success" | "warning">("success");
+  const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
+  const [runToasts, setRunToasts] = useState<ToastItem[]>([]);
   const canRunCrawler = hasPermission(user?.role, "crawler.run");
   const canEditProject = hasPermission(user?.role, "profiles.edit");
+  const canViewEvents = hasPermission(user?.role, "events.view");
+
+  function showRunToast(item: Omit<ToastItem, "id">) {
+    const toast = { ...item, id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` };
+    setRunToasts((current) => [toast, ...current].slice(0, 3));
+  }
 
   async function fetchRunPages(runId: number): Promise<ProjectPage[]> {
     const rows = await apiGet<ProjectPage[]>(`/runs/${runId}/pages`);
@@ -249,9 +289,22 @@ export default function ProfileDashboardPage() {
     const timer = window.setInterval(() => {
       void loadRuns(selectedSiteId, true);
       if (project) void loadSiteSummaries(project.id, true);
-    }, 5000);
+    }, 1500);
     return () => window.clearInterval(timer);
   }, [selectedSiteId, runs, project, loadRuns, loadSiteSummaries]);
+
+  useEffect(() => {
+    if (!runPending && !projectRunPending) {
+      setRunElapsedSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setRunElapsedSeconds(0);
+    const timer = window.setInterval(() => {
+      setRunElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [runPending, projectRunPending]);
 
   async function handleStartRun() {
     const selectedSite = sites.find((site) => site.id === selectedSiteId);
@@ -270,11 +323,20 @@ export default function ProfileDashboardPage() {
           finished_at: null,
           pages_total: 0,
           pages_changed: 0,
+          pages_discovered: 1,
+          current_batch_no: 1,
+          current_url: selectedSite.start_url,
+          progress_updated_at: new Date().toISOString(),
           failure_code: null,
           failure_message: null,
         },
         ...prev,
       ];
+    });
+    showRunToast({
+      title: `Прогон «${selectedSite.name}» запущен`,
+      body: "Crawler начал обход сайта. Результат и структура обновятся автоматически.",
+      accent: "info",
     });
     publishProjectRunLive({
       profileId: project.id,
@@ -289,6 +351,12 @@ export default function ProfileDashboardPage() {
         loadRuns(selectedSite.id, true),
         loadSiteSummaries(project.id, true),
       ]);
+      showRunToast({
+        title: `Прогон «${selectedSite.name}» завершён`,
+        body: "Новые результаты уже загружены. Можно открыть структуру и изменения.",
+        accent: "success",
+      });
+      if (canViewEvents) void refreshEventCenterPollingNow().catch(() => undefined);
     } catch (e) {
       await Promise.all([
         loadRuns(selectedSite.id, true),
@@ -301,6 +369,12 @@ export default function ProfileDashboardPage() {
       } else if (!(e instanceof ApiError)) {
         setRunsError("Не удалось запустить прогон.");
       }
+      showRunToast({
+        title: `Прогон «${selectedSite.name}» завершился ошибкой`,
+        body: e instanceof Error ? e.message : "Откройте карточку прогона, чтобы увидеть причину.",
+        accent: "danger",
+      });
+      if (canViewEvents) void refreshEventCenterPollingNow().catch(() => undefined);
     } finally {
       setRunPending(false);
     }
@@ -311,26 +385,45 @@ export default function ProfileDashboardPage() {
     setProjectRunPending(true);
     setProjectRunResult(null);
     setRunsError("");
+    showRunToast({
+      title: "Общий запуск начат",
+      body: `Crawler последовательно проверяет включённые сайты проекта «${project.name}».`,
+      accent: "info",
+    });
     try {
       const result = await apiPost<ProjectRunBatch>(`/runs/start-project/${project.id}`, {});
       setProjectRunResult(result);
       await loadSiteSummaries(project.id, true);
       if (selectedSiteId !== null) await loadRuns(selectedSiteId, true);
+      showRunToast({
+        title: "Общий запуск завершён",
+        body: `Успешно: ${result.finished}. С ошибкой: ${result.failed}. Пропущено: ${result.skipped}.`,
+        accent: result.failed > 0 ? "warning" : "success",
+      });
+      if (canViewEvents) void refreshEventCenterPollingNow().catch(() => undefined);
     } catch (e) {
       setRunsError(e instanceof Error ? e.message : "Не удалось запустить сайты проекта.");
+      showRunToast({
+        title: "Общий запуск завершился ошибкой",
+        body: e instanceof Error ? e.message : "Не удалось получить результат запуска.",
+        accent: "danger",
+      });
+      if (canViewEvents) void refreshEventCenterPollingNow().catch(() => undefined);
     } finally {
       setProjectRunPending(false);
     }
   }
 
   async function handleOpenPageContext(url: string) {
-    if (lastRunId === null) return;
+    if (structureRunId === null) return;
     setPageContextOpen(true);
     setPageContextLoading(true);
     setPageContextError("");
+    setPageRetryMessage("");
+    setPageRetrySucceeded(null);
     setPageContext(null);
     try {
-      setPageContext(await getPageContext(lastRunId, url));
+      setPageContext(await getPageContext(structureRunId, url));
     } catch (e) {
       setPageContextError(
         e instanceof ApiError && e.status === 404
@@ -339,6 +432,79 @@ export default function ProfileDashboardPage() {
       );
     } finally {
       setPageContextLoading(false);
+    }
+  }
+
+  async function handleRetryCurrentPage() {
+    if (structureRunId === null || !pageContext || pageRetryPending) return;
+    setPageRetryPending(true);
+    setPageRetryMessage("");
+    setPageRetrySucceeded(null);
+    try {
+      const result = await retryProblemPages(structureRunId, [pageContext.page.url]);
+      const succeeded = result.succeeded > 0;
+      setPageRetrySucceeded(succeeded);
+      setPageRetryMessage(
+        succeeded
+          ? "Страница снова доступна. Исходный результат прогона сохранён."
+          : result.skipped > 0
+            ? "Лимит повторных попыток исчерпан."
+            : "Повторная проверка завершена, но ошибка сохранилась.",
+      );
+      setPageContext(await getPageContext(structureRunId, pageContext.page.url));
+    } catch (e) {
+      setPageRetrySucceeded(false);
+      setPageRetryMessage(e instanceof Error ? e.message : "Не удалось повторно проверить страницу.");
+    } finally {
+      setPageRetryPending(false);
+    }
+  }
+
+  async function handleRetryAllProblemPages() {
+    if (structureRunId === null || bulkRetryPending) return;
+    setBulkRetryPending(true);
+    setBulkRetryResult(null);
+    setBulkRetryError("");
+    try {
+      const result = await retryProblemPages(structureRunId);
+      setBulkRetryResult(result);
+      setStructureRetryResultByUrl((current) => {
+        const next = { ...current };
+        for (const row of result.results) {
+          next[row.url] = row.status === "SUCCEEDED" ? "success" : row.status === "FAILED" ? "failed" : "skipped";
+        }
+        return next;
+      });
+    } catch (e) {
+      setBulkRetryError(e instanceof Error ? e.message : "Не удалось повторно проверить проблемные страницы.");
+    } finally {
+      setBulkRetryPending(false);
+    }
+  }
+
+  async function handleRetryStructurePage(url: string) {
+    if (structureRunId === null || structureRetryingUrl) return;
+    setStructureRetryingUrl(url);
+    setStructureRetryNotice("");
+    try {
+      const result = await retryProblemPages(structureRunId, [url]);
+      const row = result.results[0];
+      const state = row?.status === "SUCCEEDED" ? "success" : row?.status === "FAILED" ? "failed" : "skipped";
+      setStructureRetryResultByUrl((current) => ({ ...current, [url]: state }));
+      setStructureRetryNoticeTone(state === "success" ? "success" : "warning");
+      setStructureRetryNotice(
+        state === "success"
+          ? "Страница снова доступна. Исходная ошибка сохранена в истории прогона."
+          : state === "failed"
+            ? "Страница проверена повторно, но ошибка сохранилась."
+            : row?.message || "Повторная проверка сейчас недоступна.",
+      );
+    } catch (e) {
+      setStructureRetryResultByUrl((current) => ({ ...current, [url]: "failed" }));
+      setStructureRetryNoticeTone("warning");
+      setStructureRetryNotice(e instanceof Error ? e.message : "Не удалось повторно проверить страницу.");
+    } finally {
+      setStructureRetryingUrl(null);
     }
   }
 
@@ -364,16 +530,26 @@ export default function ProfileDashboardPage() {
     [selectedSite?.allowed_domains_csv],
   );
   const lastRun = runs[0] || null;
-  const prevRun = runs[1] || null;
+  const completedRunsWithPages = runs.filter(
+    (run) => run.id > 0 && run.status !== "RUNNING" && run.pages_total > 0,
+  );
+  const structureRun = completedRunsWithPages[0] || null;
+  const previousStructureRun = completedRunsWithPages[1] || null;
+  const liveStructureRun = runs.find((run) => run.id > 0 && run.status === "RUNNING") || null;
+  const displayedStructureRun = liveStructureRun || structureRun;
+  const structureIsLive = liveStructureRun !== null;
   const lastSuccessfulRun = runs.find((r) => r.status === "FINISHED" && Boolean(r.finished_at)) || null;
   const hasRunning = runs.some((r) => r.status === "RUNNING");
+  const structureUpdatePending = hasRunning || runPending || projectRunPending;
   const runsTotal = runs.length;
   const changedLast = lastRun?.pages_changed ?? 0;
   const pagesLast = lastRun?.pages_total ?? 0;
   const changedShareLast = pagesLast > 0 ? (changedLast / pagesLast) * 100 : 0;
   const lastRunDuration = lastRun ? formatDuration(lastRun.started_at, lastRun.finished_at) : "—";
-  const lastRunId = lastRun?.id ?? null;
-  const prevRunId = prevRun?.id ?? null;
+  const structureRunId = displayedStructureRun?.id ?? null;
+  const previousStructureRunId = structureIsLive
+    ? structureRun?.id ?? null
+    : previousStructureRun?.id ?? null;
   const coveragePercent = lastRunCoverage && lastRunCoverage.total > 0
     ? (lastRunCoverage.ok / lastRunCoverage.total) * 100
     : 0;
@@ -385,13 +561,13 @@ export default function ProfileDashboardPage() {
   }, [domainOptions, selectedDomain]);
 
   useEffect(() => {
-    if (lastRunId === null) {
+    if (structureRunId === null) {
       setLastRunCoverage(null);
       return;
     }
     let cancelled = false;
     setLastRunCoverageLoading(true);
-    fetchRunPages(lastRunId)
+    fetchRunPages(structureRunId)
       .then((rows) => {
         if (cancelled) return;
         const ok = rows.filter((row) => row.status_code >= 200 && row.status_code < 300).length;
@@ -408,19 +584,25 @@ export default function ProfileDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [lastRunId]);
+  }, [structureRunId]);
 
   useEffect(() => {
     if (activeTab !== "main") return;
-    if (lastRunId === null) return;
+    if (structureRunId === null) {
+      setLastRunPages([]);
+      setPrevRunPages([]);
+      return;
+    }
     let cancelled = false;
-    async function loadPages() {
-      setPagesLoading(true);
-      setPagesError("");
+    async function loadPages(silent = false) {
+      if (!silent) setPagesLoading(true);
+      if (!silent) setPagesError("");
       try {
         const [lastRows, prevRows] = await Promise.all([
-          fetchRunPages(lastRunId),
-          prevRunId !== null ? fetchRunPages(prevRunId) : Promise.resolve([] as ProjectPage[]),
+          fetchRunPages(structureRunId),
+          previousStructureRunId !== null
+            ? fetchRunPages(previousStructureRunId)
+            : Promise.resolve([] as ProjectPage[]),
         ]);
         if (cancelled) return;
         setLastRunPages(lastRows);
@@ -429,14 +611,28 @@ export default function ProfileDashboardPage() {
         if (cancelled) return;
         setPagesError(String(e));
       } finally {
-        if (!cancelled) setPagesLoading(false);
+        if (!cancelled && !silent) setPagesLoading(false);
       }
     }
     void loadPages();
+    const timer = structureIsLive
+      ? window.setInterval(() => {
+          void loadPages(true);
+        }, 1200)
+      : null;
     return () => {
       cancelled = true;
+      if (timer !== null) window.clearInterval(timer);
     };
-  }, [activeTab, lastRunId, prevRunId]);
+  }, [activeTab, structureRunId, previousStructureRunId, structureIsLive]);
+
+  useEffect(() => {
+    setStructureRetryResultByUrl({});
+    setStructureRetryNotice("");
+    setStructureRetryNoticeTone("success");
+    setBulkRetryResult(null);
+    setBulkRetryError("");
+  }, [selectedSiteId, structureRunId]);
 
   const structureRows = useMemo<StructureRow[]>(() => {
     const prevByUrl = new Map<string, string>();
@@ -448,7 +644,8 @@ export default function ProfileDashboardPage() {
       if (selectedDomain !== "all" && host !== selectedDomain) continue;
       currentUrls.add(row.url);
       let status: StructureStatus = "unchanged";
-      if (row.status_code >= 400) status = "error";
+      if (row.fetch_error_code || (row.final_status_code || row.status_code) >= 400) status = "error";
+      else if (row.redirect_chain_json && row.redirect_chain_json.length > 1) status = "redirect";
       else if (!prevByUrl.has(row.url)) status = "added";
       else if ((prevByUrl.get(row.url) || "") !== (row.html_hash || "")) status = "changed";
       rows.push({
@@ -456,28 +653,48 @@ export default function ProfileDashboardPage() {
         domain: host,
         status,
         statusCode: row.status_code,
+        batchNo: row.crawl_batch_no,
       });
     }
-    for (const row of prevRunPages) {
-      const host = domainOf(row.url);
-      if (selectedDomain !== "all" && host !== selectedDomain) continue;
-      if (currentUrls.has(row.url)) continue;
-      rows.push({
-        url: row.url,
-        domain: host,
-        status: "deleted",
-        statusCode: 0,
-      });
+    if (!structureIsLive) {
+      for (const row of prevRunPages) {
+        const host = domainOf(row.url);
+        if (selectedDomain !== "all" && host !== selectedDomain) continue;
+        if (currentUrls.has(row.url)) continue;
+        rows.push({
+          url: row.url,
+          domain: host,
+          status: "deleted",
+          statusCode: 0,
+          batchNo: null,
+        });
+      }
     }
     rows.sort((a, b) => a.url.localeCompare(b.url));
     return rows;
-  }, [lastRunPages, prevRunPages, selectedDomain]);
+  }, [lastRunPages, prevRunPages, selectedDomain, structureIsLive]);
 
   const structureRowsFiltered = useMemo(() => {
     const q = structureSearch.trim().toLowerCase();
-    if (!q) return structureRows;
-    return structureRows.filter((row) => row.url.toLowerCase().includes(q));
-  }, [structureRows, structureSearch]);
+    return structureRows.filter((row) => {
+      if (structureViewFilter !== "all" && row.status !== structureViewFilter) return false;
+      return !q || row.url.toLowerCase().includes(q);
+    });
+  }, [structureRows, structureSearch, structureViewFilter]);
+  const structureStatusCounts = useMemo(
+    () => ({
+      added: structureRows.filter((row) => row.status === "added").length,
+      error: structureRows.filter((row) => row.status === "error").length,
+      changed: structureRows.filter((row) => row.status === "changed").length,
+    }),
+    [structureRows],
+  );
+  const problemPagesCount = useMemo(
+    () => lastRunPages.filter(
+      (row) => Boolean(row.fetch_error_code) || (row.final_status_code || row.status_code) >= 400,
+    ).length,
+    [lastRunPages],
+  );
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -562,9 +779,12 @@ export default function ProfileDashboardPage() {
                   selectedSiteId={selectedSiteId}
                   onSelect={(siteId) => {
                     setSelectedSiteId(siteId);
+                    setLastRunPages([]);
+                    setPrevRunPages([]);
                     setRunsError("");
                     setPagesError("");
                     setStructureSearch("");
+                    setStructureViewFilter("all");
                     setFailureDetailsOpen(false);
                   }}
                 />
@@ -779,26 +999,224 @@ export default function ProfileDashboardPage() {
                     title={
                       <div>
                         <div style={{ fontWeight: 700 }}>Структура сайта</div>
-                        <MetaText opacity={0.68}>Текущий срез последнего прогона</MetaText>
+                        <MetaText opacity={0.68}>
+                          {structureIsLive
+                            ? `Структура строится в реальном времени · run #${liveStructureRun.id}`
+                            : structureUpdatePending && structureRun
+                              ? `Показан последний готовый срез · run #${structureRun.id}`
+                              : structureRun
+                                ? `Готовый срез · run #${structureRun.id}`
+                              : "Структура появится после первого успешного обхода"}
+                        </MetaText>
                       </div>
                     }
                     actions={(
-                      <UiSelect
-                        value={selectedDomain}
-                        onChange={(e) => setSelectedDomain(e.target.value)}
-                        style={{ minWidth: 180 }}
-                      >
-                        <option value="all">Домен: все</option>
-                        {domains.map((d) => (
-                          <option key={d} value={d}>{d}</option>
-                        ))}
-                      </UiSelect>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        {canRunCrawler && problemPagesCount > 0 && (
+                          <CardActionButton
+                            variant="secondary"
+                            disabled={bulkRetryPending || structureUpdatePending}
+                            title={
+                              structureUpdatePending
+                                ? "Повторная проверка станет доступна после завершения текущего прогона."
+                                : "Повторно проверить проблемные страницы без изменения исходного результата."
+                            }
+                            onClick={() => void handleRetryAllProblemPages()}
+                          >
+                            {bulkRetryPending ? "Проверяем..." : `Повторить проблемные · ${problemPagesCount}`}
+                          </CardActionButton>
+                        )}
+                        <UiSelect
+                          value={selectedDomain}
+                          onChange={(e) => setSelectedDomain(e.target.value)}
+                          style={{ minWidth: 180 }}
+                        >
+                          <option value="all">Домен: все</option>
+                          {domains.map((d) => (
+                            <option key={d} value={d}>{d}</option>
+                          ))}
+                        </UiSelect>
+                      </div>
                     )}
                   />
-                  <ListTotalMeta label="Узлов (текущий срез)" total={structureRows.length} />
-                  {pagesLoading && <MetaText>Загрузка структуры...</MetaText>}
-                  {pagesError && <StatusText tone="danger">{pagesError}</StatusText>}
-                  {!pagesLoading && (
+                  {structureUpdatePending && (
+                    <Card variant="hint" style={{ padding: 10, display: "grid", gap: 6 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span
+                          className="project-run-spinner"
+                          aria-hidden="true"
+                          style={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: "50%",
+                            border: "2px solid currentColor",
+                            borderTopColor: "transparent",
+                            display: "inline-block",
+                            flex: "0 0 auto",
+                          }}
+                        />
+                        <StatusText tone="success">
+                          {projectRunPending ? "Идёт общий запуск сайтов проекта" : "Идёт сканирование выбранного сайта"}
+                        </StatusText>
+                        </div>
+                        <MetaText opacity={0.72}>Прошло: {runElapsedSeconds} сек.</MetaText>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+                        <span style={{ color: "#8fd18f" }}>✓ Запуск принят</span>
+                        <span style={{ opacity: 0.45 }}>→</span>
+                        <span className="project-run-live-stage">● Crawler обходит страницы</span>
+                        <span style={{ opacity: 0.45 }}>→</span>
+                        <span style={{ opacity: 0.62 }}>Обновление структуры</span>
+                      </div>
+                      {liveStructureRun?.current_url && (
+                        <Card style={{ padding: 8, display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
+                          <span
+                            className="project-run-spinner"
+                            aria-hidden="true"
+                            style={{
+                              width: 12,
+                              height: 12,
+                              borderRadius: "50%",
+                              border: "2px solid currentColor",
+                              borderTopColor: "transparent",
+                              display: "inline-block",
+                              flex: "0 0 auto",
+                            }}
+                          />
+                          <MetaText style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            Сейчас обрабатывается: {liveStructureRun.current_url}
+                          </MetaText>
+                        </Card>
+                      )}
+                      {liveStructureRun && (
+                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12 }}>
+                          <span style={{ color: "#8fd18f" }}>
+                            ✓ Готово: {liveStructureRun.pages_total}
+                          </span>
+                          <span>Обнаружено: {Math.max(liveStructureRun.pages_discovered, liveStructureRun.pages_total)}</span>
+                          <span style={{ opacity: 0.72 }}>
+                            В очереди: {Math.max(0, liveStructureRun.pages_discovered - liveStructureRun.pages_total)}
+                          </span>
+                          <span style={{ opacity: 0.72 }}>Текущий батч: {liveStructureRun.current_batch_no}</span>
+                        </div>
+                      )}
+                      <MetaText opacity={0.72}>
+                        {structureIsLive
+                          ? `Уже добавлено в текущий срез: ${lastRunPages.length}. Новые страницы появляются автоматически; дерево не прокручивается само и не сбивает ваше место.`
+                          : structureRun
+                          ? "Пока показываем последнюю готовую структуру. После завершения нужного прогона она обновится автоматически."
+                          : "Собираем первый срез. Структура появится автоматически после завершения нужного прогона."}
+                      </MetaText>
+                    </Card>
+                  )}
+                  {!structureUpdatePending && structureRun && (
+                    <Card
+                      variant={structureStatusCounts.error > 0 ? "warning" : "hint"}
+                      style={{ padding: 10, display: "grid", gap: 8 }}
+                    >
+                      <SectionHeaderRow
+                        title={
+                          <div>
+                            <div style={{ fontWeight: 700 }}>Прогон завершён — структура готова</div>
+                            <MetaText opacity={0.68}>
+                              Run #{structureRun.id} · {formatDuration(structureRun.started_at, structureRun.finished_at)}
+                            </MetaText>
+                          </div>
+                        }
+                        actions={<ProjectRunBadge status={structureRun.status} />}
+                      />
+                      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12 }}>
+                        <span>Страниц: {structureRun.pages_total}</span>
+                        <span style={{ color: "#8fb7ff" }}>Новых: {structureStatusCounts.added}</span>
+                        <span>Изменённых: {structureStatusCounts.changed}</span>
+                        <span style={{ color: structureStatusCounts.error > 0 ? "#e7a15a" : "#8fd18f" }}>
+                          Ошибок: {structureStatusCounts.error}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {structureStatusCounts.added > 0 && (
+                          <CardActionButton
+                            compact
+                            variant="secondary"
+                            onClick={() => setStructureViewFilter("added")}
+                          >
+                            Показать новые
+                          </CardActionButton>
+                        )}
+                        {structureStatusCounts.error > 0 && (
+                          <CardActionButton
+                            compact
+                            variant="secondary"
+                            onClick={() => setStructureViewFilter("error")}
+                          >
+                            Показать ошибки
+                          </CardActionButton>
+                        )}
+                      </div>
+                    </Card>
+                  )}
+                  {pagesLoading && (
+                    <Card variant="hint" style={{ padding: 10, display: "flex", gap: 8, alignItems: "center" }}>
+                      <span
+                        className="project-run-spinner"
+                        aria-hidden="true"
+                        style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: "50%",
+                          border: "2px solid currentColor",
+                          borderTopColor: "transparent",
+                          display: "inline-block",
+                          flex: "0 0 auto",
+                        }}
+                      />
+                      <MetaText>Загружаем готовую структуру и сравниваем её с предыдущим прогоном...</MetaText>
+                    </Card>
+                  )}
+                  {bulkRetryError && <StatusText tone="danger">{bulkRetryError}</StatusText>}
+                  {bulkRetryResult && (
+                    <Card
+                      variant={bulkRetryResult.failed > 0 ? "warning" : "hint"}
+                      style={{ padding: 10, display: "grid", gap: 5 }}
+                    >
+                      <StatusText tone={bulkRetryResult.failed > 0 ? "warning" : "success"}>
+                        Повторная проверка: доступно {bulkRetryResult.succeeded}, ошибка сохранилась {bulkRetryResult.failed}, пропущено {bulkRetryResult.skipped}.
+                      </StatusText>
+                      <MetaText opacity={0.68}>{bulkRetryResult.message}</MetaText>
+                    </Card>
+                  )}
+                  {structureRetryNotice && (
+                    <Card
+                      variant={structureRetryNoticeTone === "success" ? "hint" : "warning"}
+                      style={{ padding: 10 }}
+                    >
+                      <StatusText tone={structureRetryNoticeTone}>{structureRetryNotice}</StatusText>
+                    </Card>
+                  )}
+                  <SectionHeaderRow
+                    title={<ListTotalMeta label="Узлов (текущий срез)" total={structureRows.length} />}
+                    actions={
+                      structureRows.length > 0 ? (
+                        <SegmentedControl
+                          value={structureViewFilter}
+                          onChange={setStructureViewFilter}
+                          options={[
+                            { value: "all", label: `Все · ${structureRows.length}` },
+                            { value: "added", label: `Новые · ${structureStatusCounts.added}` },
+                            { value: "error", label: `Ошибки · ${structureStatusCounts.error}` },
+                          ]}
+                        />
+                      ) : undefined
+                    }
+                    style={{ alignItems: "flex-start", flexWrap: "wrap" }}
+                  />
+                  {pagesError && (
+                    <StatusText tone="danger">
+                      Не удалось обновить структуру. Последний загруженный срез сохранён: {pagesError}
+                    </StatusText>
+                  )}
+                  {(!pagesLoading || structureRows.length > 0) && (
                     <>
                       <StructureLegendHint />
                       <ClearableInput
@@ -808,18 +1226,34 @@ export default function ProfileDashboardPage() {
                       />
                     </>
                   )}
-                  {!pagesLoading && !pagesError && structureRows.length === 0 && (
-                    <MetaText>Структура пока недоступна: выполните как минимум один прогон.</MetaText>
+                  {!pagesLoading && structureRows.length === 0 && (
+                    <MetaText>
+                      {structureUpdatePending
+                        ? "Первый прогон ещё выполняется — здесь появятся найденные страницы после его завершения."
+                        : "Структура пока недоступна: выполните как минимум один прогон."}
+                    </MetaText>
                   )}
-                  {!pagesLoading && !pagesError && structureRows.length > 0 && structureRowsFiltered.length > 0 && (
+                  {structureRows.length > 0 && structureRowsFiltered.length > 0 && (
                     <ProjectStructureTree
                       rows={structureRowsFiltered}
                       query={structureSearch}
                       onPageSelect={(url) => void handleOpenPageContext(url)}
+                      canRetry={canRunCrawler && !structureUpdatePending}
+                      retryingUrl={structureRetryingUrl}
+                      retryResultByUrl={structureRetryResultByUrl}
+                      onRetryPage={(url) => void handleRetryStructurePage(url)}
+                      live={structureIsLive}
+                      currentBatchNo={liveStructureRun?.current_batch_no ?? null}
                     />
                   )}
-                  {!pagesLoading && !pagesError && structureRows.length > 0 && structureRowsFiltered.length === 0 && (
-                    <MetaText>По текущему поиску совпадений не найдено.</MetaText>
+                  {structureRows.length > 0 && structureRowsFiltered.length === 0 && (
+                    <MetaText>
+                      {structureViewFilter === "added"
+                        ? "В текущем срезе нет новых страниц."
+                        : structureViewFilter === "error"
+                          ? "В текущем срезе нет страниц с ошибками."
+                          : "По текущему поиску совпадений не найдено."}
+                    </MetaText>
                   )}
                 </div>
               </Card>
@@ -925,11 +1359,21 @@ export default function ProfileDashboardPage() {
           setDeleteConfirmOpen(false);
         }}
       />
+      <ToastHost
+        items={runToasts}
+        onClose={(toastId) => setRunToasts((current) => current.filter((item) => item.id !== toastId))}
+        autoCloseMs={7000}
+      />
       <PageContextDrawer
         open={pageContextOpen}
         loading={pageContextLoading}
         error={pageContextError}
         context={pageContext}
+        canRetry={canRunCrawler && !structureUpdatePending}
+        retryPending={pageRetryPending}
+        retryMessage={pageRetryMessage}
+        retrySucceeded={pageRetrySucceeded}
+        onRetry={() => void handleRetryCurrentPage()}
         onClose={() => {
           setPageContextOpen(false);
           setPageContextError("");
