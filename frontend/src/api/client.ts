@@ -115,6 +115,14 @@ export async function apiPost<T>(path: string, body: unknown, options?: { signal
   });
 }
 
+export async function apiPatch<T>(path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+    signal: options?.signal,
+  });
+}
+
 export async function apiDelete<T>(path: string, options?: { signal?: AbortSignal }): Promise<T> {
   return request<T>(path, { method: "DELETE", signal: options?.signal });
 }

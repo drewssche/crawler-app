@@ -67,7 +67,7 @@ export default function App() {
           }
         />
         <Route
-          path="compare"
+          path="profiles/:id/compare"
           element={
             <RequirePermission permission="data.view">
               <ComparePage />

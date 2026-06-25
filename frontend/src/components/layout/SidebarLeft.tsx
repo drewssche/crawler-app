@@ -57,8 +57,7 @@ export default function SidebarLeft() {
 
   const inWorkspace =
     location.pathname === "/" ||
-    location.pathname.startsWith("/profiles/") ||
-    location.pathname === "/compare";
+    location.pathname.startsWith("/profiles/");
 
   const envLabel = (import.meta.env.MODE || "dev").toUpperCase();
   const canOpenSettings = hasPermission(user?.role, "users.manage");

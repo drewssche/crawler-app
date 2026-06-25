@@ -12,6 +12,7 @@ const debugSource = await readFile(new URL("../src/pages/UiDebugPage.tsx", impor
 test("project routes use explicit permissions", () => {
   assert.match(appSource, /permission="profiles\.edit"[\s\S]*?<ProfileNewPage/);
   assert.match(appSource, /permission="data\.view"[\s\S]*?<ProfileDashboardPage/);
+  assert.match(appSource, /path="profiles\/:id\/compare"[\s\S]*?permission="data\.view"[\s\S]*?<ComparePage/);
 });
 
 test("viewer and editor project capabilities are distinct", () => {

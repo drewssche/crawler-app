@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { listProjectSiteSummaries, type ProjectSiteSummary } from "../api/projectSites";
+import { getPageContext, type PageContext } from "../api/pageContext";
 import { ApiError, apiDelete, apiGet, apiPost } from "../api/client";
+import PageContextDrawer from "../components/projects/PageContextDrawer";
+import ProjectSiteContextCards from "../components/projects/ProjectSiteContextCards";
+import ProjectSitesSettings from "../components/projects/ProjectSitesSettings";
 import Card from "../components/ui/Card";
 import CardActionButton from "../components/ui/CardActionButton";
 import CardFooterActions from "../components/ui/CardFooterActions";
 import ClearableInput from "../components/ui/ClearableInput";
 import ConfirmDialog from "../components/ui/ConfirmDialog";
 import ListTotalMeta from "../components/ui/ListTotalMeta";
-import ProjectDomainPills from "../components/ui/ProjectDomainPills";
 import ProjectRunBadge from "../components/ui/ProjectRunBadge";
 import StructureLegendHint from "../components/ui/StructureLegendHint";
 import ProjectStructureTree from "../components/ui/ProjectStructureTree";
@@ -37,6 +41,7 @@ type ProjectProfile = {
 type ProjectRun = {
   id: number;
   profile_id: number;
+  project_site_id: number;
   status: "CREATED" | "RUNNING" | "FINISHED" | "FAILED" | string;
   started_at: string;
   finished_at: string | null;
@@ -52,6 +57,25 @@ type ProjectPage = {
   url: string;
   status_code: number;
   html_hash: string;
+};
+
+type ProjectRunResult = {
+  project_site_id: number;
+  site_name: string;
+  run_id: number | null;
+  status: string;
+  failure_code: string | null;
+  failure_message: string | null;
+};
+
+type ProjectRunBatch = {
+  ok: boolean;
+  profile_id: number;
+  sites_total: number;
+  finished: number;
+  failed: number;
+  skipped: number;
+  results: ProjectRunResult[];
 };
 
 type ProjectTab = "main" | "history" | "settings";
@@ -111,10 +135,15 @@ export default function ProfileDashboardPage() {
   const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = useState<ProjectProfile | null>(null);
+  const [sites, setSites] = useState<ProjectSiteSummary[]>([]);
+  const [sitesLoading, setSitesLoading] = useState(true);
+  const [selectedSiteId, setSelectedSiteId] = useState<number | null>(null);
   const [runs, setRuns] = useState<ProjectRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [runPending, setRunPending] = useState(false);
+  const [projectRunPending, setProjectRunPending] = useState(false);
+  const [projectRunResult, setProjectRunResult] = useState<ProjectRunBatch | null>(null);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -129,6 +158,10 @@ export default function ProfileDashboardPage() {
   const [lastRunCoverage, setLastRunCoverage] = useState<{ ok: number; total: number } | null>(null);
   const [lastRunCoverageLoading, setLastRunCoverageLoading] = useState(false);
   const [failureDetailsOpen, setFailureDetailsOpen] = useState(false);
+  const [pageContextOpen, setPageContextOpen] = useState(false);
+  const [pageContextLoading, setPageContextLoading] = useState(false);
+  const [pageContextError, setPageContextError] = useState("");
+  const [pageContext, setPageContext] = useState<PageContext | null>(null);
   const canRunCrawler = hasPermission(user?.role, "crawler.run");
   const canEditProject = hasPermission(user?.role, "profiles.edit");
 
@@ -137,17 +170,33 @@ export default function ProfileDashboardPage() {
     return Array.isArray(rows) ? rows : [];
   }
 
-  async function loadRuns(profileId: string, silent = false) {
+  const loadSiteSummaries = useCallback(async (profileId: number, silent = false) => {
+    if (!silent) setSitesLoading(true);
+    try {
+      const next = await listProjectSiteSummaries(profileId);
+      setSites(next);
+      setSelectedSiteId((current) => {
+        if (current && next.some((site) => site.id === current)) return current;
+        return next.find((site) => site.is_enabled)?.id ?? next[0]?.id ?? null;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось загрузить сайты проекта.");
+    } finally {
+      if (!silent) setSitesLoading(false);
+    }
+  }, []);
+
+  const loadRuns = useCallback(async (siteId: number, silent = false) => {
     if (!silent) setRunsLoading(true);
     setRunsError("");
     try {
-      const data = await apiGet<ProjectRun[]>(`/runs/by-profile/${profileId}`);
+      const data = await apiGet<ProjectRun[]>(`/runs/by-site/${siteId}`);
       const next = Array.isArray(data) ? data : [];
       setRuns(next);
       const first = next[0];
-      if (first) {
+      if (first && project) {
         publishProjectRunLive({
-          profileId: Number(profileId),
+          profileId: project.id,
           status: first.status,
           startedAt: first.started_at,
           finishedAt: first.finished_at,
@@ -161,32 +210,52 @@ export default function ProfileDashboardPage() {
     } finally {
       if (!silent) setRunsLoading(false);
     }
-  }
+  }, [project]);
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
     setError("");
     setProject(null);
-    apiGet<ProjectProfile>(`/profiles/${id}`)
-      .then(setProject)
+    setSelectedSiteId(null);
+    Promise.all([
+      apiGet<ProjectProfile>(`/profiles/${id}`),
+      listProjectSiteSummaries(Number(id)),
+    ])
+      .then(([nextProject, nextSites]) => {
+        setProject(nextProject);
+        setSites(nextSites);
+        setSelectedSiteId(nextSites.find((site) => site.is_enabled)?.id ?? nextSites[0]?.id ?? null);
+      })
       .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-    void loadRuns(id);
+      .finally(() => {
+        setLoading(false);
+        setSitesLoading(false);
+      });
   }, [id]);
 
   useEffect(() => {
-    if (!id) return;
+    if (selectedSiteId === null) {
+      setRuns([]);
+      return;
+    }
+    void loadRuns(selectedSiteId);
+  }, [selectedSiteId, loadRuns]);
+
+  useEffect(() => {
+    if (selectedSiteId === null) return;
     const hasRunning = runs.some((r) => r.status === "RUNNING");
     if (!hasRunning) return;
     const timer = window.setInterval(() => {
-      void loadRuns(id, true);
+      void loadRuns(selectedSiteId, true);
+      if (project) void loadSiteSummaries(project.id, true);
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [id, runs]);
+  }, [selectedSiteId, runs, project, loadRuns, loadSiteSummaries]);
 
   async function handleStartRun() {
-    if (!project || runPending) return;
+    const selectedSite = sites.find((site) => site.id === selectedSiteId);
+    if (!project || !selectedSite || runPending) return;
     setRunPending(true);
     setRunsError("");
     setRuns((prev) => {
@@ -195,6 +264,7 @@ export default function ProfileDashboardPage() {
         {
           id: -Date.now(),
           profile_id: project.id,
+          project_site_id: selectedSite.id,
           status: "RUNNING",
           started_at: new Date().toISOString(),
           finished_at: null,
@@ -214,12 +284,18 @@ export default function ProfileDashboardPage() {
       pagesChanged: 0,
     });
     try {
-      await apiPost(`/runs/start/${project.id}`, {});
-      await loadRuns(String(project.id), true);
+      await apiPost(`/runs/start-site/${selectedSite.id}`, {});
+      await Promise.all([
+        loadRuns(selectedSite.id, true),
+        loadSiteSummaries(project.id, true),
+      ]);
     } catch (e) {
-      await loadRuns(String(project.id), true);
-      if (e instanceof ApiError && e.code === "run_already_active") {
-        setRunsError("Для этого проекта уже выполняется прогон. Другие проекты можно запускать независимо.");
+      await Promise.all([
+        loadRuns(selectedSite.id, true),
+        loadSiteSummaries(project.id, true),
+      ]);
+      if (e instanceof ApiError && ["run_already_active", "site_run_already_active"].includes(e.code)) {
+        setRunsError("Для выбранного сайта уже выполняется прогон.");
       } else if (e instanceof ApiError && e.status !== 502) {
         setRunsError(e.message);
       } else if (!(e instanceof ApiError)) {
@@ -227,6 +303,42 @@ export default function ProfileDashboardPage() {
       }
     } finally {
       setRunPending(false);
+    }
+  }
+
+  async function handleStartAllSites() {
+    if (!project || projectRunPending) return;
+    setProjectRunPending(true);
+    setProjectRunResult(null);
+    setRunsError("");
+    try {
+      const result = await apiPost<ProjectRunBatch>(`/runs/start-project/${project.id}`, {});
+      setProjectRunResult(result);
+      await loadSiteSummaries(project.id, true);
+      if (selectedSiteId !== null) await loadRuns(selectedSiteId, true);
+    } catch (e) {
+      setRunsError(e instanceof Error ? e.message : "Не удалось запустить сайты проекта.");
+    } finally {
+      setProjectRunPending(false);
+    }
+  }
+
+  async function handleOpenPageContext(url: string) {
+    if (lastRunId === null) return;
+    setPageContextOpen(true);
+    setPageContextLoading(true);
+    setPageContextError("");
+    setPageContext(null);
+    try {
+      setPageContext(await getPageContext(lastRunId, url));
+    } catch (e) {
+      setPageContextError(
+        e instanceof ApiError && e.status === 404
+          ? "Страница отсутствует в текущем run. Возможно, она была удалена после предыдущего прогона."
+          : e instanceof Error ? e.message : "Не удалось загрузить контекст страницы.",
+      );
+    } finally {
+      setPageContextLoading(false);
     }
   }
 
@@ -246,7 +358,11 @@ export default function ProfileDashboardPage() {
     }
   }
 
-  const domains = useMemo(() => parseDomains(project?.allowed_domains_csv || ""), [project?.allowed_domains_csv]);
+  const selectedSite = sites.find((site) => site.id === selectedSiteId) || null;
+  const domains = useMemo(
+    () => parseDomains(selectedSite?.allowed_domains_csv || ""),
+    [selectedSite?.allowed_domains_csv],
+  );
   const lastRun = runs[0] || null;
   const prevRun = runs[1] || null;
   const lastSuccessfulRun = runs.find((r) => r.status === "FINISHED" && Boolean(r.finished_at)) || null;
@@ -382,29 +498,99 @@ export default function ProfileDashboardPage() {
                 actions={canRunCrawler ? (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <CardActionButton
+                      variant="ghost"
+                      onClick={() => navigate(`/profiles/${project.id}/compare`, { state: { projectName: project.name } })}
+                    >
+                      Сравнить страницы
+                    </CardActionButton>
+                    <CardActionButton
+                      variant="secondary"
+                      onClick={() => void handleStartAllSites()}
+                      disabled={projectRunPending || runPending || sites.every((site) => !site.is_enabled)}
+                      title={sites.every((site) => !site.is_enabled) ? "В проекте нет включённых сайтов." : undefined}
+                    >
+                      {projectRunPending ? "Запуск всех..." : "Запустить все сайты"}
+                    </CardActionButton>
+                    <CardActionButton
                       variant="primary"
                       onClick={() => {
                         void handleStartRun();
                       }}
-                      disabled={runPending || hasRunning}
-                      title={hasRunning ? "Этот проект уже сканируется. Другие проекты можно запускать независимо." : undefined}
+                      disabled={runPending || projectRunPending || hasRunning || !selectedSite?.is_enabled}
+                      title={
+                        !selectedSite?.is_enabled
+                          ? "Включите выбранный сайт в настройках."
+                          : hasRunning ? "Выбранный сайт уже сканируется." : undefined
+                      }
                     >
-                      {runPending ? "Запуск..." : hasRunning ? "Прогон выполняется" : "Запустить прогон"}
+                      {runPending ? "Запуск..." : hasRunning ? "Прогон выполняется" : "Запустить выбранный сайт"}
                     </CardActionButton>
                   </div>
                 ) : undefined}
               />
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <MetaText opacity={0.86}>
-                  Ручной запуск доступен сейчас. Параметры сканирования и статус расписания находятся в настройках проекта.
+                  Выберите сайт карточкой: показатели, структура, история и ручной запуск ниже относятся только к нему.
                 </MetaText>
               </div>
               {hasRunning && (
                 <MetaText opacity={0.72}>
-                  Сейчас сканируется только этот проект. В других проектах запуск остается доступен.
+                  Сейчас сканируется выбранный сайт. Остальные сайты проекта сохраняют независимую историю.
                 </MetaText>
               )}
-              <ProjectDomainPills csv={project.allowed_domains_csv} fallbackUrl={project.start_url} />
+            </div>
+          </Card>
+
+          <Card>
+            <div style={{ display: "grid", gap: 10 }}>
+              <SectionHeaderRow
+                title={
+                  <div>
+                    <div style={{ fontWeight: 700 }}>Сайты проекта</div>
+                    <MetaText opacity={0.68}>Карточка задаёт рабочий контекст страницы.</MetaText>
+                  </div>
+                }
+                actions={<MetaText opacity={0.68}>{sites.length} сайт(а)</MetaText>}
+              />
+              {sitesLoading && <MetaText>Загрузка сайтов...</MetaText>}
+              {!sitesLoading && sites.length === 0 && (
+                <StatusText tone="warning">В проекте пока нет доступных сайтов.</StatusText>
+              )}
+              {!sitesLoading && sites.length > 0 && (
+                <ProjectSiteContextCards
+                  sites={sites}
+                  selectedSiteId={selectedSiteId}
+                  onSelect={(siteId) => {
+                    setSelectedSiteId(siteId);
+                    setRunsError("");
+                    setPagesError("");
+                    setStructureSearch("");
+                    setFailureDetailsOpen(false);
+                  }}
+                />
+              )}
+              {projectRunResult && (
+                <Card
+                  variant={projectRunResult.failed > 0 || projectRunResult.skipped > 0 ? "warning" : "hint"}
+                  style={{ display: "grid", gap: 6 }}
+                >
+                  <div style={{ fontWeight: 700 }}>Общий запуск завершён</div>
+                  <MetaText>
+                    Успешно: {projectRunResult.finished} · с ошибкой: {projectRunResult.failed} · пропущено: {projectRunResult.skipped}
+                  </MetaText>
+                  {projectRunResult.results
+                    .filter((result) => result.status !== "FINISHED")
+                    .map((result) => (
+                      <StatusText
+                        key={result.project_site_id}
+                        tone={result.status === "FAILED" ? "danger" : "warning"}
+                        style={{ fontSize: 12 }}
+                      >
+                        {result.site_name}: {result.failure_message || result.status}
+                      </StatusText>
+                    ))}
+                </Card>
+              )}
             </div>
           </Card>
 
@@ -422,18 +608,61 @@ export default function ProfileDashboardPage() {
 
           {activeTab === "main" && (
             <>
+              {selectedSite && (
+                <Card
+                  variant={
+                    selectedSite.anomaly.status === "anomaly"
+                      ? selectedSite.anomaly.severity === "danger" ? "danger" : "warning"
+                      : selectedSite.anomaly.status === "normal" ? "hint" : "default"
+                  }
+                >
+                  <div style={{ display: "grid", gap: 7 }}>
+                    <SectionHeaderRow
+                      title={<div style={{ fontWeight: 700 }}>Состояние сайта: {selectedSite.name}</div>}
+                      actions={
+                        selectedSite.anomaly.status === "anomaly"
+                          ? <StatusText tone={selectedSite.anomaly.severity === "danger" ? "danger" : "warning"}>Аномалия</StatusText>
+                          : selectedSite.anomaly.status === "normal"
+                            ? <StatusText tone="success">Норма</StatusText>
+                            : <StatusText tone="muted">Недостаточно данных</StatusText>
+                      }
+                    />
+                    <MetaText>{selectedSite.anomaly.message}</MetaText>
+                    {selectedSite.anomaly.status === "insufficient_data" && (
+                      <MetaText opacity={0.68}>
+                        Успешных прогонов: {selectedSite.anomaly.successful_runs}. Для оценки нужны текущий прогон и минимум {selectedSite.anomaly.baseline_runs_required} предыдущих успешных прогона.
+                      </MetaText>
+                    )}
+                    {selectedSite.anomaly.reasons.map((reason) => (
+                      <StatusText
+                        key={reason.code}
+                        tone={reason.severity === "danger" ? "danger" : "warning"}
+                        style={{ fontSize: 13 }}
+                      >
+                        {reason.message}
+                      </StatusText>
+                    ))}
+                    {selectedSite.anomaly.baseline && selectedSite.anomaly.latest && (
+                      <MetaText opacity={0.65}>
+                        Baseline: в среднем {selectedSite.anomaly.baseline.pages_average} страниц · последний прогон: {selectedSite.anomaly.latest.pages_total}.
+                      </MetaText>
+                    )}
+                  </div>
+                </Card>
+              )}
+
               <Card>
                 <div style={{ display: "grid", gap: 8 }}>
                   <div style={{ fontWeight: 700 }}>Последний прогон</div>
                   {runsError ? <StatusText tone="danger">{runsError}</StatusText> : null}
                   {!runsLoading && !lastRun && (
                     <div style={{ display: "grid", gap: 8 }}>
-                      <MetaText>Прогонов пока нет. Запустите первый сбор, чтобы получить структуру и метрики проекта.</MetaText>
+                      <MetaText>Для выбранного сайта прогонов пока нет. Запустите первый сбор, чтобы получить структуру и метрики.</MetaText>
                       {canRunCrawler && <div>
                         <CardActionButton
                           variant="primary"
                           onClick={() => void handleStartRun()}
-                          disabled={runPending || hasRunning}
+                          disabled={runPending || projectRunPending || hasRunning || !selectedSite?.is_enabled}
                         >
                           {runPending ? "Запуск..." : "Запустить первый прогон"}
                         </CardActionButton>
@@ -460,13 +689,13 @@ export default function ProfileDashboardPage() {
                               <CardActionButton
                                 variant="primary"
                                 onClick={() => void handleStartRun()}
-                                disabled={runPending || hasRunning}
+                                disabled={runPending || projectRunPending || hasRunning || !selectedSite?.is_enabled}
                               >
                                 Повторить
                               </CardActionButton>
                               <CardActionButton
                                 variant="secondary"
-                                onClick={() => window.open(project.start_url, "_blank", "noopener,noreferrer")}
+                                onClick={() => selectedSite && window.open(selectedSite.start_url, "_blank", "noopener,noreferrer")}
                               >
                                 Проверить адрес
                               </CardActionButton>
@@ -479,7 +708,7 @@ export default function ProfileDashboardPage() {
                             </CardFooterActions>}
                             {failureDetailsOpen && (
                               <MetaText opacity={0.68}>
-                                Код: {lastRun.failure_code || "unknown_error"}; run #{lastRun.id}; адрес: {project.start_url}
+                                Код: {lastRun.failure_code || "unknown_error"}; run #{lastRun.id}; адрес: {selectedSite?.start_url || "—"}
                               </MetaText>
                             )}
                           </div>
@@ -583,7 +812,11 @@ export default function ProfileDashboardPage() {
                     <MetaText>Структура пока недоступна: выполните как минимум один прогон.</MetaText>
                   )}
                   {!pagesLoading && !pagesError && structureRows.length > 0 && structureRowsFiltered.length > 0 && (
-                    <ProjectStructureTree rows={structureRowsFiltered} query={structureSearch} />
+                    <ProjectStructureTree
+                      rows={structureRowsFiltered}
+                      query={structureSearch}
+                      onPageSelect={(url) => void handleOpenPageContext(url)}
+                    />
                   )}
                   {!pagesLoading && !pagesError && structureRows.length > 0 && structureRowsFiltered.length === 0 && (
                     <MetaText>По текущему поиску совпадений не найдено.</MetaText>
@@ -597,7 +830,12 @@ export default function ProfileDashboardPage() {
             <Card>
               <div style={{ display: "grid", gap: 10 }}>
                 <SectionHeaderRow
-                  title={<div style={{ fontWeight: 700 }}>История прогонов</div>}
+                  title={
+                    <div>
+                      <div style={{ fontWeight: 700 }}>История прогонов</div>
+                      <MetaText opacity={0.68}>{selectedSite?.name || "Сайт не выбран"}</MetaText>
+                    </div>
+                  }
                   actions={<ListTotalMeta label="Прогонов" total={runs.length} />}
                 />
                 <div style={{ display: "grid", gap: 8 }}>
@@ -626,60 +864,12 @@ export default function ProfileDashboardPage() {
 
           {activeTab === "settings" && canEditProject && (
             <div style={{ display: "grid", gap: 12 }}>
-              <Card>
-                <div style={{ display: "grid", gap: 10 }}>
-                  <div style={{ fontWeight: 700 }}>Основные параметры</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-                    <Card style={{ padding: 10, display: "grid", gap: 6 }}>
-                      <MetaText opacity={0.68}>Название</MetaText>
-                      <div style={{ fontWeight: 700 }}>{project.name}</div>
-                    </Card>
-                    <Card style={{ padding: 10, display: "grid", gap: 6 }}>
-                      <MetaText opacity={0.68}>Стартовый адрес</MetaText>
-                      <div style={{ wordBreak: "break-word" }}>{project.start_url}</div>
-                    </Card>
-                    <Card style={{ padding: 10, display: "grid", gap: 6 }}>
-                      <MetaText opacity={0.68}>Состояние проекта</MetaText>
-                      <StatusText tone={project.is_enabled ? "success" : "warning"}>
-                        {project.is_enabled ? "Активен" : "Отключен"}
-                      </StatusText>
-                    </Card>
-                  </div>
-                  <div>
-                    <MetaText opacity={0.68} style={{ marginBottom: 6 }}>Разрешенные домены</MetaText>
-                    <ProjectDomainPills csv={project.allowed_domains_csv} fallbackUrl={project.start_url} />
-                  </div>
-                  <MetaText opacity={0.68}>
-                    Редактирование названия и области сканирования появится вместе с безопасным update API и проверкой canonical scope.
-                  </MetaText>
-                </div>
-              </Card>
-
-              <Card>
-                <div style={{ display: "grid", gap: 10 }}>
-                  <div style={{ fontWeight: 700 }}>Сканирование и лимиты</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
-                    <Card style={{ padding: 10 }}>
-                      <MetaText opacity={0.68}>Лимит страниц</MetaText>
-                      <div style={{ marginTop: 6, fontWeight: 800, fontSize: 20 }}>{project.max_pages}</div>
-                    </Card>
-                    <Card style={{ padding: 10 }}>
-                      <MetaText opacity={0.68}>Параллельность</MetaText>
-                      <div style={{ marginTop: 6, fontWeight: 800, fontSize: 20 }}>{project.concurrency}</div>
-                    </Card>
-                    <Card style={{ padding: 10 }}>
-                      <MetaText opacity={0.68}>robots.txt</MetaText>
-                      <div style={{ marginTop: 6, fontWeight: 700 }}>{project.respect_robots ? "Соблюдается" : "Игнорируется"}</div>
-                    </Card>
-                  </div>
-                  <MetaText opacity={0.68}>
-                    Исключения путей: {project.exclude_paths_csv || "не заданы"}
-                  </MetaText>
-                  <MetaText opacity={0.68}>
-                    Исключения расширений: {project.exclude_ext_csv || "не заданы"}
-                  </MetaText>
-                </div>
-              </Card>
+              <ProjectSitesSettings
+                profileId={project.id}
+                onChanged={() => {
+                  void loadSiteSummaries(project.id, true);
+                }}
+              />
 
               <Card variant="hint">
                 <div style={{ display: "grid", gap: 8 }}>
@@ -733,6 +923,16 @@ export default function ProfileDashboardPage() {
         onCancel={() => {
           if (deletePending) return;
           setDeleteConfirmOpen(false);
+        }}
+      />
+      <PageContextDrawer
+        open={pageContextOpen}
+        loading={pageContextLoading}
+        error={pageContextError}
+        context={pageContext}
+        onClose={() => {
+          setPageContextOpen(false);
+          setPageContextError("");
         }}
       />
     </div>

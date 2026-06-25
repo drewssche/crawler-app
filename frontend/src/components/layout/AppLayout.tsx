@@ -24,7 +24,7 @@ function parentPathFor(pathname: string) {
   if (path === "/" || path === "") return null;
   if (path === "/settings") return null;
   if (path === "/users" || path === "/logs" || path === "/monitoring" || path === "/events" || path === "/root-admins" || path === "/ui-debug") return "/settings";
-  if (path === "/compare") return "/";
+  if (/^\/profiles\/[0-9]+\/compare$/.test(path)) return path.replace(/\/compare$/, "");
   if (path === "/profiles/new") return "/";
   if (/^\/profiles\/[0-9]+$/.test(path)) return "/";
 
@@ -55,6 +55,7 @@ export default function AppLayout() {
     path === "/root-admins" ||
     path === "/ui-debug";
   const canViewEvents = hasPermission(user?.role, "events.view");
+  const compareFocusMode = /^\/profiles\/[0-9]+\/compare$/.test(path);
 
   const crumbs: Array<{ label: string; path: string }> = [];
 
@@ -75,8 +76,13 @@ export default function AppLayout() {
     }
   } else {
     crumbs.push({ label: "\u0420\u0430\u0431\u043e\u0447\u0430\u044f \u043e\u0431\u043b\u0430\u0441\u0442\u044c", path: "/" });
-    if (path === "/compare") {
-      crumbs.push({ label: "\u0421\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435", path: "/compare" });
+    const compareMatch = path.match(/^\/profiles\/([0-9]+)\/compare$/);
+    if (compareMatch) {
+      crumbs.push({
+        label: profileCrumbLabel || `Проект #${compareMatch[1]}`,
+        path: `/profiles/${compareMatch[1]}`,
+      });
+      crumbs.push({ label: "\u0421\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435", path });
     } else if (path === "/profiles/new") {
       crumbs.push({ label: "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442", path: "/profiles/new" });
     } else {
@@ -89,19 +95,10 @@ export default function AppLayout() {
   }
 
   useEffect(() => {
-    const match = path.match(/^\/profiles\/([0-9]+)$/);
-    if (!match) {
-      setProfileCrumbLabel(null);
-      return;
-    }
+    const match = path.match(/^\/profiles\/([0-9]+)(?:\/compare)?$/);
+    if (!match) return;
     const profileId = Number(match[1]);
-    if (!Number.isFinite(profileId) || profileId <= 0) {
-      setProfileCrumbLabel(null);
-      return;
-    }
-    if (stateProjectName.trim()) {
-      setProfileCrumbLabel(normalizeProjectLabel(stateProjectName, profileId));
-    }
+    if (!Number.isFinite(profileId) || profileId <= 0) return;
 
     let cancelled = false;
     async function loadProfileLabel() {
@@ -138,23 +135,27 @@ export default function AppLayout() {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: canViewEvents
-          ? rightCollapsed
-            ? "260px minmax(0, 1fr) 68px"
-            : "260px minmax(0, 1fr) 320px"
-          : "260px minmax(0, 1fr)",
-        gap: 16,
+        gridTemplateColumns: compareFocusMode
+          ? "minmax(0, 1fr)"
+          : canViewEvents
+            ? rightCollapsed
+              ? "260px minmax(0, 1fr) 68px"
+              : "260px minmax(0, 1fr) 320px"
+            : "260px minmax(0, 1fr)",
+        gap: compareFocusMode ? 0 : 16,
         width: "100vw",
         height: "100vh",
         overflow: "hidden",
         transition: "grid-template-columns 220ms cubic-bezier(0.2, 0.8, 0.2, 1)",
       }}
     >
-      <aside style={{ padding: 16, boxSizing: "border-box", minHeight: 0 }}>
-        <SidebarLeft />
-      </aside>
+      {!compareFocusMode && (
+        <aside style={{ padding: 16, boxSizing: "border-box", minHeight: 0 }}>
+          <SidebarLeft />
+        </aside>
+      )}
 
-      <main style={{ padding: 16, boxSizing: "border-box", minWidth: 0, minHeight: 0, overflow: "hidden" }}>
+      <main style={{ padding: compareFocusMode ? 8 : 16, boxSizing: "border-box", minWidth: 0, minHeight: 0, overflow: "hidden" }}>
         <div
           style={{
             border: "1px solid #3333",
@@ -198,7 +199,7 @@ export default function AppLayout() {
         </div>
       </main>
 
-      {canViewEvents && (
+      {canViewEvents && !compareFocusMode && (
         <aside
           style={{
             padding: rightCollapsed ? 8 : 16,

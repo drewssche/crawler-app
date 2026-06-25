@@ -1,55 +1,65 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import type { SiteScopeMode } from "../api/projectSites";
 import { ApiError, apiPost } from "../api/client";
+import SiteScopeFields from "../components/projects/SiteScopeFields";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
-import { StatusText } from "../components/ui/StatusText";
-import { deriveProjectName, domainToStartUrl, parseProjectDomainsInput } from "../utils/projectDomains";
+import { MetaText, StatusText } from "../components/ui/StatusText";
+import {
+  deriveSiteName,
+  normalizePathPrefix,
+  normalizeSiteUrl,
+  validateSiteDraft,
+} from "../utils/siteScope";
 import { invalidateProfilesCache } from "../utils/profileListCache";
 
 type ProfileOut = {
   id: number;
   name: string;
   start_url: string;
-  allowed_domains_csv: string;
 };
 
 type ExistingProjectConflict = Pick<ProfileOut, "id" | "name" | "start_url">;
 
 export default function ProfileNewPage() {
   const navigate = useNavigate();
-  const domainsInputRef = useRef<HTMLTextAreaElement>(null);
-  const [name, setName] = useState("");
-  const [domainsInput, setDomainsInput] = useState("");
+  const startUrlRef = useRef<HTMLInputElement>(null);
+  const [projectName, setProjectName] = useState("");
+  const [siteName, setSiteName] = useState("");
+  const [startUrl, setStartUrl] = useState("");
+  const [scopeMode, setScopeMode] = useState<SiteScopeMode>("whole_site");
+  const [pathPrefix, setPathPrefix] = useState("/");
   const [error, setError] = useState("");
   const [existingProject, setExistingProject] = useState<ExistingProjectConflict | null>(null);
   const [pending, setPending] = useState(false);
 
-  const parsed = useMemo(() => parseProjectDomainsInput(domainsInput), [domainsInput]);
-  const domains = parsed.domains;
-  const draftName = name.trim() || deriveProjectName(domains);
+  const suggestedSiteName = useMemo(() => deriveSiteName(startUrl), [startUrl]);
+  const finalSiteName = siteName.trim() || suggestedSiteName;
+  const finalProjectName = projectName.trim() || finalSiteName;
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
     setError("");
     setExistingProject(null);
-    if (domains.length < 1) {
-      setError("Добавьте хотя бы один валидный домен.");
-      return;
-    }
-    if (parsed.invalid.length > 0) {
-      setError(`Исправьте невалидные значения: ${parsed.invalid.join(", ")}`);
+    const validationError = validateSiteDraft(startUrl, scopeMode, pathPrefix);
+    if (validationError) {
+      setError(validationError);
+      startUrlRef.current?.focus();
       return;
     }
 
     setPending(true);
     try {
-      const payload = {
-        name: draftName,
-        start_url: domainToStartUrl(domains[0]),
-        allowed_domains_csv: domains.join(","),
-      };
-      const created = await apiPost<ProfileOut>("/profiles", payload);
+      const normalizedUrl = normalizeSiteUrl(startUrl);
+      const created = await apiPost<ProfileOut>("/profiles", {
+        name: finalProjectName,
+        site_name: finalSiteName,
+        start_url: normalizedUrl,
+        scope_mode: scopeMode,
+        path_prefix: scopeMode === "path_prefix" ? normalizePathPrefix(pathPrefix) : "/",
+        allowed_domains_csv: "",
+      });
       invalidateProfilesCache();
       navigate(`/profiles/${created.id}`, { state: { projectName: created.name } });
     } catch (err) {
@@ -57,7 +67,6 @@ export default function ProfileNewPage() {
         const details = err.details as { existing_project?: ExistingProjectConflict } | undefined;
         if (details?.existing_project) {
           setExistingProject(details.existing_project);
-          setError("");
         } else {
           setError("Проект для этого адреса уже существует.");
         }
@@ -70,80 +79,80 @@ export default function ProfileNewPage() {
   }
 
   return (
-    <div style={{ display: "grid", gap: 12, maxWidth: 760 }}>
-      <h2 style={{ marginTop: 0 }}>Создать проект</h2>
+    <div style={{ display: "grid", gap: 12, maxWidth: 820 }}>
+      <div>
+        <h2 style={{ margin: 0 }}>Создать проект</h2>
+        <MetaText opacity={0.72} style={{ marginTop: 5 }}>
+          Начните с одного сайта. Дополнительные сайты можно добавить в настройках проекта.
+        </MetaText>
+      </div>
+
       <Card>
-        <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
+        <form onSubmit={onSubmit} style={{ display: "grid", gap: 14 }}>
           <label style={{ display: "grid", gap: 6 }}>
-            <span>Название проекта (необязательно)</span>
+            <span>Название проекта</span>
             <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Например: Мониторинг сайта компании"
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+              placeholder={`Например: ${suggestedSiteName === "Сайт" ? "Мониторинг продукта" : suggestedSiteName}`}
+              disabled={pending}
               style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
             />
+            <MetaText opacity={0.65}>Можно оставить пустым — используем название первого сайта.</MetaText>
           </label>
 
-          <label style={{ display: "grid", gap: 6 }}>
-            <span>Домены (обязательно, 1+)</span>
-            <textarea
-              ref={domainsInputRef}
-              value={domainsInput}
-              onChange={(e) => setDomainsInput(e.target.value)}
-              placeholder={"example.com\nhelp.example.com\nили через запятую: example.com, help.example.com"}
-              rows={5}
-              style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10, resize: "vertical" }}
+          <Card variant="hint" style={{ display: "grid", gap: 10 }}>
+            <div style={{ fontWeight: 700 }}>Первый сайт</div>
+            <SiteScopeFields
+              name={siteName}
+              startUrl={startUrl}
+              scopeMode={scopeMode}
+              pathPrefix={pathPrefix}
+              disabled={pending}
+              startUrlInputRef={startUrlRef}
+              onNameChange={setSiteName}
+              onStartUrlChange={setStartUrl}
+              onScopeModeChange={setScopeMode}
+              onPathPrefixChange={setPathPrefix}
             />
-          </label>
+          </Card>
 
-          <div style={{ fontSize: 13, opacity: 0.82 }}>
-            Будет сохранено:
-            <br />
-            имя: <b>{draftName || "—"}</b>
-            <br />
-            доменов: <b>{domains.length}</b>
-            {parsed.invalid.length > 0 && (
-              <>
-                <br />
-                невалидных значений: <b>{parsed.invalid.length}</b>
-              </>
-            )}
-          </div>
+          <Card style={{ padding: 10 }}>
+            <MetaText opacity={0.72}>Будет создано</MetaText>
+            <div style={{ marginTop: 5, fontWeight: 700 }}>{finalProjectName}</div>
+            <MetaText style={{ marginTop: 3 }}>
+              {finalSiteName} · {scopeMode === "whole_site" ? "весь сайт" : `раздел ${normalizePathPrefix(pathPrefix)}`}
+            </MetaText>
+          </Card>
 
           {error && <StatusText tone="danger">{error}</StatusText>}
 
           {existingProject && (
-            <Card style={{ padding: 12 }}>
-              <div style={{ display: "grid", gap: 8 }}>
-                <StatusText tone="warning">
-                  Проект для этого адреса уже существует: «{existingProject.name}».
-                </StatusText>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    onClick={() => navigate(`/profiles/${existingProject.id}`)}
-                  >
-                    Открыть существующий
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      setExistingProject(null);
-                      domainsInputRef.current?.focus();
-                    }}
-                  >
-                    Изменить адрес
-                  </Button>
-                </div>
+            <Card variant="warning" style={{ display: "grid", gap: 8 }}>
+              <StatusText tone="warning">
+                Проект для этого адреса уже существует: «{existingProject.name}».
+              </StatusText>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Button type="button" variant="primary" onClick={() => navigate(`/profiles/${existingProject.id}`)}>
+                  Открыть существующий
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setExistingProject(null);
+                    startUrlRef.current?.focus();
+                  }}
+                >
+                  Изменить адрес
+                </Button>
               </div>
             </Card>
           )}
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Button type="submit" variant="primary" disabled={pending}>
-              {pending ? "Создание..." : "+ Создать проект"}
+              {pending ? "Создание..." : "Создать проект"}
             </Button>
             <Button type="button" variant="ghost" onClick={() => navigate("/")} disabled={pending}>
               Отмена

@@ -215,6 +215,7 @@ function TreeRow({
   query,
   onToggle,
   onLoadMore,
+  onPageSelect,
 }: {
   node: TreeNode;
   depth: number;
@@ -223,6 +224,7 @@ function TreeRow({
   query: string;
   onToggle: (key: string) => void;
   onLoadMore: (key: string) => void;
+  onPageSelect?: (url: string) => void;
 }) {
   const hasChildren = node.children.length > 0;
   const isExpanded = expanded.has(node.key);
@@ -256,6 +258,10 @@ function TreeRow({
           className="structure-tree-link"
           onClick={() => {
             if (!canOpen) return;
+            if (node.hasPage && onPageSelect) {
+              onPageSelect(node.url);
+              return;
+            }
             window.open(node.url, "_blank", "noopener,noreferrer");
           }}
           title={node.url}
@@ -300,6 +306,7 @@ function TreeRow({
                 query={query}
                 onToggle={onToggle}
                 onLoadMore={onLoadMore}
+                onPageSelect={onPageSelect}
               />
             ))}
             {isExpanded && hasMoreChildren ? (
@@ -320,25 +327,21 @@ function TreeRow({
 export default function ProjectStructureTree({
   rows,
   query = "",
+  onPageSelect,
 }: {
   rows: ProjectStructureRow[];
   query?: string;
+  onPageSelect?: (url: string) => void;
 }) {
   const fullTree = useMemo(() => buildTree(rows), [rows]);
   const tree = useMemo(() => filterTree(fullTree, query), [fullTree, query]);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
   const [visibleByNode, setVisibleByNode] = useState<Record<string, number>>({});
   const nodeIndex = useMemo(() => indexTree(tree), [tree]);
-
-  useEffect(() => {
-    const trimmed = query.trim();
-    if (!trimmed) return;
-    setExpandedKeys(collectExpandableKeys(tree));
-  }, [query, tree]);
-
-  useEffect(() => {
-    setVisibleByNode({});
-  }, [rows, query]);
+  const effectiveExpandedKeys = useMemo(
+    () => query.trim() ? collectExpandableKeys(tree) : expandedKeys,
+    [query, tree, expandedKeys],
+  );
 
   return (
     <div className="structure-tree-root">
@@ -348,7 +351,7 @@ export default function ProjectStructureTree({
               key={node.key}
               node={node}
               depth={0}
-              expanded={expandedKeys}
+              expanded={effectiveExpandedKeys}
               visibleByNode={visibleByNode}
               query={query}
               onToggle={(key) => {
@@ -376,12 +379,13 @@ export default function ProjectStructureTree({
               return next;
             });
           }}
-          onLoadMore={(key) => {
+              onLoadMore={(key) => {
             setVisibleByNode((current) => ({
               ...current,
               [key]: (current[key] || NODE_BATCH_SIZE) + NODE_BATCH_SIZE,
             }));
           }}
+          onPageSelect={onPageSelect}
         />
       ))}
     </div>

@@ -11,6 +11,10 @@ class Run(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     profile_id: Mapped[int] = mapped_column(ForeignKey("profiles.id"), index=True)
+    project_site_id: Mapped[int] = mapped_column(
+        ForeignKey("project_sites.id"),
+        index=True,
+    )
 
     status: Mapped[str] = mapped_column(String(30), default="CREATED")
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

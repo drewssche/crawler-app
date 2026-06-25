@@ -17,12 +17,14 @@ from app.db.models.admin_audit_log import AdminAuditLog
 from app.db.models.event_feed import EventFeed
 from app.db.models.login_history import LoginHistory
 from app.db.models.profile import Profile
+from app.db.models.project_site import ProjectSite
 from app.db.models.page import Page
 from app.db.models.run import Run
 from app.db.models.trusted_device import TrustedDevice
 from app.db.models.user import User
 from app.db.session import get_db
 from app.main import app
+from app.services.project_sites import build_project_site, create_primary_site_for_profile
 
 
 def _make_user(
@@ -50,6 +52,14 @@ def _make_user(
 def _auth_header(email: str, role: str = "viewer", token_version: int = 0) -> dict[str, str]:
     token = create_access_token({"sub": email, "role": role, "tv": token_version})
     return {"Authorization": f"Bearer {token}"}
+
+
+def _add_primary_site(db: Session, profile: Profile) -> ProjectSite:
+    if profile.id is None:
+        db.flush()
+    site = create_primary_site_for_profile(db, profile)
+    db.flush()
+    return site
 
 
 def _extract_error_payload(response):
@@ -147,7 +157,13 @@ def test_project_and_run_endpoints_enforce_role_permissions():
         db.add_all([viewer, editor, profile])
         db.commit()
         db.refresh(profile)
-        run = Run(profile_id=profile.id, status="RUNNING", started_at=datetime.utcnow())
+        site = _add_primary_site(db, profile)
+        run = Run(
+            profile_id=profile.id,
+            project_site_id=site.id,
+            status="RUNNING",
+            started_at=datetime.utcnow(),
+        )
         db.add(run)
         db.commit()
         db.refresh(run)
@@ -171,11 +187,29 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     assert client.get(f"/profiles/{profile_id}").status_code == 401
     assert client.get(f"/runs/by-profile/{profile_id}").status_code == 401
     assert client.get(f"/runs/{run_id}/pages").status_code == 401
+    assert client.get(
+        f"/runs/{run_id}/page-context",
+        params={"url": "https://protected.test/"},
+    ).status_code == 401
     assert client.post(f"/runs/start/{profile_id}").status_code == 401
 
     assert client.get(f"/profiles/{profile_id}", headers=viewer_headers).status_code == 200
     assert client.get(f"/runs/by-profile/{profile_id}", headers=viewer_headers).status_code == 200
     assert client.get(f"/runs/{run_id}/pages", headers=viewer_headers).status_code == 200
+    page_context = client.get(
+        f"/runs/{run_id}/page-context",
+        params={"url": "https://protected.test/"},
+        headers=viewer_headers,
+    )
+    assert page_context.status_code == 200
+    assert page_context.json()["seo"]["score"] < 50
+    snapshot = client.get(
+        f"/runs/{run_id}/snapshot",
+        params={"url": "https://protected.test/"},
+        headers=viewer_headers,
+    )
+    assert snapshot.status_code == 200
+    assert snapshot.json()["html"] == "<html></html>"
     assert client.post(f"/runs/start/{profile_id}", headers=viewer_headers).status_code == 403
     assert client.post(
         "/profiles",
@@ -192,6 +226,179 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     )
     assert created.status_code == 200
     assert client.delete(f"/profiles/{created.json()['id']}", headers=editor_headers).status_code == 200
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_project_sites_are_created_canonically_and_enforce_role_permissions():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                _make_user(email="site-viewer@test.local", role="viewer", is_approved=True),
+                _make_user(email="site-editor@test.local", role="editor", is_approved=True),
+            ]
+        )
+        db.commit()
+
+    client = TestClient(app)
+    viewer_headers = _auth_header("site-viewer@test.local", role="viewer")
+    editor_headers = _auth_header("site-editor@test.local", role="editor")
+
+    created_profile = client.post(
+        "/profiles",
+        json={
+            "name": "Multi-site project",
+            "start_url": "https://primary.example.test/",
+            "allowed_domains_csv": "",
+        },
+        headers=editor_headers,
+    )
+    assert created_profile.status_code == 200
+    profile_id = created_profile.json()["id"]
+
+    primary_rows = _extract_success_data(
+        client.get(f"/profiles/{profile_id}/sites", headers=viewer_headers)
+    )
+    assert len(primary_rows) == 1
+    assert primary_rows[0]["role"] == "primary"
+    assert primary_rows[0]["canonical_origin"] == "https://primary.example.test"
+    assert primary_rows[0]["allowed_domains_csv"] == "primary.example.test"
+    primary_id = primary_rows[0]["id"]
+
+    denied = client.post(
+        f"/profiles/{profile_id}/sites",
+        json={"name": "Denied", "start_url": "https://denied.example.test"},
+        headers=viewer_headers,
+    )
+    assert denied.status_code == 403
+
+    created_site = client.post(
+        f"/profiles/{profile_id}/sites",
+        json={
+            "name": "Documentation",
+            "start_url": "https://reference.example.test",
+            "scope_mode": "path_prefix",
+            "path_prefix": "/docs",
+            "role": "reference",
+        },
+        headers=editor_headers,
+    )
+    assert created_site.status_code == 200
+    site = _extract_success_data(created_site)
+    assert site["start_url"] == "https://reference.example.test/docs"
+    assert site["path_prefix"] == "/docs/"
+    assert site["allowed_domains_csv"] == "reference.example.test"
+
+    duplicate = client.post(
+        f"/profiles/{profile_id}/sites",
+        json={
+            "name": "Duplicate docs",
+            "start_url": "https://reference.example.test/docs/",
+            "scope_mode": "path_prefix",
+            "role": "peer",
+        },
+        headers=editor_headers,
+    )
+    assert duplicate.status_code == 409
+    assert _extract_error_payload(duplicate)["error"]["code"] == "project_site_scope_conflict"
+
+    updated = client.patch(
+        f"/profiles/{profile_id}/sites/{site['id']}",
+        json={"path_prefix": "/help"},
+        headers=editor_headers,
+    )
+    assert updated.status_code == 200
+    updated_site = _extract_success_data(updated)
+    assert updated_site["start_url"] == "https://reference.example.test/help"
+    assert updated_site["path_prefix"] == "/help/"
+
+    assert client.delete(
+        f"/profiles/{profile_id}/sites/{site['id']}",
+        headers=editor_headers,
+    ).status_code == 200
+    last_site = client.delete(
+        f"/profiles/{profile_id}/sites/{primary_id}",
+        headers=editor_headers,
+    )
+    assert last_site.status_code == 409
+    assert _extract_error_payload(last_site)["error"]["code"] == "project_requires_site"
+
+    with SessionLocal() as db:
+        assert db.query(ProjectSite).filter(ProjectSite.profile_id == profile_id).count() == 1
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_project_creation_supports_atomic_section_primary_site():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="section-create@test.local", role="editor", is_approved=True))
+        db.commit()
+
+    client = TestClient(app)
+    created = client.post(
+        "/profiles",
+        json={
+            "name": "Documentation monitoring",
+            "site_name": "Public docs",
+            "start_url": "https://docs.example.test",
+            "scope_mode": "path_prefix",
+            "path_prefix": "/manual",
+            "allowed_domains_csv": "",
+        },
+        headers=_auth_header("section-create@test.local", role="editor"),
+    )
+
+    assert created.status_code == 200
+    profile_id = created.json()["id"]
+    sites = _extract_success_data(
+        client.get(
+            f"/profiles/{profile_id}/sites",
+            headers=_auth_header("section-create@test.local", role="editor"),
+        )
+    )
+    assert len(sites) == 1
+    assert sites[0]["name"] == "Public docs"
+    assert sites[0]["start_url"] == "https://docs.example.test/manual"
+    assert sites[0]["scope_mode"] == "path_prefix"
+    assert sites[0]["path_prefix"] == "/manual/"
+
+    another_section = client.post(
+        "/profiles",
+        json={
+            "name": "API monitoring",
+            "start_url": "https://docs.example.test",
+            "scope_mode": "path_prefix",
+            "path_prefix": "/api",
+        },
+        headers=_auth_header("section-create@test.local", role="editor"),
+    )
+    assert another_section.status_code == 200
+
+    duplicate_section = client.post(
+        "/profiles",
+        json={
+            "name": "Duplicate manual",
+            "start_url": "https://docs.example.test/manual/",
+            "scope_mode": "path_prefix",
+            "path_prefix": "/manual",
+        },
+        headers=_auth_header("section-create@test.local", role="editor"),
+    )
+    assert duplicate_section.status_code == 409
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
@@ -280,11 +487,14 @@ def test_profiles_summary_returns_last_run_and_totals():
         db.commit()
         db.refresh(p1)
         db.refresh(p2)
+        p1_site = _add_primary_site(db, p1)
+        _add_primary_site(db, p2)
 
         db.add_all(
             [
                 Run(
                     profile_id=p1.id,
+                    project_site_id=p1_site.id,
                     status="FINISHED",
                     started_at=datetime(2026, 1, 1, 10, 0, 0),
                     finished_at=datetime(2026, 1, 1, 10, 1, 0),
@@ -293,6 +503,7 @@ def test_profiles_summary_returns_last_run_and_totals():
                 ),
                 Run(
                     profile_id=p1.id,
+                    project_site_id=p1_site.id,
                     status="RUNNING",
                     started_at=datetime(2026, 1, 2, 11, 0, 0),
                     finished_at=None,
@@ -319,7 +530,7 @@ def test_profiles_summary_returns_last_run_and_totals():
     engine.dispose()
 
 
-def test_run_start_seeds_all_allowed_domains(monkeypatch):
+def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     from app.api import runs as runs_api
 
     engine, SessionLocal = _get_session_factory()
@@ -338,7 +549,30 @@ def test_run_start_seeds_all_allowed_domains(monkeypatch):
         db.add(profile)
         db.commit()
         db.refresh(profile)
+        primary = _add_primary_site(db, profile)
+        secondary = build_project_site(
+            profile_id=profile.id,
+            name="B",
+            start_url="https://b.test",
+            scope_mode="whole_site",
+            path_prefix="/",
+            role="peer",
+            allowed_domains_csv="b.test",
+            exclude_paths_csv="",
+            exclude_ext_csv="",
+            respect_robots=True,
+            max_pages=10,
+            concurrency=1,
+            is_enabled=True,
+            sort_order=1,
+        )
+        db.add(secondary)
+        db.commit()
+        db.refresh(primary)
+        db.refresh(secondary)
         profile_id = profile.id
+        primary_id = primary.id
+        secondary_id = secondary.id
 
     calls: list[str] = []
 
@@ -369,16 +603,229 @@ def test_run_start_seeds_all_allowed_domains(monkeypatch):
     editor_headers = _auth_header("runs-multi@test.local", role="editor")
     response = client.post(f"/runs/start/{profile_id}", headers=editor_headers)
     assert response.status_code == 200
-    run_id = response.json()["run_id"]
+    primary_run_id = response.json()["run_id"]
+    assert response.json()["project_site_id"] == primary_id
 
-    pages_response = client.get(f"/runs/{run_id}/pages", headers=editor_headers)
+    pages_response = client.get(f"/runs/{primary_run_id}/pages", headers=editor_headers)
     assert pages_response.status_code == 200
     pages = pages_response.json()
     urls = {row["url"] for row in pages}
     assert "https://a.test" in urls or "https://a.test/" in urls
-    assert "https://b.test/" in urls
     assert any("a.test" in url for url in calls)
+    assert not any("b.test" in url for url in calls)
+
+    secondary_response = client.post(
+        f"/runs/start-site/{secondary_id}",
+        headers=editor_headers,
+    )
+    assert secondary_response.status_code == 200
+    assert secondary_response.json()["project_site_id"] == secondary_id
     assert any("b.test" in url for url in calls)
+
+    primary_runs = client.get(f"/runs/by-site/{primary_id}", headers=editor_headers)
+    secondary_runs = client.get(f"/runs/by-site/{secondary_id}", headers=editor_headers)
+    assert [row["id"] for row in primary_runs.json()] == [primary_run_id]
+    assert [row["id"] for row in secondary_runs.json()] == [secondary_response.json()["run_id"]]
+    summaries = _extract_success_data(
+        client.get(f"/profiles/{profile_id}/sites/summary", headers=editor_headers)
+    )
+    summaries_by_id = {row["id"]: row for row in summaries}
+    assert summaries_by_id[primary_id]["runs_total"] == 1
+    assert summaries_by_id[primary_id]["last_run"]["id"] == primary_run_id
+    assert summaries_by_id[primary_id]["anomaly"]["status"] == "insufficient_data"
+    assert summaries_by_id[secondary_id]["runs_total"] == 1
+    assert summaries_by_id[secondary_id]["last_run"]["id"] == secondary_response.json()["run_id"]
+    anomaly_response = client.get(
+        f"/profiles/{profile_id}/sites/{primary_id}/anomaly",
+        headers=editor_headers,
+    )
+    assert anomaly_response.status_code == 200
+    assert _extract_success_data(anomaly_response)["status"] == "insufficient_data"
+    delete_with_history = client.delete(
+        f"/profiles/{profile_id}/sites/{secondary_id}",
+        headers=editor_headers,
+    )
+    assert delete_with_history.status_code == 409
+    assert _extract_error_payload(delete_with_history)["error"]["code"] == "project_site_has_runs"
+
+    assert client.delete(f"/profiles/{profile_id}", headers=editor_headers).status_code == 200
+    with SessionLocal() as db:
+        assert db.query(ProjectSite).filter(ProjectSite.profile_id == profile_id).count() == 0
+        assert db.query(Run).filter(Run.profile_id == profile_id).count() == 0
+        assert db.query(Page).filter(Page.run_id.in_([primary_run_id, secondary_response.json()["run_id"]])).count() == 0
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_section_site_run_never_queues_urls_outside_path_scope(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="section-run@test.local", role="editor", is_approved=True))
+        profile = Profile(
+            name="Section",
+            start_url="https://scope.test/docs",
+            allowed_domains_csv="scope.test",
+            max_pages=10,
+        )
+        db.add(profile)
+        db.flush()
+        site = build_project_site(
+            profile_id=profile.id,
+            name="Docs",
+            start_url="https://scope.test/docs",
+            scope_mode="path_prefix",
+            path_prefix="/docs",
+            role="primary",
+            allowed_domains_csv="scope.test",
+            exclude_paths_csv="",
+            exclude_ext_csv="",
+            respect_robots=True,
+            max_pages=10,
+            concurrency=1,
+            is_enabled=True,
+        )
+        db.add(site)
+        db.commit()
+        db.refresh(site)
+        site_id = site.id
+
+    calls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, url: str):
+            self.url = url
+            self.status_code = 200
+            self.headers = {"content-type": "text/html"}
+            self.text = (
+                '<a href="/docs/inside">inside</a>'
+                '<a href="/docs-old/outside">outside</a>'
+                '<a href="/docs/%2e%2e/admin">traversal</a>'
+                '<a href="https://other.test/docs/remote">remote</a>'
+            )
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            calls.append(url)
+            return FakeResponse(url)
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    response = client.post(
+        f"/runs/start-site/{site_id}",
+        headers=_auth_header("section-run@test.local", role="editor"),
+    )
+
+    assert response.status_code == 200
+    assert calls == ["https://scope.test/docs", "https://scope.test/docs/inside"]
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_project_run_continues_after_one_site_fails(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="project-run@test.local", role="editor", is_approved=True))
+        profile = Profile(
+            name="Two sites",
+            start_url="https://good.test",
+            allowed_domains_csv="good.test",
+            max_pages=1,
+        )
+        db.add(profile)
+        db.flush()
+        good_site = _add_primary_site(db, profile)
+        bad_site = build_project_site(
+            profile_id=profile.id,
+            name="Unavailable",
+            start_url="https://bad.test",
+            scope_mode="whole_site",
+            path_prefix="/",
+            role="peer",
+            allowed_domains_csv="bad.test",
+            exclude_paths_csv="",
+            exclude_ext_csv="",
+            respect_robots=True,
+            max_pages=1,
+            concurrency=1,
+            is_enabled=True,
+            sort_order=1,
+        )
+        db.add(bad_site)
+        db.commit()
+        db.refresh(good_site)
+        db.refresh(bad_site)
+        profile_id = profile.id
+        good_site_id = good_site.id
+        bad_site_id = bad_site.id
+
+    class FakeResponse:
+        url = "https://good.test/"
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = "<html><body>ok</body></html>"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            if "bad.test" in url:
+                raise httpx.ReadTimeout("timed out", request=httpx.Request("GET", url))
+            return FakeResponse()
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    response = client.post(
+        f"/runs/start-project/{profile_id}",
+        headers=_auth_header("project-run@test.local", role="editor"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sites_total"] == 2
+    assert payload["finished"] == 1
+    assert payload["failed"] == 1
+    by_site = {row["project_site_id"]: row for row in payload["results"]}
+    assert by_site[good_site_id]["status"] == "FINISHED"
+    assert by_site[bad_site_id]["status"] == "FAILED"
+    assert by_site[bad_site_id]["failure_code"] == "timeout"
+
+    with SessionLocal() as db:
+        good_run = db.query(Run).filter(Run.project_site_id == good_site_id).one()
+        bad_run = db.query(Run).filter(Run.project_site_id == bad_site_id).one()
+        assert good_run.status == "FINISHED"
+        assert bad_run.status == "FAILED"
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
@@ -444,7 +891,16 @@ def test_run_lock_is_scoped_to_project(monkeypatch):
         db.commit()
         db.refresh(first)
         db.refresh(second)
-        db.add(Run(profile_id=first.id, status="RUNNING", started_at=datetime.utcnow()))
+        first_site = _add_primary_site(db, first)
+        _add_primary_site(db, second)
+        db.add(
+            Run(
+                profile_id=first.id,
+                project_site_id=first_site.id,
+                status="RUNNING",
+                started_at=datetime.utcnow(),
+            )
+        )
         db.commit()
         first_id = first.id
         second_id = second.id
@@ -560,7 +1016,14 @@ def test_pages_changed_counts_deleted_urls(monkeypatch):
         db.add(profile)
         db.commit()
         db.refresh(profile)
-        previous = Run(profile_id=profile.id, status="FINISHED", started_at=datetime.utcnow(), finished_at=datetime.utcnow())
+        site = _add_primary_site(db, profile)
+        previous = Run(
+            profile_id=profile.id,
+            project_site_id=site.id,
+            status="FINISHED",
+            started_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+        )
         db.add(previous)
         db.commit()
         db.refresh(previous)

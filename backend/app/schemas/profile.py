@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, HttpUrl, Field
 
 
@@ -13,6 +15,12 @@ class ProfileCreate(BaseModel):
     max_pages: int = 5000
     concurrency: int = 3
     is_enabled: bool = True
+
+
+class ProjectCreate(ProfileCreate):
+    site_name: str | None = Field(default=None, min_length=1, max_length=200)
+    scope_mode: Literal["whole_site", "path_prefix"] = "whole_site"
+    path_prefix: str | None = None
 
 
 class ProfileOut(ProfileCreate):

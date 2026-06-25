@@ -161,6 +161,18 @@ button:focus-visible {
   background: var(--ui-tab-shell-bg);
 }
 
+.compare-two-column-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 900px) {
+  .compare-two-column-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .ui-select-wrap {
   position: relative;
   display: inline-flex;

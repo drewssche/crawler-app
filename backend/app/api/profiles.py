@@ -7,11 +7,15 @@ from sqlalchemy.orm import Session
 from app.core.security import require_permission
 from app.core.api_response import success_response_payload
 from app.core.paging import build_paged_response, paginate_query
+from app.core.site_scope import canonicalize_site_scope
 from app.db.session import get_db
 from app.db.models.profile import Profile
+from app.db.models.page import Page
 from app.db.models.run import Run
 from app.db.models.user import User
-from app.schemas.profile import ProfileCreate, ProfileOut
+from app.schemas.profile import ProfileOut, ProjectCreate
+from app.db.models.project_site import ProjectSite
+from app.services.project_sites import create_primary_site_for_profile
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
@@ -46,11 +50,19 @@ def list_profiles(
 
 @router.post("", response_model=ProfileOut)
 def create_profile(
-    payload: ProfileCreate,
+    payload: ProjectCreate,
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("profiles.edit")),
 ):
-    requested_scope = _canonical_profile_scope(str(payload.start_url), payload.allowed_domains_csv)
+    try:
+        primary_scope = canonicalize_site_scope(
+            str(payload.start_url),
+            scope_mode=payload.scope_mode,
+            path_prefix=payload.path_prefix,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    requested_scope = _canonical_profile_scope(primary_scope.start_url, payload.allowed_domains_csv)
     for existing in db.query(Profile).all():
         if _canonical_profile_scope(existing.start_url, existing.allowed_domains_csv) == requested_scope:
             raise HTTPException(
@@ -65,8 +77,25 @@ def create_profile(
                     },
                 },
             )
-    obj = Profile(**payload.model_dump(mode="json"))
+    profile_data = payload.model_dump(
+        mode="json",
+        exclude={"site_name", "scope_mode", "path_prefix"},
+    )
+    profile_data["start_url"] = primary_scope.start_url
+    obj = Profile(**profile_data)
     db.add(obj)
+    db.flush()
+    try:
+        create_primary_site_for_profile(
+            db,
+            obj,
+            site_name=payload.site_name,
+            scope_mode=payload.scope_mode,
+            path_prefix=payload.path_prefix,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     db.commit()
     db.refresh(obj)
     return obj
@@ -158,6 +187,10 @@ def delete_profile(
     obj = db.get(Profile, profile_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Profile not found")
+    run_ids = db.query(Run.id).filter(Run.profile_id == profile_id)
+    db.query(Page).filter(Page.run_id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(Run).filter(Run.profile_id == profile_id).delete(synchronize_session=False)
+    db.query(ProjectSite).filter(ProjectSite.profile_id == profile_id).delete(synchronize_session=False)
     db.delete(obj)
     db.commit()
     return {"ok": True}
