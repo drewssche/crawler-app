@@ -4,24 +4,24 @@ from sqlalchemy.orm import Session
 
 from app.db.models.page import Page
 from app.db.models.page_retry_attempt import PageRetryAttempt
-from app.db.models.profile import Profile
+from app.db.models.project import Project
 from app.db.models.run import Run
 from app.services.page_context import build_page_context
-from app.services.project_sites import create_primary_site_for_profile
+from app.services.project_sites import create_primary_site_for_project
 
 
 def test_page_context_builds_links_assets_and_explainable_seo_score(db_session: Session):
-    profile = Profile(
+    project = Project(
         name="SEO",
         start_url="https://seo.test",
         allowed_domains_csv="seo.test",
     )
-    db_session.add(profile)
+    db_session.add(project)
     db_session.flush()
-    site = create_primary_site_for_profile(db_session, profile)
+    site = create_primary_site_for_project(db_session, project)
     db_session.flush()
     run = Run(
-        profile_id=profile.id,
+        project_id=project.id,
         project_site_id=site.id,
         status="FINISHED",
         started_at=datetime.utcnow(),
@@ -81,13 +81,13 @@ def test_page_context_builds_links_assets_and_explainable_seo_score(db_session: 
 
 
 def test_page_context_seo_score_explains_missing_fields(db_session: Session):
-    profile = Profile(name="Weak SEO", start_url="https://weak.test")
-    db_session.add(profile)
+    project = Project(name="Weak SEO", start_url="https://weak.test")
+    db_session.add(project)
     db_session.flush()
-    site = create_primary_site_for_profile(db_session, profile)
+    site = create_primary_site_for_project(db_session, project)
     db_session.flush()
     run = Run(
-        profile_id=profile.id,
+        project_id=project.id,
         project_site_id=site.id,
         status="FINISHED",
         started_at=datetime.utcnow(),
@@ -120,13 +120,13 @@ def test_page_context_seo_score_explains_missing_fields(db_session: Session):
 
 
 def test_page_context_explains_redirect_status_in_friendly_language(db_session: Session):
-    profile = Profile(name="Redirect", start_url="https://redirect-context.test/old")
-    db_session.add(profile)
+    project = Project(name="Redirect", start_url="https://redirect-context.test/old")
+    db_session.add(project)
     db_session.flush()
-    site = create_primary_site_for_profile(db_session, profile)
+    site = create_primary_site_for_project(db_session, project)
     db_session.flush()
     run = Run(
-        profile_id=profile.id,
+        project_id=project.id,
         project_site_id=site.id,
         status="FINISHED",
         started_at=datetime.utcnow(),
@@ -169,13 +169,13 @@ def test_page_context_explains_redirect_status_in_friendly_language(db_session: 
 
 
 def test_page_context_includes_retry_history_without_overwriting_original(db_session: Session):
-    profile = Profile(name="Retry context", start_url="https://retry-context.test/")
-    db_session.add(profile)
+    project = Project(name="Retry context", start_url="https://retry-context.test/")
+    db_session.add(project)
     db_session.flush()
-    site = create_primary_site_for_profile(db_session, profile)
+    site = create_primary_site_for_project(db_session, project)
     db_session.flush()
     run = Run(
-        profile_id=profile.id,
+        project_id=project.id,
         project_site_id=site.id,
         status="FINISHED",
         started_at=datetime.utcnow(),
@@ -222,13 +222,13 @@ def test_page_context_includes_retry_history_without_overwriting_original(db_ses
 
 
 def test_page_context_builds_safe_tracking_cookie_and_consent_inventory(db_session: Session):
-    profile = Profile(name="Tracking", start_url="https://tracking.test/")
-    db_session.add(profile)
+    project = Project(name="Tracking", start_url="https://tracking.test/")
+    db_session.add(project)
     db_session.flush()
-    site = create_primary_site_for_profile(db_session, profile)
+    site = create_primary_site_for_project(db_session, project)
     db_session.flush()
     run = Run(
-        profile_id=profile.id,
+        project_id=project.id,
         project_site_id=site.id,
         status="FINISHED",
         started_at=datetime.utcnow(),

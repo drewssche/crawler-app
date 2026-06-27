@@ -17,7 +17,7 @@ from app.core.paging import build_paged_response, paginate_query
 from app.core.site_scope import CanonicalSiteScope, canonicalize_site_scope, is_url_in_site_scope
 from app.db.models.page import Page
 from app.db.models.page_retry_attempt import PageRetryAttempt
-from app.db.models.profile import Profile
+from app.db.models.project import Project
 from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.project_site import ProjectSite
 from app.db.models.run import Run
@@ -63,7 +63,7 @@ def _extract_html_title(html: str | None) -> str:
 def _serialize_run(run: Run, persona: CrawlPersona | None = None) -> dict:
     return {
         "id": run.id,
-        "profile_id": run.profile_id,
+        "project_id": run.project_id,
         "project_site_id": run.project_site_id,
         "crawl_persona_id": run.crawl_persona_id,
         "persona": (
@@ -275,13 +275,13 @@ def _emit_run_completion_event(
             if succeeded
             else run.failure_message or "Crawler не смог завершить прогон."
         ),
-        target_path=f"/projects/{site.profile_id}",
+        target_path=f"/projects/{site.project_id}",
         target_ref=f"run:{run.id}",
         actor_user_id=actor_user_id,
         target_user_id=None,
         meta_json={
             "run_id": run.id,
-            "profile_id": site.profile_id,
+            "project_id": site.project_id,
             "project_site_id": site.id,
             "crawl_persona_id": run.crawl_persona_id,
             "persona_key": persona.key if persona else None,
@@ -308,7 +308,7 @@ def _execute_site_run(
         path_prefix=site.path_prefix,
     )
     run = Run(
-        profile_id=site.profile_id,
+        project_id=site.project_id,
         project_site_id=site.id,
         crawl_persona_id=persona.id,
         status="RUNNING",
@@ -606,12 +606,12 @@ def start_project_sites(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("crawler.run")),
 ):
-    project = db.get(Profile, project_id)
+    project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     sites = (
         db.query(ProjectSite)
-        .filter(ProjectSite.profile_id == project_id, ProjectSite.is_enabled.is_(True))
+        .filter(ProjectSite.project_id == project_id, ProjectSite.is_enabled.is_(True))
         .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
         .all()
     )
@@ -865,7 +865,7 @@ def list_runs(
     query = (
         db.query(Run, CrawlPersona)
         .outerjoin(CrawlPersona, CrawlPersona.id == Run.crawl_persona_id)
-        .filter(Run.profile_id == project_id)
+        .filter(Run.project_id == project_id)
         .order_by(Run.id.desc())
     )
     paged = paginate_query(query, page=page, page_size=page_size)

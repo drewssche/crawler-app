@@ -3,23 +3,23 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.db.models.page import Page
-from app.db.models.profile import Profile
+from app.db.models.project import Project
 from app.db.models.project_site import ProjectSite
 from app.db.models.run import Run
 from app.services.crawl_personas import ensure_guest_persona
-from app.services.project_sites import create_primary_site_for_profile
+from app.services.project_sites import create_primary_site_for_project
 from app.services.site_anomalies import evaluate_project_site_anomalies
 
 
 def _site(db: Session) -> ProjectSite:
-    profile = Profile(
+    project = Project(
         name="Anomaly project",
         start_url="https://anomaly.test",
         allowed_domains_csv="anomaly.test",
     )
-    db.add(profile)
+    db.add(project)
     db.flush()
-    site = create_primary_site_for_profile(db, profile)
+    site = create_primary_site_for_project(db, project)
     db.flush()
     return site
 
@@ -34,7 +34,7 @@ def _finished_run(
 ) -> Run:
     persona = ensure_guest_persona(db, site)
     run = Run(
-        profile_id=site.profile_id,
+        project_id=site.project_id,
         project_site_id=site.id,
         crawl_persona_id=persona.id,
         status="FINISHED",

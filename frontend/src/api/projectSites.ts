@@ -13,7 +13,7 @@ export type CrawlPersonaSummary = {
 
 export type ProjectSite = {
   id: number;
-  profile_id: number;
+  project_id: number;
   name: string;
   start_url: string;
   canonical_origin: string;

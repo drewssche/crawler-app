@@ -3,14 +3,14 @@ from typing import cast
 from sqlalchemy.orm import Session
 
 from app.core.site_scope import ScopeMode, canonicalize_site_scope
-from app.db.models.profile import Profile
+from app.db.models.project import Project
 from app.db.models.project_site import ProjectSite
 from app.services.crawl_personas import ensure_guest_persona
 
 
 def build_project_site(
     *,
-    profile_id: int,
+    project_id: int,
     name: str,
     start_url: str,
     scope_mode: str,
@@ -32,7 +32,7 @@ def build_project_site(
     )
     technical_domains = allowed_domains_csv.strip() or scope.hostname
     return ProjectSite(
-        profile_id=profile_id,
+        project_id=project_id,
         name=name.strip(),
         start_url=scope.start_url,
         canonical_origin=scope.canonical_origin,
@@ -50,28 +50,28 @@ def build_project_site(
     )
 
 
-def create_primary_site_for_profile(
+def create_primary_site_for_project(
     db: Session,
-    profile: Profile,
+    project: Project,
     *,
     site_name: str | None = None,
     scope_mode: str = "whole_site",
     path_prefix: str | None = "/",
 ) -> ProjectSite:
     site = build_project_site(
-        profile_id=profile.id,
-        name=site_name or profile.name,
-        start_url=profile.start_url,
+        project_id=project.id,
+        name=site_name or project.name,
+        start_url=project.start_url,
         scope_mode=scope_mode,
         path_prefix=path_prefix,
         role="primary",
-        allowed_domains_csv=profile.allowed_domains_csv,
-        exclude_paths_csv=profile.exclude_paths_csv,
-        exclude_ext_csv=profile.exclude_ext_csv,
-        respect_robots=profile.respect_robots,
-        max_pages=profile.max_pages,
-        concurrency=profile.concurrency,
-        is_enabled=profile.is_enabled,
+        allowed_domains_csv=project.allowed_domains_csv,
+        exclude_paths_csv=project.exclude_paths_csv,
+        exclude_ext_csv=project.exclude_ext_csv,
+        respect_robots=project.respect_robots,
+        max_pages=project.max_pages,
+        concurrency=project.concurrency,
+        is_enabled=project.is_enabled,
     )
     db.add(site)
     db.flush()

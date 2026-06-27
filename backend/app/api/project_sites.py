@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.api_response import success_response_payload
 from app.core.security import require_permission
-from app.db.models.profile import Profile
+from app.db.models.project import Project
 from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.project_site import ProjectSite
 from app.db.models.run import Run
@@ -19,8 +19,8 @@ from app.services.site_anomalies import evaluate_project_site_anomalies
 router = APIRouter(prefix="/projects/{project_id}/sites", tags=["project-sites"])
 
 
-def _get_project_or_404(db: Session, project_id: int) -> Profile:
-    project = db.get(Profile, project_id)
+def _get_project_or_404(db: Session, project_id: int) -> Project:
+    project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
@@ -29,7 +29,7 @@ def _get_project_or_404(db: Session, project_id: int) -> Profile:
 def _get_site_or_404(db: Session, project_id: int, site_id: int) -> ProjectSite:
     site = (
         db.query(ProjectSite)
-        .filter(ProjectSite.id == site_id, ProjectSite.profile_id == project_id)
+        .filter(ProjectSite.id == site_id, ProjectSite.project_id == project_id)
         .first()
     )
     if not site:
@@ -57,7 +57,7 @@ def list_project_sites(
     _get_project_or_404(db, project_id)
     rows = (
         db.query(ProjectSite)
-        .filter(ProjectSite.profile_id == project_id)
+        .filter(ProjectSite.project_id == project_id)
         .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
         .all()
     )
@@ -110,7 +110,7 @@ def list_project_sites_summary(
         .outerjoin(Run, Run.id == last_run_sq.c.last_run_id)
         .outerjoin(CrawlPersona, CrawlPersona.id == Run.crawl_persona_id)
         .outerjoin(runs_count_sq, runs_count_sq.c.project_site_id == ProjectSite.id)
-        .filter(ProjectSite.profile_id == project_id)
+        .filter(ProjectSite.project_id == project_id)
         .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
         .all()
     )
@@ -199,12 +199,12 @@ def create_project_site(
     _get_project_or_404(db, project_id)
     next_order = (
         db.query(ProjectSite)
-        .filter(ProjectSite.profile_id == project_id)
+        .filter(ProjectSite.project_id == project_id)
         .count()
     )
     try:
         site = build_project_site(
-            profile_id=project_id,
+            project_id=project_id,
             name=payload.name,
             start_url=str(payload.start_url),
             scope_mode=payload.scope_mode,
@@ -266,7 +266,7 @@ def update_project_site(
     if {"start_url", "scope_mode", "path_prefix"} & payload.model_fields_set:
         try:
             normalized = build_project_site(
-                profile_id=project_id,
+                project_id=project_id,
                 name=str(changes.get("name", site.name)),
                 start_url=start_url,
                 scope_mode=str(scope_mode),
@@ -321,7 +321,7 @@ def delete_project_site(
                 "runs_count": runs_count,
             },
         )
-    site_count = db.query(ProjectSite).filter(ProjectSite.profile_id == project_id).count()
+    site_count = db.query(ProjectSite).filter(ProjectSite.project_id == project_id).count()
     if site_count <= 1:
         raise HTTPException(
             status_code=409,

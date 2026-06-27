@@ -8,16 +8,16 @@ class ProjectSite(Base):
     __tablename__ = "project_sites"
     __table_args__ = (
         UniqueConstraint(
-            "profile_id",
+            "project_id",
             "canonical_origin",
             "path_prefix",
-            name="uq_project_sites_profile_scope",
+            name="uq_project_sites_project_scope",
         ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    profile_id: Mapped[int] = mapped_column(
-        ForeignKey("profiles.id", ondelete="CASCADE"),
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
         index=True,
     )
     name: Mapped[str] = mapped_column(String(200))

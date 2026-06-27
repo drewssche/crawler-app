@@ -17,7 +17,7 @@ from app.db.models.admin_audit_log import AdminAuditLog
 from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.event_feed import EventFeed
 from app.db.models.login_history import LoginHistory
-from app.db.models.profile import Profile
+from app.db.models.project import Project
 from app.db.models.project_site import ProjectSite
 from app.db.models.page import Page
 from app.db.models.page_retry_attempt import PageRetryAttempt
@@ -26,7 +26,7 @@ from app.db.models.trusted_device import TrustedDevice
 from app.db.models.user import User
 from app.db.session import get_db
 from app.main import app
-from app.services.project_sites import build_project_site, create_primary_site_for_profile
+from app.services.project_sites import build_project_site, create_primary_site_for_project
 
 
 def _make_user(
@@ -56,10 +56,10 @@ def _auth_header(email: str, role: str = "viewer", token_version: int = 0) -> di
     return {"Authorization": f"Bearer {token}"}
 
 
-def _add_primary_site(db: Session, profile: Profile) -> ProjectSite:
-    if profile.id is None:
+def _add_primary_site(db: Session, project: Project) -> ProjectSite:
+    if project.id is None:
         db.flush()
-    site = create_primary_site_for_profile(db, profile)
+    site = create_primary_site_for_project(db, project)
     db.flush()
     return site
 
@@ -155,13 +155,13 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     with SessionLocal() as db:
         viewer = _make_user(email="project-viewer@test.local", role="viewer", is_approved=True)
         editor = _make_user(email="project-editor@test.local", role="editor", is_approved=True)
-        profile = Profile(name="Protected", start_url="https://protected.test", allowed_domains_csv="protected.test")
-        db.add_all([viewer, editor, profile])
+        project = Project(name="Protected", start_url="https://protected.test", allowed_domains_csv="protected.test")
+        db.add_all([viewer, editor, project])
         db.commit()
-        db.refresh(profile)
-        site = _add_primary_site(db, profile)
+        db.refresh(project)
+        site = _add_primary_site(db, project)
         run = Run(
-            profile_id=profile.id,
+            project_id=project.id,
             project_site_id=site.id,
             status="RUNNING",
             started_at=datetime.utcnow(),
@@ -179,7 +179,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
         )
         db.add(page)
         db.commit()
-        profile_id = profile.id
+        project_id = project.id
         site_id = site.id
         run_id = run.id
 
@@ -187,8 +187,8 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     viewer_headers = _auth_header("project-viewer@test.local", role="viewer")
     editor_headers = _auth_header("project-editor@test.local", role="editor")
 
-    assert client.get(f"/projects/{profile_id}").status_code == 401
-    assert client.get(f"/runs/by-project/{profile_id}").status_code == 401
+    assert client.get(f"/projects/{project_id}").status_code == 401
+    assert client.get(f"/runs/by-project/{project_id}").status_code == 401
     assert client.get(f"/runs/{run_id}/pages").status_code == 401
     assert client.get(
         f"/runs/{run_id}/page-context",
@@ -197,8 +197,8 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     assert client.post(f"/runs/start-site/{site_id}").status_code == 401
     assert client.post(f"/runs/{run_id}/retry-pages", json={}).status_code == 401
 
-    assert client.get(f"/projects/{profile_id}", headers=viewer_headers).status_code == 200
-    assert client.get(f"/runs/by-project/{profile_id}", headers=viewer_headers).status_code == 200
+    assert client.get(f"/projects/{project_id}", headers=viewer_headers).status_code == 200
+    assert client.get(f"/runs/by-project/{project_id}", headers=viewer_headers).status_code == 200
     assert client.get(f"/runs/{run_id}/pages", headers=viewer_headers).status_code == 200
     page_context = client.get(
         f"/runs/{run_id}/page-context",
@@ -229,7 +229,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
         json={"name": "Denied", "start_url": "https://denied.test", "allowed_domains_csv": "denied.test"},
         headers=viewer_headers,
     ).status_code == 403
-    assert client.delete(f"/projects/{profile_id}", headers=viewer_headers).status_code == 403
+    assert client.delete(f"/projects/{project_id}", headers=viewer_headers).status_code == 403
 
     assert client.post(f"/runs/start-site/{site_id}", headers=editor_headers).status_code == 409
     created = client.post(
@@ -264,7 +264,7 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     viewer_headers = _auth_header("site-viewer@test.local", role="viewer")
     editor_headers = _auth_header("site-editor@test.local", role="editor")
 
-    created_profile = client.post(
+    created_project = client.post(
         "/projects",
         json={
             "name": "Multi-site project",
@@ -273,11 +273,11 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
         },
         headers=editor_headers,
     )
-    assert created_profile.status_code == 200
-    profile_id = created_profile.json()["id"]
+    assert created_project.status_code == 200
+    project_id = created_project.json()["id"]
 
     primary_rows = _extract_success_data(
-        client.get(f"/projects/{profile_id}/sites", headers=viewer_headers)
+        client.get(f"/projects/{project_id}/sites", headers=viewer_headers)
     )
     assert len(primary_rows) == 1
     assert primary_rows[0]["role"] == "primary"
@@ -286,14 +286,14 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     primary_id = primary_rows[0]["id"]
 
     denied = client.post(
-        f"/projects/{profile_id}/sites",
+        f"/projects/{project_id}/sites",
         json={"name": "Denied", "start_url": "https://denied.example.test"},
         headers=viewer_headers,
     )
     assert denied.status_code == 403
 
     created_site = client.post(
-        f"/projects/{profile_id}/sites",
+        f"/projects/{project_id}/sites",
         json={
             "name": "Documentation",
             "start_url": "https://reference.example.test",
@@ -310,7 +310,7 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     assert site["allowed_domains_csv"] == "reference.example.test"
 
     duplicate = client.post(
-        f"/projects/{profile_id}/sites",
+        f"/projects/{project_id}/sites",
         json={
             "name": "Duplicate docs",
             "start_url": "https://reference.example.test/docs/",
@@ -323,7 +323,7 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     assert _extract_error_payload(duplicate)["error"]["code"] == "project_site_scope_conflict"
 
     updated = client.patch(
-        f"/projects/{profile_id}/sites/{site['id']}",
+        f"/projects/{project_id}/sites/{site['id']}",
         json={"path_prefix": "/help"},
         headers=editor_headers,
     )
@@ -333,18 +333,18 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     assert updated_site["path_prefix"] == "/help/"
 
     assert client.delete(
-        f"/projects/{profile_id}/sites/{site['id']}",
+        f"/projects/{project_id}/sites/{site['id']}",
         headers=editor_headers,
     ).status_code == 200
     last_site = client.delete(
-        f"/projects/{profile_id}/sites/{primary_id}",
+        f"/projects/{project_id}/sites/{primary_id}",
         headers=editor_headers,
     )
     assert last_site.status_code == 409
     assert _extract_error_payload(last_site)["error"]["code"] == "project_requires_site"
 
     with SessionLocal() as db:
-        assert db.query(ProjectSite).filter(ProjectSite.profile_id == profile_id).count() == 1
+        assert db.query(ProjectSite).filter(ProjectSite.project_id == project_id).count() == 1
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
@@ -376,10 +376,10 @@ def test_project_creation_supports_atomic_section_primary_site():
     )
 
     assert created.status_code == 200
-    profile_id = created.json()["id"]
+    project_id = created.json()["id"]
     sites = _extract_success_data(
         client.get(
-            f"/projects/{profile_id}/sites",
+            f"/projects/{project_id}/sites",
             headers=_auth_header("section-create@test.local", role="editor"),
         )
     )
@@ -494,8 +494,8 @@ def test_projects_summary_returns_last_run_and_totals():
 
     with SessionLocal() as db:
         viewer = _make_user(email="summary@test.local", role="viewer", is_approved=True)
-        p1 = Profile(name="A", start_url="https://a.test", allowed_domains_csv="a.test")
-        p2 = Profile(name="B", start_url="https://b.test", allowed_domains_csv="b.test")
+        p1 = Project(name="A", start_url="https://a.test", allowed_domains_csv="a.test")
+        p2 = Project(name="B", start_url="https://b.test", allowed_domains_csv="b.test")
         db.add_all([viewer, p1, p2])
         db.commit()
         db.refresh(p1)
@@ -506,7 +506,7 @@ def test_projects_summary_returns_last_run_and_totals():
         db.add_all(
             [
                 Run(
-                    profile_id=p1.id,
+                    project_id=p1.id,
                     project_site_id=p1_site.id,
                     status="FINISHED",
                     started_at=datetime(2026, 1, 1, 10, 0, 0),
@@ -515,7 +515,7 @@ def test_projects_summary_returns_last_run_and_totals():
                     pages_changed=3,
                 ),
                 Run(
-                    profile_id=p1.id,
+                    project_id=p1.id,
                     project_site_id=p1_site.id,
                     status="RUNNING",
                     started_at=datetime(2026, 1, 2, 11, 0, 0),
@@ -553,18 +553,18 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
 
     with SessionLocal() as db:
         db.add(_make_user(email="runs-multi@test.local", role="editor", is_approved=True))
-        profile = Profile(
+        project = Project(
             name="Multi",
             start_url="https://a.test",
             allowed_domains_csv="a.test,b.test",
             max_pages=10,
         )
-        db.add(profile)
+        db.add(project)
         db.commit()
-        db.refresh(profile)
-        primary = _add_primary_site(db, profile)
+        db.refresh(project)
+        primary = _add_primary_site(db, project)
         secondary = build_project_site(
-            profile_id=profile.id,
+            project_id=project.id,
             name="B",
             start_url="https://b.test",
             scope_mode="whole_site",
@@ -583,7 +583,7 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
         db.commit()
         db.refresh(primary)
         db.refresh(secondary)
-        profile_id = profile.id
+        project_id = project.id
         primary_id = primary.id
         secondary_id = secondary.id
 
@@ -643,7 +643,7 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     assert primary_runs.json()[0]["persona"]["key"] == "guest"
     assert [row["id"] for row in secondary_runs.json()] == [secondary_response.json()["run_id"]]
     summaries = _extract_success_data(
-        client.get(f"/projects/{profile_id}/sites/summary", headers=editor_headers)
+        client.get(f"/projects/{project_id}/sites/summary", headers=editor_headers)
     )
     summaries_by_id = {row["id"]: row for row in summaries}
     assert summaries_by_id[primary_id]["runs_total"] == 1
@@ -654,23 +654,23 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     assert summaries_by_id[secondary_id]["runs_total"] == 1
     assert summaries_by_id[secondary_id]["last_run"]["id"] == secondary_response.json()["run_id"]
     anomaly_response = client.get(
-        f"/projects/{profile_id}/sites/{primary_id}/anomaly",
+        f"/projects/{project_id}/sites/{primary_id}/anomaly",
         headers=editor_headers,
     )
     assert anomaly_response.status_code == 200
     assert _extract_success_data(anomaly_response)["status"] == "insufficient_data"
     delete_with_history = client.delete(
-        f"/projects/{profile_id}/sites/{secondary_id}",
+        f"/projects/{project_id}/sites/{secondary_id}",
         headers=editor_headers,
     )
     assert delete_with_history.status_code == 409
     assert _extract_error_payload(delete_with_history)["error"]["code"] == "project_site_has_runs"
 
-    assert client.delete(f"/projects/{profile_id}", headers=editor_headers).status_code == 200
+    assert client.delete(f"/projects/{project_id}", headers=editor_headers).status_code == 200
     with SessionLocal() as db:
         assert db.query(CrawlPersona).filter(CrawlPersona.project_site_id.in_([primary_id, secondary_id])).count() == 0
-        assert db.query(ProjectSite).filter(ProjectSite.profile_id == profile_id).count() == 0
-        assert db.query(Run).filter(Run.profile_id == profile_id).count() == 0
+        assert db.query(ProjectSite).filter(ProjectSite.project_id == project_id).count() == 0
+        assert db.query(Run).filter(Run.project_id == project_id).count() == 0
         assert db.query(Page).filter(Page.run_id.in_([primary_run_id, secondary_response.json()["run_id"]])).count() == 0
 
     app.dependency_overrides.clear()
@@ -688,16 +688,16 @@ def test_section_site_run_never_queues_urls_outside_path_scope(monkeypatch):
 
     with SessionLocal() as db:
         db.add(_make_user(email="section-run@test.local", role="editor", is_approved=True))
-        profile = Profile(
+        project = Project(
             name="Section",
             start_url="https://scope.test/docs",
             allowed_domains_csv="scope.test",
             max_pages=10,
         )
-        db.add(profile)
+        db.add(project)
         db.flush()
         site = build_project_site(
-            profile_id=profile.id,
+            project_id=project.id,
             name="Docs",
             start_url="https://scope.test/docs",
             scope_mode="path_prefix",
@@ -769,17 +769,17 @@ def test_project_run_continues_after_one_site_fails(monkeypatch):
 
     with SessionLocal() as db:
         db.add(_make_user(email="project-run@test.local", role="editor", is_approved=True))
-        profile = Profile(
+        project = Project(
             name="Two sites",
             start_url="https://good.test",
             allowed_domains_csv="good.test",
             max_pages=1,
         )
-        db.add(profile)
+        db.add(project)
         db.flush()
-        good_site = _add_primary_site(db, profile)
+        good_site = _add_primary_site(db, project)
         bad_site = build_project_site(
-            profile_id=profile.id,
+            project_id=project.id,
             name="Unavailable",
             start_url="https://bad.test",
             scope_mode="whole_site",
@@ -798,7 +798,7 @@ def test_project_run_continues_after_one_site_fails(monkeypatch):
         db.commit()
         db.refresh(good_site)
         db.refresh(bad_site)
-        profile_id = profile.id
+        project_id = project.id
         good_site_id = good_site.id
         bad_site_id = bad_site.id
 
@@ -826,7 +826,7 @@ def test_project_run_continues_after_one_site_fails(monkeypatch):
     monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
     client = TestClient(app)
     response = client.post(
-        f"/runs/start-project/{profile_id}",
+        f"/runs/start-project/{project_id}",
         headers=_auth_header("project-run@test.local", role="editor"),
     )
 
@@ -859,7 +859,7 @@ def test_create_profile_rejects_duplicate_canonical_scope():
 
     with SessionLocal() as db:
         db.add(_make_user(email="projects@test.local", role="editor", is_approved=True))
-        db.add(Profile(name="Existing", start_url="https://example.test/", allowed_domains_csv="example.test"))
+        db.add(Project(name="Existing", start_url="https://example.test/", allowed_domains_csv="example.test"))
         db.commit()
 
     client = TestClient(app)
@@ -904,8 +904,8 @@ def test_run_lock_is_scoped_to_project(monkeypatch):
 
     with SessionLocal() as db:
         db.add(_make_user(email="runs-lock@test.local", role="editor", is_approved=True))
-        first = Profile(name="First", start_url="https://first.test", allowed_domains_csv="first.test", max_pages=1)
-        second = Profile(name="Second", start_url="https://second.test", allowed_domains_csv="second.test", max_pages=1)
+        first = Project(name="First", start_url="https://first.test", allowed_domains_csv="first.test", max_pages=1)
+        second = Project(name="Second", start_url="https://second.test", allowed_domains_csv="second.test", max_pages=1)
         db.add_all([first, second])
         db.commit()
         db.refresh(first)
@@ -914,7 +914,7 @@ def test_run_lock_is_scoped_to_project(monkeypatch):
         second_site = _add_primary_site(db, second)
         db.add(
             Run(
-                profile_id=first.id,
+                project_id=first.id,
                 project_site_id=first_site.id,
                 status="RUNNING",
                 started_at=datetime.utcnow(),
@@ -969,13 +969,13 @@ def test_empty_crawl_marks_run_failed(monkeypatch):
 
     with SessionLocal() as db:
         db.add(_make_user(email="runs-empty@test.local", role="editor", is_approved=True))
-        profile = Profile(name="Empty", start_url="https://empty.test", allowed_domains_csv="empty.test", max_pages=1)
-        db.add(profile)
+        project = Project(name="Empty", start_url="https://empty.test", allowed_domains_csv="empty.test", max_pages=1)
+        db.add(project)
         db.commit()
-        db.refresh(profile)
-        site = _add_primary_site(db, profile)
+        db.refresh(project)
+        site = _add_primary_site(db, project)
         db.commit()
-        profile_id = profile.id
+        project_id = project.id
         site_id = site.id
 
     class FailingClient:
@@ -1000,7 +1000,7 @@ def test_empty_crawl_marks_run_failed(monkeypatch):
     assert response.status_code == 502
 
     with SessionLocal() as db:
-        run = db.query(Run).filter(Run.profile_id == profile_id).one()
+        run = db.query(Run).filter(Run.project_id == project_id).one()
         assert run.status == "FAILED"
         assert run.finished_at is not None
         assert run.pages_total == 1
@@ -1027,18 +1027,18 @@ def test_redirect_chain_is_saved_as_friendly_page_result(monkeypatch):
 
     with SessionLocal() as db:
         db.add(_make_user(email="redirect@test.local", role="editor", is_approved=True))
-        profile = Profile(
+        project = Project(
             name="Redirect",
             start_url="https://redirect.test/old",
             allowed_domains_csv="redirect.test",
             max_pages=2,
         )
-        db.add(profile)
+        db.add(project)
         db.commit()
-        db.refresh(profile)
-        site = _add_primary_site(db, profile)
+        db.refresh(project)
+        site = _add_primary_site(db, project)
         db.commit()
-        profile_id = profile.id
+        project_id = project.id
         site_id = site.id
 
     class Hop:
@@ -1075,7 +1075,7 @@ def test_redirect_chain_is_saved_as_friendly_page_result(monkeypatch):
     assert response.status_code == 200
 
     with SessionLocal() as db:
-        run = db.query(Run).filter(Run.profile_id == profile_id).one()
+        run = db.query(Run).filter(Run.project_id == project_id).one()
         page = db.query(Page).filter(Page.run_id == run.id).one()
         assert run.status == "FINISHED"
         assert page.url == "https://redirect.test/old"
@@ -1085,7 +1085,7 @@ def test_redirect_chain_is_saved_as_friendly_page_result(monkeypatch):
         assert [hop["status_code"] for hop in page.redirect_chain_json] == [301, 200]
         event = db.query(EventFeed).filter(EventFeed.event_type == "crawler.run.finished").one()
         assert event.target_user_id is None
-        assert event.target_path == f"/projects/{profile_id}"
+        assert event.target_path == f"/projects/{project_id}"
         assert event.meta_json["run_id"] == run.id
         assert event.meta_json["pages_total"] == 1
         assert event.meta_json["suppress_toast"] is True
@@ -1105,18 +1105,18 @@ def test_page_network_failure_does_not_fail_run_with_successful_html(monkeypatch
 
     with SessionLocal() as db:
         db.add(_make_user(email="partial-failure@test.local", role="editor", is_approved=True))
-        profile = Profile(
+        project = Project(
             name="Partial",
             start_url="https://partial.test/",
             allowed_domains_csv="partial.test",
             max_pages=3,
         )
-        db.add(profile)
+        db.add(project)
         db.commit()
-        db.refresh(profile)
-        site = _add_primary_site(db, profile)
+        db.refresh(project)
+        site = _add_primary_site(db, project)
         db.commit()
-        profile_id = profile.id
+        project_id = project.id
         site_id = site.id
 
     class SuccessResponse:
@@ -1140,7 +1140,7 @@ def test_page_network_failure_does_not_fail_run_with_successful_html(monkeypatch
         def get(self, url: str):
             if url.endswith("/timeout"):
                 with SessionLocal() as progress_db:
-                    live_run = progress_db.query(Run).filter(Run.profile_id == profile_id).one()
+                    live_run = progress_db.query(Run).filter(Run.project_id == project_id).one()
                     persisted_pages = progress_db.query(Page).filter(Page.run_id == live_run.id).all()
                     assert live_run.status == "RUNNING"
                     assert live_run.pages_total == 1
@@ -1162,7 +1162,7 @@ def test_page_network_failure_does_not_fail_run_with_successful_html(monkeypatch
     assert response.status_code == 200
 
     with SessionLocal() as db:
-        run = db.query(Run).filter(Run.profile_id == profile_id).one()
+        run = db.query(Run).filter(Run.project_id == project_id).one()
         pages = db.query(Page).filter(Page.run_id == run.id).order_by(Page.id).all()
         assert run.status == "FINISHED"
         assert run.pages_total == 2
@@ -1201,16 +1201,16 @@ def test_retry_problem_page_preserves_original_result_and_records_attempt(monkey
 
     with SessionLocal() as db:
         db.add(_make_user(email="retry-page@test.local", role="editor", is_approved=True))
-        profile = Profile(
+        project = Project(
             name="Retry",
             start_url="https://retry.test/",
             allowed_domains_csv="retry.test",
         )
-        db.add(profile)
+        db.add(project)
         db.flush()
-        site = _add_primary_site(db, profile)
+        site = _add_primary_site(db, project)
         run = Run(
-            profile_id=profile.id,
+            project_id=project.id,
             project_site_id=site.id,
             status="FINISHED",
             started_at=datetime.utcnow(),
@@ -1293,13 +1293,13 @@ def test_pages_changed_counts_deleted_urls(monkeypatch):
 
     with SessionLocal() as db:
         db.add(_make_user(email="runs-diff@test.local", role="editor", is_approved=True))
-        profile = Profile(name="Diff", start_url="https://diff.test", allowed_domains_csv="diff.test", max_pages=1)
-        db.add(profile)
+        project = Project(name="Diff", start_url="https://diff.test", allowed_domains_csv="diff.test", max_pages=1)
+        db.add(project)
         db.commit()
-        db.refresh(profile)
-        site = _add_primary_site(db, profile)
+        db.refresh(project)
+        site = _add_primary_site(db, project)
         previous = Run(
-            profile_id=profile.id,
+            project_id=project.id,
             project_site_id=site.id,
             status="FINISHED",
             started_at=datetime.utcnow(),
@@ -1322,7 +1322,7 @@ def test_pages_changed_counts_deleted_urls(monkeypatch):
             ]
         )
         db.commit()
-        profile_id = profile.id
+        project_id = project.id
         site_id = site.id
 
     class FakeResponse:
@@ -1353,7 +1353,7 @@ def test_pages_changed_counts_deleted_urls(monkeypatch):
     assert response.status_code == 200
 
     with SessionLocal() as db:
-        latest = db.query(Run).filter(Run.profile_id == profile_id).order_by(Run.id.desc()).first()
+        latest = db.query(Run).filter(Run.project_id == project_id).order_by(Run.id.desc()).first()
         assert latest is not None
         assert latest.pages_changed == 1
 

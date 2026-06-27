@@ -35,7 +35,7 @@ import { useAuth } from "../hooks/auth";
 import { hasPermission } from "../utils/permissions";
 import { refreshEventCenterPollingNow } from "../utils/eventCenterPollingManager";
 
-type ProjectProfile = {
+type ProjectDetails = {
   id: number;
   name: string;
   start_url: string;
@@ -50,7 +50,7 @@ type ProjectProfile = {
 
 type ProjectRun = {
   id: number;
-  profile_id: number;
+  project_id: number;
   project_site_id: number;
   crawl_persona_id: number | null;
   persona: {
@@ -166,7 +166,7 @@ export default function ProjectDashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
-  const [project, setProject] = useState<ProjectProfile | null>(null);
+  const [project, setProject] = useState<ProjectDetails | null>(null);
   const [sites, setSites] = useState<ProjectSiteSummary[]>([]);
   const [sitesLoading, setSitesLoading] = useState(true);
   const [selectedSiteId, setSelectedSiteId] = useState<number | null>(null);
@@ -273,7 +273,7 @@ export default function ProjectDashboardPage() {
     setProject(null);
     setSelectedSiteId(null);
     Promise.all([
-      apiGet<ProjectProfile>(`/projects/${id}`),
+      apiGet<ProjectDetails>(`/projects/${id}`),
       listProjectSiteSummaries(Number(id)),
     ])
       .then(([nextProject, nextSites]) => {
@@ -330,7 +330,7 @@ export default function ProjectDashboardPage() {
       return [
         {
           id: -Date.now(),
-          profile_id: project.id,
+          project_id: project.id,
           project_site_id: selectedSite.id,
           crawl_persona_id: selectedSite.default_persona?.id ?? null,
           persona: selectedSite.default_persona ?? { id: 0, key: "guest", label: "Гость", kind: "guest", has_secrets: false },

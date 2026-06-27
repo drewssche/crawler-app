@@ -80,10 +80,10 @@
 - Legacy audit 2026-06-27:
   - проект находится в dev-stage, поэтому breaking cleanup допустим, если упрощает целевую модель;
   - audit зафиксирован в [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md);
-  - главный долг: продуктово это `Project`, но DB/model/FK всё ещё называются `Profile/profiles/profile_id`;
+  - DB/model/FK terminology wave закрыта: `Project/projects/project_id`;
   - route/API terminology `profiles → projects` закрыта для внешнего контракта;
   - frontend terminology wave закрыта: `ProjectDashboardPage/ProjectNewPage/projectListCache` и project-oriented props/utils без изменения backend API prefix;
-  - крупная волна после этого: DB/model rename `Profile/profiles/profile_id → Project/projects/project_id`.
+  - следующий cleanup после этого: удалить дублирующие site-поля из project container после перевода summary/search на `ProjectSite` aggregate.
 
 ## Working Rules
 
@@ -264,7 +264,7 @@
   15.2 Element-level inspection: visual/DOM block picker → linked HTML fragment → code highlight; later selected-block compare and target fingerprint monitoring. DOM picker и rendered snapshot element-map MVP готовы: новые визуальные снимки сохраняют карту блоков, чтобы клик по screenshot выбирал HTML-элемент. UX-stabilization: выбранный блок показывает источник (`Визуальный снимок`/`DOM`), пустой клик получает friendly warning, подсветка кода честно объясняет mismatch, есть `Сбросить выбор`.
   15.3 Selected-block compare: ручной выбор блока слева/справа в Compare, HTML/text diff только выбранных блоков, размеры/selector, structural fingerprint и warning, если блоки структурно не похожи — MVP готов. UX-polish: статус `Блоки: 0/2–2/2`, следующий шаг, `Очистить оба блока` и пояснение, когда старый snapshot без `element_map` требует пересоздания. Auto-suggest похожего блока готов как явное предложение по fingerprint без автоприменения. Следующее расширение: сохранение target monitoring.
   16. Backend schedule contract: сохранённое расписание, timezone, duplicate-run guard, pause/resume и следующий запуск; текущий settings-блок остаётся честным manual-only состоянием до этого этапа.
-  17. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile`; compatibility endpoint `/runs/start/{profile_id}` уже удалён.
+  17. После перевода UI, crawler и API удалить дублирующие site-поля из project container; compatibility endpoint `/runs/start/{profile_id}` уже удалён.
 
   **Verification**
   - single-site whole-domain и section-only проекты не выходят за scope;
@@ -282,13 +282,13 @@
 ## Reliability and Foundations
 
 - [ ] **P1 Legacy cleanup — Project terminology and compatibility removal** (`HIGH`, staged).
-  Цель: не строить target monitoring поверх старой `Profile`-модели. Стадия разработки позволяет делать breaking cleanup, если оно снижает сложность.
+  Цель: не строить target monitoring поверх старой profile-модели. Стадия разработки позволяет делать breaking cleanup, если оно снижает сложность.
   - Audit: [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md).
   - 1. Safe cleanup: README/user-facing wording and obsolete compatibility endpoints.
   - 2. Backend cleanup: `POST /runs/start/{profile_id}` удалён; `GET /runs/by-profile/{profile_id}` заменён на `/runs/by-project/{project_id}`.
   - 3. Frontend terminology: `ProfileDashboardPage → ProjectDashboardPage`, `ProfileNewPage → ProjectNewPage`, `profileListCache → projectListCache` — закрыто.
   - 4. Route/API rename: `/profiles/* → /projects/*`, `/profiles/{id}/sites → /projects/{id}/sites`, `profiles.edit → projects.edit` — закрыто.
-  - 5. DB rename wave: `profiles → projects`, `profile_id → project_id`; удалить дублирующие site-поля из project container после site-aware summary/search.
+  - 5. DB rename wave: `profiles → projects`, `profile_id → project_id` — закрыто; удалить дублирующие site-поля из project container после site-aware summary/search.
 
 - [ ] **P0 Stabilization gate** (`HIGH`, implementation mostly complete).
   Осталось ручное подтверждение project/run сценариев по отдельному запросу: два независимых запуска, immediate project visibility, FINISHED pages, duplicate conflict.
@@ -420,7 +420,7 @@
   - Как проверить: `alembic current` → `a6c3e9f1b247`; `POST /runs/start-site/{site_id}`; `GET /runs/by-site/{site_id}`; section run не запрашивает `/docs-old`, encoded `../` и другой origin.
   - Вклад в цели: второй сайт больше не является техническим доменом первого и получил независимую историю (`high` correctness); legacy project start сохранён только для плавного перехода UI (`medium` compatibility).
 - [x] **P1 ProjectSite foundation — model, migration, canonical scope API**.
-  - Что было: один `Profile` смешивал проект, стартовый сайт и общий список доменов; второй домен не имел самостоятельного результата.
+  - Что было: один project container смешивал проект, стартовый сайт и общий список доменов; второй домен не имел самостоятельного результата.
   - Что стало: проект хранит `1+ ProjectSite`; миграция создаёт primary site для каждого существующего проекта; API позволяет читать/добавлять/редактировать/удалять сайты с RBAC, duplicate conflict и запретом удалить последний сайт.
   - Как проверить: `alembic current` → `8f2b1c4d6e90`; `GET /projects/{id}/sites`; section scope `/docs/` принимает `/docs/page`, но отклоняет `/docs-old` и `/docs/../admin`.
   - Вклад в цели: создан совместимый фундамент multi-site и section-only мониторинга без преждевременного изменения crawler/UI (`high` architecture/reliability).
@@ -441,7 +441,7 @@
   - Вклад в цели: больше проектов в viewport и быстрее читается состояние (`high` UX); удалён лишний destructive control и один UI-компонент из bundle (`medium`).
 - [x] **P1 Project information architecture — `Основная | История | Настройки`**.
   - Что было: четыре вкладки `Сводка | Расписание | Структура | История`; структура требовала отдельного перехода, а расписание было несохраняемым UI-прототипом.
-  - Что стало: `Основная` объединяет последний прогон, KPI и структуру; `История` показывает реальные runs без фиктивного domain-фильтра; `Настройки` содержит реальные profile/scope/limit параметры, честный статус расписания и danger zone.
+  - Что стало: `Основная` объединяет последний прогон, KPI и структуру; `История` показывает реальные runs без фиктивного domain-фильтра; `Настройки` содержит реальные project/site scope/limit параметры, честный статус расписания и danger zone.
   - Как проверить: открыть проект; на `Основная` доступны run/KPI/structure, на `История` — список прогонов, на `Настройки` — параметры, ручной запуск и удаление. Кнопки `Сохранить расписание` нет.
   - Вклад в цели: меньше лишних переходов и ложных affordance (`high` UX), ясное разделение работы/истории/настроек (`high`).
 - [x] Friendly project/run failure UX.

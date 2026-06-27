@@ -9,14 +9,14 @@ from app.core.api_response import success_response_payload
 from app.core.paging import build_paged_response, paginate_query
 from app.core.site_scope import canonicalize_site_scope
 from app.db.session import get_db
-from app.db.models.profile import Profile
+from app.db.models.project import Project
 from app.db.models.page import Page
 from app.db.models.run import Run
 from app.db.models.user import User
 from app.db.models.crawl_persona import CrawlPersona
 from app.schemas.project import ProjectCreate, ProjectOut
 from app.db.models.project_site import ProjectSite
-from app.services.project_sites import create_primary_site_for_profile
+from app.services.project_sites import create_primary_site_for_project
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -41,7 +41,7 @@ def list_projects(
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("data.view")),
 ):
-    query = db.query(Profile).order_by(Profile.id.desc())
+    query = db.query(Project).order_by(Project.id.desc())
     paged = paginate_query(query, page=page, page_size=page_size)
     if page is None:
         return paged
@@ -64,7 +64,7 @@ def create_project(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     requested_scope = _canonical_project_scope(primary_scope.start_url, payload.allowed_domains_csv)
-    for existing in db.query(Profile).all():
+    for existing in db.query(Project).all():
         if _canonical_project_scope(existing.start_url, existing.allowed_domains_csv) == requested_scope:
             raise HTTPException(
                 status_code=409,
@@ -78,16 +78,16 @@ def create_project(
                     },
                 },
             )
-    profile_data = payload.model_dump(
+    project_data = payload.model_dump(
         mode="json",
         exclude={"site_name", "scope_mode", "path_prefix"},
     )
-    profile_data["start_url"] = primary_scope.start_url
-    obj = Profile(**profile_data)
+    project_data["start_url"] = primary_scope.start_url
+    obj = Project(**project_data)
     db.add(obj)
     db.flush()
     try:
-        create_primary_site_for_profile(
+        create_primary_site_for_project(
             db,
             obj,
             site_name=payload.site_name,
@@ -110,26 +110,26 @@ def list_projects_summary(
 ):
     last_run_sq = (
         db.query(
-            Run.profile_id.label("profile_id"),
+            Run.project_id.label("project_id"),
             func.max(Run.id).label("last_run_id"),
         )
-        .group_by(Run.profile_id)
+        .group_by(Run.project_id)
         .subquery()
     )
     runs_count_sq = (
         db.query(
-            Run.profile_id.label("profile_id"),
+            Run.project_id.label("project_id"),
             func.count(Run.id).label("runs_total"),
         )
-        .group_by(Run.profile_id)
+        .group_by(Run.project_id)
         .subquery()
     )
     rows = (
         db.query(
-            Profile.id.label("id"),
-            Profile.name.label("name"),
-            Profile.start_url.label("start_url"),
-            Profile.allowed_domains_csv.label("allowed_domains_csv"),
+            Project.id.label("id"),
+            Project.name.label("name"),
+            Project.start_url.label("start_url"),
+            Project.allowed_domains_csv.label("allowed_domains_csv"),
             Run.id.label("last_run_id"),
             Run.status.label("last_run_status"),
             Run.started_at.label("last_run_started_at"),
@@ -138,10 +138,10 @@ def list_projects_summary(
             Run.pages_changed.label("last_run_pages_changed"),
             func.coalesce(runs_count_sq.c.runs_total, 0).label("runs_total"),
         )
-        .outerjoin(last_run_sq, last_run_sq.c.profile_id == Profile.id)
+        .outerjoin(last_run_sq, last_run_sq.c.project_id == Project.id)
         .outerjoin(Run, Run.id == last_run_sq.c.last_run_id)
-        .outerjoin(runs_count_sq, runs_count_sq.c.profile_id == Profile.id)
-        .order_by(Profile.id.desc())
+        .outerjoin(runs_count_sq, runs_count_sq.c.project_id == Project.id)
+        .order_by(Project.id.desc())
         .all()
     )
     data = [
@@ -173,7 +173,7 @@ def get_project(
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("data.view")),
 ):
-    obj = db.get(Profile, project_id)
+    obj = db.get(Project, project_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Project not found")
     return obj
@@ -185,15 +185,15 @@ def delete_project(
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("projects.edit")),
 ):
-    obj = db.get(Profile, project_id)
+    obj = db.get(Project, project_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Project not found")
-    run_ids = db.query(Run.id).filter(Run.profile_id == project_id)
+    run_ids = db.query(Run.id).filter(Run.project_id == project_id)
     db.query(Page).filter(Page.run_id.in_(run_ids)).delete(synchronize_session=False)
-    db.query(Run).filter(Run.profile_id == project_id).delete(synchronize_session=False)
-    site_ids = db.query(ProjectSite.id).filter(ProjectSite.profile_id == project_id)
+    db.query(Run).filter(Run.project_id == project_id).delete(synchronize_session=False)
+    site_ids = db.query(ProjectSite.id).filter(ProjectSite.project_id == project_id)
     db.query(CrawlPersona).filter(CrawlPersona.project_site_id.in_(site_ids)).delete(synchronize_session=False)
-    db.query(ProjectSite).filter(ProjectSite.profile_id == project_id).delete(synchronize_session=False)
+    db.query(ProjectSite).filter(ProjectSite.project_id == project_id).delete(synchronize_session=False)
     db.delete(obj)
     db.commit()
     return {"ok": True}
