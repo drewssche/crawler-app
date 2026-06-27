@@ -69,7 +69,7 @@
   - `301/302/307/308` отображаются отдельным жёлтым page-result с friendly-пояснением и адресом назначения;
   - timeout/connect/TLS/redirect failures сохраняются как красный page-level result и не валят run при наличии других успешных HTML-страниц;
   - полный run остаётся `FAILED`, если не получено ни одной пригодной HTML-страницы.
-- Последние проверки: backend `64 passed, 2 skipped`; PostgreSQL migration `b2f8d9e4c6a1` verified; RBAC parity passed; frontend tests `36 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; runtime consent audit smoke passed; `git diff --check` passed.
+- Последние проверки: backend `64 passed, 2 skipped`; PostgreSQL migration `b2f8d9e4c6a1` verified; RBAC parity passed; frontend tests `36 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; runtime consent audit smoke passed; DOM element picker smoke passed; `git diff --check` passed.
 - Общий frontend lint имеет ранее существовавшие ошибки вне текущих изменений; не считать их регрессией этой волны.
 - UX-аудит 2026-06-26 подтвердил четыре приоритетные волны:
   1. исправить потерю Structure при повторном выборе site card и открывать контекст раздела дерева вместо внешнего сайта;
@@ -254,7 +254,7 @@
   14. `CrawlPersona`: guest → encrypted session bundle → browser login scenarios. Guest foundation готов: каждый site получает default `Гость`, API runs/snapshots/context возвращают persona metadata, anomaly baseline scoped по default persona.
   15. Расширить anomaly/Compare на redirect, resources, consent и persona-scoped signals.
   15.1 Compare layout refinement: split page info into left/right contextual panels around the central two-page comparison; keep adaptive fallback for medium/narrow screens and preserve a separate differences-only report — готово.
-  15.2 Element-level inspection: visual/DOM block picker → linked HTML fragment → code highlight; later selected-block compare and target fingerprint monitoring.
+  15.2 Element-level inspection: visual/DOM block picker → linked HTML fragment → code highlight; later selected-block compare and target fingerprint monitoring. DOM picker MVP готов; rendered snapshot element-map остаётся следующим расширением.
   16. Backend schedule contract: сохранённое расписание, timezone, duplicate-run guard, pause/resume и следующий запуск; текущий settings-блок остаётся честным manual-only состоянием до этого этапа.
   17. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile` и compatibility endpoint `/runs/start/{profile_id}`.
 
@@ -300,6 +300,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P1 Element picker MVP for Page Inspector DOM mode**.
+  - Что было: можно было смотреть snapshot, DOM и HTML отдельно, но не было связи `визуально выбранный блок → HTML фрагмент`.
+  - Что стало: в `Полный анализ → DOM` появилась кнопка `Выбрать блок`; sandboxed DOM подсвечивает hover/selected element и передаёт наружу только tag/id/classes/selector/text/outerHTML/bounding box. Правая панель показывает карточку выбранного блока, HTML фрагмент и действие `Показать в коде`; режим `Код` подсвечивает найденный фрагмент. Inline event handlers удаляются перед показом DOM, scripts исходной страницы не исполняются.
+  - Как проверить: открыть полный анализ страницы, перейти в `DOM`, включить `Выбрать блок`, кликнуть по блоку, затем нажать `Показать в коде`.
+  - Вклад в цели: пользователь может исследовать конкретную область страницы без ручного поиска HTML (`high` UX/product value); это безопасная база для будущего selected-block compare и rendered snapshot element-map (`high` architecture).
 
 - [x] **P1 Compare layout refinement — side-specific page info panels**.
   - Что было: Compare имел одну общую info-панель с переключателем `Левая/Правая/Различия`; пользователю приходилось помнить, к какой странице относится текущий отчёт.

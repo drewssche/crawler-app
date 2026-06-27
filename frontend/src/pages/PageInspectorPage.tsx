@@ -14,6 +14,23 @@ import { hasPermission } from "../utils/permissions";
 
 type InspectorMode = "snapshot" | "dom" | "code";
 
+type PickedElement = {
+  tag: string;
+  id: string;
+  className: string;
+  selector: string;
+  text: string;
+  outerHTML: string;
+  rect: { x: number; y: number; width: number; height: number };
+};
+
+function highlightedHtml(html: string, selected?: PickedElement | null): string {
+  if (!selected?.outerHTML) return html || "HTML отсутствует.";
+  const index = html.indexOf(selected.outerHTML);
+  if (index === -1) return html || "HTML отсутствует.";
+  return `${html.slice(0, index)}__CRAWLER_PICK_START__${html.slice(index, index + selected.outerHTML.length)}__CRAWLER_PICK_END__${html.slice(index + selected.outerHTML.length)}`;
+}
+
 export default function PageInspectorPage() {
   const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
@@ -25,6 +42,8 @@ export default function PageInspectorPage() {
   const [context, setContext] = useState<PageContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [elementPickerEnabled, setElementPickerEnabled] = useState(false);
+  const [pickedElement, setPickedElement] = useState<PickedElement | null>(null);
   const invalidSelection = !Number.isFinite(runId) || runId <= 0 || !url;
   const visibleError = invalidSelection ? "Не выбран прогон или URL страницы." : error;
   const canGenerateSnapshot = hasPermission(user?.role, "crawler.run");
@@ -55,6 +74,17 @@ export default function PageInspectorPage() {
       window.clearTimeout(startTimer);
     };
   }, [invalidSelection, runId, url]);
+
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.data?.type !== "crawler:element-selected") return;
+      const payload = event.data.payload as PickedElement;
+      if (!payload?.outerHTML || !payload?.selector) return;
+      setPickedElement(payload);
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
 
   return (
     <div style={{ display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: 10, height: "100%", minHeight: 0 }}>
@@ -97,7 +127,20 @@ export default function PageInspectorPage() {
                       : "Сохранённый HTML"}
                 </div>
               }
-              actions={<MetaText>{snapshot.status_code} · SEO {snapshot.seo.score}%</MetaText>}
+              actions={
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {mode === "dom" && (
+                    <button
+                      type="button"
+                      className={`element-picker-toggle${elementPickerEnabled ? " is-active" : ""}`}
+                      onClick={() => setElementPickerEnabled((current) => !current)}
+                    >
+                      {elementPickerEnabled ? "Выбор блока включён" : "Выбрать блок"}
+                    </button>
+                  )}
+                  <MetaText>{snapshot.status_code} · SEO {snapshot.seo.score}%</MetaText>
+                </div>
+              }
             />
             {mode === "snapshot" ? (
               <RenderedSnapshotView
@@ -109,16 +152,22 @@ export default function PageInspectorPage() {
                 onCreated={(metadata) => setSnapshot((current) => current ? { ...current, rendered_snapshot: metadata } : current)}
               />
             ) : mode === "dom" ? (
-              <div style={{ minHeight: 0, overflow: "auto", background: "#fff", borderRadius: 8, marginTop: 8 }}>
+              <div className="element-picker-dom-shell">
+                {elementPickerEnabled && (
+                  <div className="element-picker-hint">
+                    Наведите на блок в DOM-снимке и кликните, чтобы увидеть HTML этого элемента.
+                  </div>
+                )}
                 <iframe
                   title={`Snapshot: ${snapshot.url}`}
-                  sandbox=""
-                  srcDoc={safeSnapshotDocument(snapshot.html)}
+                  sandbox="allow-scripts"
+                  srcDoc={safeSnapshotDocument(snapshot.html, { elementPicker: elementPickerEnabled })}
                   style={{ display: "block", border: 0, width: "100%", minHeight: 900, background: "#fff" }}
                 />
               </div>
             ) : (
               <pre
+                className="page-code-view"
                 style={{
                   margin: "8px 0 0",
                   padding: 12,
@@ -131,12 +180,51 @@ export default function PageInspectorPage() {
                   fontSize: 12,
                 }}
               >
-                {snapshot.html || "HTML отсутствует."}
+                {highlightedHtml(snapshot.html || "", pickedElement).split(/(__CRAWLER_PICK_START__|__CRAWLER_PICK_END__)/).map((part, index, parts) => {
+                  if (part === "__CRAWLER_PICK_START__" || part === "__CRAWLER_PICK_END__") return null;
+                  const selected = parts[index - 1] === "__CRAWLER_PICK_START__";
+                  return selected
+                    ? <mark key={index} className="page-code-selected-fragment">{part}</mark>
+                    : part;
+                })}
               </pre>
             )}
           </Card>
 
           <Card className="page-inspector-report" style={{ minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+            {pickedElement && (
+              <Card className="element-picker-card" variant="hint">
+                <SectionHeaderRow
+                  title={<div>Выбранный блок</div>}
+                  actions={
+                    <button
+                      type="button"
+                      className="element-picker-toggle"
+                      onClick={() => setMode("code")}
+                    >
+                      Показать в коде
+                    </button>
+                  }
+                />
+                <MetaText>Элемент: &lt;{pickedElement.tag}&gt;</MetaText>
+                <MetaText style={{ wordBreak: "break-word" }}>Selector: {pickedElement.selector}</MetaText>
+                {pickedElement.id && <MetaText>ID: {pickedElement.id}</MetaText>}
+                {pickedElement.className && <MetaText style={{ wordBreak: "break-word" }}>Classes: {pickedElement.className}</MetaText>}
+                <MetaText>
+                  Область: {pickedElement.rect.width}×{pickedElement.rect.height}px · x:{pickedElement.rect.x}, y:{pickedElement.rect.y}
+                </MetaText>
+                <details className="inspector-details">
+                  <summary>HTML выбранного блока</summary>
+                  <pre className="element-picker-html">{pickedElement.outerHTML}</pre>
+                </details>
+                {pickedElement.text && (
+                  <details className="inspector-details">
+                    <summary>Текст блока</summary>
+                    <MetaText style={{ marginTop: 7, whiteSpace: "pre-wrap" }}>{pickedElement.text}</MetaText>
+                  </details>
+                )}
+              </Card>
+            )}
             <PageInspectionReport context={context} />
           </Card>
         </div>

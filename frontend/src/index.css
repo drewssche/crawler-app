@@ -280,6 +280,73 @@ button:focus-visible {
   height: 100%;
 }
 
+.element-picker-toggle {
+  appearance: none;
+  border: 1px solid rgba(120,166,255,0.5);
+  border-radius: 999px;
+  background: rgba(120,166,255,0.1);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.element-picker-toggle.is-active {
+  border-color: rgba(231,161,90,0.76);
+  background: rgba(231,161,90,0.16);
+  color: #ffd8ad;
+}
+
+.element-picker-dom-shell {
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+  background: #fff;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+.element-picker-hint {
+  position: sticky;
+  top: 8px;
+  z-index: 2;
+  margin: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(231,161,90,0.48);
+  background: rgba(31, 24, 16, 0.92);
+  color: #ffe0ba;
+  font-size: 12px;
+}
+
+.element-picker-card {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.element-picker-html {
+  max-height: 260px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.24);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
+
+.page-code-view .page-code-selected-fragment {
+  display: inline;
+  background: rgba(231,161,90,0.28);
+  color: inherit;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(231,161,90,0.48);
+}
+
 .compare-inspector-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(340px, 0.42fr);

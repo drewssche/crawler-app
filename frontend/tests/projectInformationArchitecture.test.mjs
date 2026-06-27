@@ -113,9 +113,16 @@ test("full page inspector keeps the snapshot and a scrollable section report vis
   assert.match(inspectorSource, /Снимок/);
   assert.match(inspectorSource, /DOM/);
   assert.match(inspectorSource, /Сохранённый HTML/);
-  assert.match(inspectorSource, /sandbox=""/);
+  assert.match(inspectorSource, /sandbox="allow-scripts"/);
   assert.match(inspectorSource, /RenderedSnapshotView/);
   assert.match(inspectorSource, /PageInspectionReport/);
+  assert.match(inspectorSource, /Выбрать блок/);
+  assert.match(inspectorSource, /Выбранный блок/);
+  assert.match(inspectorSource, /Показать в коде/);
+  assert.match(inspectorSource, /page-code-selected-fragment/);
+  assert.match(safeSnapshotSource, /crawler:element-selected/);
+  assert.match(safeSnapshotSource, /startsWith\("on"\)/);
+  assert.match(cssSource, /element-picker-toggle/);
   assert.match(cssSource, /\.inspector-section-nav[\s\S]*position: sticky/);
   assert.match(reportSource, /Найти ссылку по адресу или тексту/);
   assert.match(reportSource, /Найти ассет по адресу или alt/);
