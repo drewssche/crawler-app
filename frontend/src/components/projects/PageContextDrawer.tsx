@@ -83,6 +83,7 @@ export default function PageContextDrawer({
                 }
               />
               <MetaText>HTTP: {context.page.status_code} · {context.page.content_type || "тип неизвестен"}</MetaText>
+              <MetaText>Контекст просмотра: {context.page.persona?.label || "Гость"}</MetaText>
               <MetaText>Title: {context.meta.title || "не задан"}</MetaText>
               <MetaText>Description: {context.meta.description || "не задан"}</MetaText>
               <MetaText>Canonical: {context.meta.canonical || "не задан"}</MetaText>
@@ -90,7 +91,7 @@ export default function PageContextDrawer({
               <details>
                 <summary style={{ cursor: "pointer", fontSize: 12, opacity: 0.78 }}>Технические детали</summary>
                 <MetaText style={{ marginTop: 6 }}>
-                  ID прогона: {context.page.run_id} · ID сайта: {context.page.project_site_id}
+                  ID прогона: {context.page.run_id} · ID сайта: {context.page.project_site_id} · ID контекста: {context.page.crawl_persona_id || "—"}
                 </MetaText>
               </details>
             </Card>

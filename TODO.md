@@ -69,14 +69,14 @@
   - `301/302/307/308` отображаются отдельным жёлтым page-result с friendly-пояснением и адресом назначения;
   - timeout/connect/TLS/redirect failures сохраняются как красный page-level result и не валят run при наличии других успешных HTML-страниц;
   - полный run остаётся `FAILED`, если не получено ни одной пригодной HTML-страницы.
-- Последние проверки: backend `64 passed, 2 skipped`; PostgreSQL migration `c7e4a2b9d130` verified; RBAC parity passed; frontend tests `34 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; runtime consent audit smoke passed; `git diff --check` passed.
+- Последние проверки: backend `64 passed, 2 skipped`; PostgreSQL migration `b2f8d9e4c6a1` verified; RBAC parity passed; frontend tests `35 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; runtime consent audit smoke passed; `git diff --check` passed.
 - Общий frontend lint имеет ранее существовавшие ошибки вне текущих изменений; не считать их регрессией этой волны.
 - UX-аудит 2026-06-26 подтвердил четыре приоритетные волны:
   1. исправить потерю Structure при повторном выборе site card и открывать контекст раздела дерева вместо внешнего сайта;
   2. превратить Page Inspector из сводки счётчиков в понятное исследование links/assets/tracking с легендами и progressive disclosure;
   3. заменить обрезанный sanitized DOM на достоверный сохранённый rendered snapshot, сохранив безопасный DOM/code-режим отдельно;
   4. сделать Compare пригодным для тысяч страниц: searchable picker, progressive controls и полноразмерные/изменяемые панели без фиксированной высоты документа.
-- Следующий рекомендуемый пункт: **Crawl Personas foundation** (`guest` как явная persona без session secrets), затем encrypted session bundle. Runtime consent audit закрыт как on-demand MVP без Browser-smoke.
+- Следующий рекомендуемый пункт: **encrypted session bundle для Crawl Personas** с masked UI и запретом viewer читать secrets. Guest-persona foundation закрыт без Browser-smoke.
 
 ## Working Rules
 
@@ -248,7 +248,7 @@
       - 12.3 persisted rendered full-page snapshot + отдельные безопасные `DOM/Код` режимы — on-demand reconstruction готова; нативный screenshot в момент crawl остаётся для browser-persona этапа;
       - 12.4 searchable Compare picker, progressive controls, dynamic height и resizable panels — готово; server-side search/true virtualization остаются только при подтверждённой просадке на больших runs.
   13. Runtime consent audit `до/после`, затем отображение наблюдаемого поведения cookies/scripts — on-demand MVP готов.
-  14. `CrawlPersona`: guest → encrypted session bundle → browser login scenarios.
+  14. `CrawlPersona`: guest → encrypted session bundle → browser login scenarios. Guest foundation готов: каждый site получает default `Гость`, API runs/snapshots/context возвращают persona metadata, anomaly baseline scoped по default persona.
   15. Расширить anomaly/Compare на redirect, resources, consent и persona-scoped signals.
   16. Backend schedule contract: сохранённое расписание, timezone, duplicate-run guard, pause/resume и следующий запуск; текущий settings-блок остаётся честным manual-only состоянием до этого этапа.
   17. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile` и compatibility endpoint `/runs/start/{profile_id}`.
@@ -295,6 +295,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P1 Crawl Personas foundation — explicit guest context**.
+  - Что было: все прогоны технически относились только к сайту; будущие авторизованные/партнёрские результаты могли бы смешаться с гостевыми в history, baseline и Compare.
+  - Что стало: добавлена модель `CrawlPersona`, миграция создаёт default `Гость` для каждого `ProjectSite`, API-запуски пишут `crawl_persona_id`, history/summary/snapshot/page-context возвращают persona metadata, anomaly baseline считает default-persona отдельно. UI показывает `Контекст: Гость` в site cards, history, Compare и Page Inspector.
+  - Как проверить: `Проект → Основная` показывает контекст сайта; новый запуск создаёт run с `persona: Гость`; `Compare` и `Полный анализ` показывают тот же контекст. Миграция: `docker compose exec backend alembic upgrade head`.
+  - Вклад в цели: результаты разных пользовательских представлений больше не будут смешиваться при добавлении авторизованных сценариев (`high` correctness); пользователь видит, чьими глазами была просмотрена страница (`high` friendly UX).
 
 - [x] **P1 On-demand runtime consent audit for page Inspector**.
   - Что было: Inspector честно показывал, что статический HTML не доказывает фактический запуск scripts/cookies до или после согласия.

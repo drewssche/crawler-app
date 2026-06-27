@@ -18,6 +18,7 @@ from app.core.site_scope import CanonicalSiteScope, canonicalize_site_scope, is_
 from app.db.models.page import Page
 from app.db.models.page_retry_attempt import PageRetryAttempt
 from app.db.models.profile import Profile
+from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.project_site import ProjectSite
 from app.db.models.run import Run
 from app.db.models.user import User
@@ -30,6 +31,7 @@ from app.core.events import (
     emit_event,
 )
 from app.services.project_sites import create_primary_site_for_profile
+from app.services.crawl_personas import get_default_persona
 from app.services.page_context import build_page_context
 from app.crawler.renderer import (
     get_rendered_snapshot_metadata,
@@ -57,6 +59,37 @@ def _extract_html_title(html: str | None) -> str:
     if not title or not title.string:
         return ""
     return title.string.strip()
+
+
+def _serialize_run(run: Run, persona: CrawlPersona | None = None) -> dict:
+    return {
+        "id": run.id,
+        "profile_id": run.profile_id,
+        "project_site_id": run.project_site_id,
+        "crawl_persona_id": run.crawl_persona_id,
+        "persona": (
+            None
+            if persona is None
+            else {
+                "id": persona.id,
+                "key": persona.key,
+                "label": persona.label,
+                "kind": persona.kind,
+                "has_secrets": persona.has_secrets,
+            }
+        ),
+        "status": run.status,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "pages_total": run.pages_total,
+        "pages_changed": run.pages_changed,
+        "pages_discovered": run.pages_discovered,
+        "current_batch_no": run.current_batch_no,
+        "current_url": run.current_url,
+        "progress_updated_at": run.progress_updated_at,
+        "failure_code": run.failure_code,
+        "failure_message": run.failure_message,
+    }
 
 
 def _classify_fetch_failure(exc: Exception) -> tuple[str, str]:
@@ -274,6 +307,7 @@ def _emit_run_completion_event(
     *,
     run: Run,
     site: ProjectSite,
+    persona: CrawlPersona | None,
     actor_user_id: int | None,
 ) -> None:
     succeeded = run.status == "FINISHED"
@@ -296,6 +330,9 @@ def _emit_run_completion_event(
             "run_id": run.id,
             "profile_id": site.profile_id,
             "project_site_id": site.id,
+            "crawl_persona_id": run.crawl_persona_id,
+            "persona_key": persona.key if persona else None,
+            "persona_label": persona.label if persona else None,
             "status": run.status,
             "pages_total": run.pages_total,
             "pages_changed": run.pages_changed,
@@ -311,6 +348,7 @@ def _execute_site_run(
     *,
     actor_user_id: int | None = None,
 ) -> Run:
+    persona = get_default_persona(db, site)
     scope = canonicalize_site_scope(
         site.start_url,
         scope_mode=site.scope_mode,
@@ -319,6 +357,7 @@ def _execute_site_run(
     run = Run(
         profile_id=site.profile_id,
         project_site_id=site.id,
+        crawl_persona_id=persona.id,
         status="RUNNING",
         started_at=datetime.utcnow(),
         pages_discovered=1,
@@ -496,6 +535,7 @@ def _execute_site_run(
                 db,
                 run=run,
                 site=site,
+                persona=persona,
                 actor_user_id=actor_user_id,
             )
             db.commit()
@@ -512,6 +552,7 @@ def _execute_site_run(
             db.query(Run)
             .filter(
                 Run.project_site_id == site.id,
+                Run.crawl_persona_id == persona.id,
                 Run.status == "FINISHED",
                 Run.id < run.id,
             )
@@ -544,6 +585,7 @@ def _execute_site_run(
             db,
             run=run,
             site=site,
+            persona=persona,
             actor_user_id=actor_user_id,
         )
         db.commit()
@@ -567,6 +609,7 @@ def _execute_site_run(
             db,
             run=run,
             site=site,
+            persona=persona,
             actor_user_id=actor_user_id,
         )
         db.commit()
@@ -587,7 +630,14 @@ def start_run(
     _assert_no_active_project_run(db, profile_id)
     site = _get_primary_site(db, profile)
     run = _execute_site_run(db, site, actor_user_id=current_user.id)
-    return {"ok": True, "run_id": run.id, "project_site_id": site.id}
+    persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
+    return {
+        "ok": True,
+        "run_id": run.id,
+        "project_site_id": site.id,
+        "crawl_persona_id": run.crawl_persona_id,
+        "persona": None if persona is None else {"id": persona.id, "key": persona.key, "label": persona.label, "kind": persona.kind},
+    }
 
 
 @router.post("/start-site/{site_id}")
@@ -609,7 +659,14 @@ def start_site_run(
         )
     _assert_no_active_site_run(db, site)
     run = _execute_site_run(db, site, actor_user_id=current_user.id)
-    return {"ok": True, "run_id": run.id, "project_site_id": site.id}
+    persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
+    return {
+        "ok": True,
+        "run_id": run.id,
+        "project_site_id": site.id,
+        "crawl_persona_id": run.crawl_persona_id,
+        "persona": None if persona is None else {"id": persona.id, "key": persona.key, "label": persona.label, "kind": persona.kind},
+    }
 
 
 @router.post("/start-project/{profile_id}")
@@ -646,6 +703,8 @@ def start_project_sites(
                     "project_site_id": site.id,
                     "site_name": site.name,
                     "run_id": run.id,
+                    "crawl_persona_id": run.crawl_persona_id,
+                    "persona_label": (db.get(CrawlPersona, run.crawl_persona_id).label if run.crawl_persona_id else None),
                     "status": run.status,
                     "failure_code": run.failure_code,
                     "failure_message": run.failure_message,
@@ -872,12 +931,22 @@ def list_runs(
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("data.view")),
 ):
-    query = db.query(Run).filter(Run.profile_id == profile_id).order_by(Run.id.desc())
+    query = (
+        db.query(Run, CrawlPersona)
+        .outerjoin(CrawlPersona, CrawlPersona.id == Run.crawl_persona_id)
+        .filter(Run.profile_id == profile_id)
+        .order_by(Run.id.desc())
+    )
     paged = paginate_query(query, page=page, page_size=page_size)
     if page is None:
-        return paged
+        return [_serialize_run(run, persona) for run, persona in paged]
     items, total, safe_page, safe_page_size = paged
-    return build_paged_response(items=items, total=total, page=safe_page, page_size=safe_page_size)
+    return build_paged_response(
+        items=[_serialize_run(run, persona) for run, persona in items],
+        total=total,
+        page=safe_page,
+        page_size=safe_page_size,
+    )
 
 
 @router.get("/by-site/{site_id}")
@@ -890,12 +959,22 @@ def list_site_runs(
 ):
     if not db.get(ProjectSite, site_id):
         raise HTTPException(status_code=404, detail="Project site not found")
-    query = db.query(Run).filter(Run.project_site_id == site_id).order_by(Run.id.desc())
+    query = (
+        db.query(Run, CrawlPersona)
+        .outerjoin(CrawlPersona, CrawlPersona.id == Run.crawl_persona_id)
+        .filter(Run.project_site_id == site_id)
+        .order_by(Run.id.desc())
+    )
     paged = paginate_query(query, page=page, page_size=page_size)
     if page is None:
-        return paged
+        return [_serialize_run(run, persona) for run, persona in paged]
     items, total, safe_page, safe_page_size = paged
-    return build_paged_response(items=items, total=total, page=safe_page, page_size=safe_page_size)
+    return build_paged_response(
+        items=[_serialize_run(run, persona) for run, persona in items],
+        total=total,
+        page=safe_page,
+        page_size=safe_page_size,
+    )
 
 
 @router.get("/{run_id}/pages")
@@ -981,6 +1060,8 @@ def get_page_snapshot(
     return {
         "run_id": run.id,
         "project_site_id": run.project_site_id,
+        "crawl_persona_id": run.crawl_persona_id,
+        "persona": context["page"]["persona"],
         "url": page.url,
         "status_code": page.status_code,
         "content_type": page.content_type,

@@ -406,6 +406,7 @@ export default function PageInspectionReport({ context }: { context: PageContext
         <Section id="summary" title="Сводка и HTTP">
           <Card style={{ display: "grid", gap: 5 }}>
             <MetaText>HTTP: {context.page.status_code} → {context.page.final_status_code}</MetaText>
+            <MetaText>Контекст просмотра: {context.page.persona?.label || "Гость"}</MetaText>
             <MetaText style={{ wordBreak: "break-word" }}>URL: {context.page.url}</MetaText>
             <MetaText>Title: {context.meta.title || "не задан"}</MetaText>
             <MetaText>Время ответа: {context.page.response_time_ms !== null ? `${context.page.response_time_ms} мс` : "—"}</MetaText>
@@ -415,7 +416,7 @@ export default function PageInspectionReport({ context }: { context: PageContext
                 HTTP показывает ответ сервера. Title используется браузером и поисковыми системами. Время ответа измерено при сохранении страницы и может меняться между прогонами.
               </MetaText>
               <MetaText opacity={0.62} style={{ marginTop: 5 }}>
-                ID прогона: {context.page.run_id} · ID сайта: {context.page.project_site_id}
+                ID прогона: {context.page.run_id} · ID сайта: {context.page.project_site_id} · ID контекста: {context.page.crawl_persona_id || "—"}
               </MetaText>
             </details>
           </Card>

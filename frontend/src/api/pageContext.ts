@@ -14,6 +14,14 @@ export type PageContext = {
     id: number;
     run_id: number;
     project_site_id: number;
+    crawl_persona_id: number | null;
+    persona: {
+      id: number;
+      key: string;
+      label: string;
+      kind: string;
+      has_secrets: boolean;
+    } | null;
     url: string;
     status_code: number;
     content_type: string;

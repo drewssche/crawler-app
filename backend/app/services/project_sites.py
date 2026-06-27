@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.site_scope import ScopeMode, canonicalize_site_scope
 from app.db.models.profile import Profile
 from app.db.models.project_site import ProjectSite
+from app.services.crawl_personas import ensure_guest_persona
 
 
 def build_project_site(
@@ -73,4 +74,6 @@ def create_primary_site_for_profile(
         is_enabled=profile.is_enabled,
     )
     db.add(site)
+    db.flush()
+    ensure_guest_persona(db, site)
     return site

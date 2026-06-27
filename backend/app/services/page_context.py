@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
 from app.db.models.page import Page
+from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.page_retry_attempt import PageRetryAttempt
 from app.db.models.run import Run
 
@@ -334,12 +335,25 @@ def build_page_context(db: Session, run: Run, page: Page) -> dict:
     ]
     score = round(sum(item["points"] for item in checklist))
     tracking = _build_tracking_inventory(soup, page.url, html)
+    persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
 
     return {
         "page": {
             "id": page.id,
             "run_id": run.id,
             "project_site_id": run.project_site_id,
+            "crawl_persona_id": run.crawl_persona_id,
+            "persona": (
+                None
+                if persona is None
+                else {
+                    "id": persona.id,
+                    "key": persona.key,
+                    "label": persona.label,
+                    "kind": persona.kind,
+                    "has_secrets": persona.has_secrets,
+                }
+            ),
             "url": page.url,
             "status_code": page.status_code,
             "content_type": page.content_type,

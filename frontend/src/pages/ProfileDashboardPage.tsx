@@ -52,6 +52,14 @@ type ProjectRun = {
   id: number;
   profile_id: number;
   project_site_id: number;
+  crawl_persona_id: number | null;
+  persona: {
+    id: number;
+    key: string;
+    label: string;
+    kind: string;
+    has_secrets?: boolean;
+  } | null;
   status: "CREATED" | "RUNNING" | "FINISHED" | "FAILED" | string;
   started_at: string;
   finished_at: string | null;
@@ -83,6 +91,8 @@ type ProjectRunResult = {
   project_site_id: number;
   site_name: string;
   run_id: number | null;
+  crawl_persona_id?: number | null;
+  persona_label?: string | null;
   status: string;
   failure_code: string | null;
   failure_message: string | null;
@@ -322,6 +332,8 @@ export default function ProfileDashboardPage() {
           id: -Date.now(),
           profile_id: project.id,
           project_site_id: selectedSite.id,
+          crawl_persona_id: selectedSite.default_persona?.id ?? null,
+          persona: selectedSite.default_persona ?? { id: 0, key: "guest", label: "Гость", kind: "guest", has_secrets: false },
           status: "RUNNING",
           started_at: new Date().toISOString(),
           finished_at: null,
@@ -1295,6 +1307,7 @@ export default function ProfileDashboardPage() {
                           <div style={{ fontWeight: 700 }}>{formatRunTitle(run.started_at)}</div>
                           <ProjectRunBadge status={run.status} />
                         </div>
+                        <MetaText>Контекст просмотра: {run.persona?.label || "Гость"}</MetaText>
                         <MetaText>Старт: {formatOperationalDateTime(run.started_at)}</MetaText>
                         <MetaText>Завершение: {run.finished_at ? formatOperationalDateTime(run.finished_at) : "еще выполняется"}</MetaText>
                         <MetaText>Длительность: {formatDuration(run.started_at, run.finished_at)}</MetaText>

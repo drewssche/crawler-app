@@ -6,11 +6,13 @@ from sqlalchemy.orm import Session
 from app.core.api_response import success_response_payload
 from app.core.security import require_permission
 from app.db.models.profile import Profile
+from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.project_site import ProjectSite
 from app.db.models.run import Run
 from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.project_site import ProjectSiteCreate, ProjectSiteOut, ProjectSiteUpdate
+from app.services.crawl_personas import ensure_guest_persona
 from app.services.project_sites import build_project_site
 from app.services.site_anomalies import evaluate_project_site_anomalies
 
@@ -98,10 +100,15 @@ def list_project_sites_summary(
             Run.pages_changed.label("last_run_pages_changed"),
             Run.failure_code.label("last_run_failure_code"),
             Run.failure_message.label("last_run_failure_message"),
+            CrawlPersona.id.label("last_run_persona_id"),
+            CrawlPersona.key.label("last_run_persona_key"),
+            CrawlPersona.label.label("last_run_persona_label"),
+            CrawlPersona.kind.label("last_run_persona_kind"),
             func.coalesce(runs_count_sq.c.runs_total, 0).label("runs_total"),
         )
         .outerjoin(last_run_sq, last_run_sq.c.project_site_id == ProjectSite.id)
         .outerjoin(Run, Run.id == last_run_sq.c.last_run_id)
+        .outerjoin(CrawlPersona, CrawlPersona.id == Run.crawl_persona_id)
         .outerjoin(runs_count_sq, runs_count_sq.c.project_site_id == ProjectSite.id)
         .filter(ProjectSite.profile_id == profile_id)
         .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
@@ -111,10 +118,33 @@ def list_project_sites_summary(
         db,
         [row.ProjectSite.id for row in rows],
     )
+    default_personas = {
+        persona.project_site_id: persona
+        for persona in (
+            db.query(CrawlPersona)
+            .filter(
+                CrawlPersona.project_site_id.in_([row.ProjectSite.id for row in rows]),
+                CrawlPersona.is_default.is_(True),
+            )
+            .all()
+        )
+    }
     data = []
     for row in rows:
+        default_persona = default_personas.get(row.ProjectSite.id)
         site_data = ProjectSiteOut.model_validate(row.ProjectSite).model_dump()
         site_data["runs_total"] = int(row.runs_total or 0)
+        site_data["default_persona"] = (
+            None
+            if default_persona is None
+            else {
+                "id": default_persona.id,
+                "key": default_persona.key,
+                "label": default_persona.label,
+                "kind": default_persona.kind,
+                "has_secrets": default_persona.has_secrets,
+            }
+        )
         site_data["anomaly"] = anomalies_by_site.get(row.ProjectSite.id)
         site_data["last_run"] = (
             None
@@ -128,6 +158,17 @@ def list_project_sites_summary(
                 "pages_changed": int(row.last_run_pages_changed or 0),
                 "failure_code": row.last_run_failure_code,
                 "failure_message": row.last_run_failure_message,
+                "crawl_persona_id": row.last_run_persona_id,
+                "persona": (
+                    None
+                    if row.last_run_persona_id is None
+                    else {
+                        "id": row.last_run_persona_id,
+                        "key": row.last_run_persona_key,
+                        "label": row.last_run_persona_label,
+                        "kind": row.last_run_persona_kind,
+                    }
+                ),
             }
         )
         data.append(site_data)
@@ -183,6 +224,8 @@ def create_project_site(
 
     db.add(site)
     try:
+        db.flush()
+        ensure_guest_persona(db, site)
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -287,6 +330,7 @@ def delete_project_site(
                 "message": "В проекте должен оставаться хотя бы один сайт.",
             },
         )
+    db.query(CrawlPersona).filter(CrawlPersona.project_site_id == site_id).delete(synchronize_session=False)
     db.delete(site)
     db.commit()
     return success_response_payload(request, data={"deleted": True, "site_id": site_id})

@@ -14,6 +14,7 @@ from app.core.security import create_access_token
 from app.db import models  # noqa: F401
 from app.db.base import Base
 from app.db.models.admin_audit_log import AdminAuditLog
+from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.event_feed import EventFeed
 from app.db.models.login_history import LoginHistory
 from app.db.models.profile import Profile
@@ -616,6 +617,7 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     assert response.status_code == 200
     primary_run_id = response.json()["run_id"]
     assert response.json()["project_site_id"] == primary_id
+    assert response.json()["persona"]["key"] == "guest"
 
     pages_response = client.get(f"/runs/{primary_run_id}/pages", headers=editor_headers)
     assert pages_response.status_code == 200
@@ -631,18 +633,22 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     )
     assert secondary_response.status_code == 200
     assert secondary_response.json()["project_site_id"] == secondary_id
+    assert secondary_response.json()["persona"]["label"] == "Гость"
     assert any("b.test" in url for url in calls)
 
     primary_runs = client.get(f"/runs/by-site/{primary_id}", headers=editor_headers)
     secondary_runs = client.get(f"/runs/by-site/{secondary_id}", headers=editor_headers)
     assert [row["id"] for row in primary_runs.json()] == [primary_run_id]
+    assert primary_runs.json()[0]["persona"]["key"] == "guest"
     assert [row["id"] for row in secondary_runs.json()] == [secondary_response.json()["run_id"]]
     summaries = _extract_success_data(
         client.get(f"/profiles/{profile_id}/sites/summary", headers=editor_headers)
     )
     summaries_by_id = {row["id"]: row for row in summaries}
     assert summaries_by_id[primary_id]["runs_total"] == 1
+    assert summaries_by_id[primary_id]["default_persona"]["key"] == "guest"
     assert summaries_by_id[primary_id]["last_run"]["id"] == primary_run_id
+    assert summaries_by_id[primary_id]["last_run"]["persona"]["label"] == "Гость"
     assert summaries_by_id[primary_id]["anomaly"]["status"] == "insufficient_data"
     assert summaries_by_id[secondary_id]["runs_total"] == 1
     assert summaries_by_id[secondary_id]["last_run"]["id"] == secondary_response.json()["run_id"]
@@ -661,6 +667,7 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
 
     assert client.delete(f"/profiles/{profile_id}", headers=editor_headers).status_code == 200
     with SessionLocal() as db:
+        assert db.query(CrawlPersona).filter(CrawlPersona.project_site_id.in_([primary_id, secondary_id])).count() == 0
         assert db.query(ProjectSite).filter(ProjectSite.profile_id == profile_id).count() == 0
         assert db.query(Run).filter(Run.profile_id == profile_id).count() == 0
         assert db.query(Page).filter(Page.run_id.in_([primary_run_id, secondary_response.json()["run_id"]])).count() == 0

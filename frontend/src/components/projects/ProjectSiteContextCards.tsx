@@ -72,6 +72,9 @@ export default function ProjectSiteContextCards({
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 750, overflow: "hidden", textOverflow: "ellipsis" }}>{site.name}</div>
                 <MetaText opacity={0.68} style={{ marginTop: 2 }}>{scopeLabel(site)}</MetaText>
+                <MetaText opacity={0.68} style={{ marginTop: 2 }}>
+                  Контекст: {site.last_run?.persona?.label || site.default_persona?.label || "Гость"}
+                </MetaText>
               </div>
               <ProjectRunBadge status={lastRun?.status} />
             </div>

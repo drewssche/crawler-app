@@ -1,6 +1,7 @@
 from .user import User  # noqa: F401
 from .profile import Profile  # noqa: F401
 from .project_site import ProjectSite  # noqa: F401
+from .crawl_persona import CrawlPersona  # noqa: F401
 from .run import Run  # noqa: F401
 from .page import Page  # noqa: F401
 from .page_retry_attempt import PageRetryAttempt  # noqa: F401

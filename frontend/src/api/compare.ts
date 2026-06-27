@@ -15,6 +15,14 @@ export type RenderedSnapshotMetadata = {
 export type CompareRun = {
   id: number;
   project_site_id: number;
+  crawl_persona_id?: number | null;
+  persona?: {
+    id: number;
+    key: string;
+    label: string;
+    kind: string;
+    has_secrets?: boolean;
+  } | null;
   status: string;
   started_at: string;
   finished_at: string | null;
@@ -32,6 +40,8 @@ export type ComparePageItem = {
 export type CompareSnapshot = {
   run_id: number;
   project_site_id: number;
+  crawl_persona_id?: number | null;
+  persona?: CompareRun["persona"];
   url: string;
   status_code: number;
   content_type: string;

@@ -3,6 +3,14 @@ import { apiDelete, apiGet, apiPatch, apiPost } from "./client";
 export type SiteScopeMode = "whole_site" | "path_prefix";
 export type ProjectSiteRole = "primary" | "reference" | "target" | "peer";
 
+export type CrawlPersonaSummary = {
+  id: number;
+  key: string;
+  label: string;
+  kind: "guest" | "authenticated" | "partner" | string;
+  has_secrets?: boolean;
+};
+
 export type ProjectSite = {
   id: number;
   profile_id: number;
@@ -24,6 +32,8 @@ export type ProjectSite = {
 
 export type ProjectSiteRunSummary = {
   id: number;
+  crawl_persona_id?: number | null;
+  persona?: CrawlPersonaSummary | null;
   status: string;
   started_at: string;
   finished_at: string | null;
@@ -62,6 +72,7 @@ export type ProjectSiteAnomaly = {
 
 export type ProjectSiteSummary = ProjectSite & {
   runs_total: number;
+  default_persona?: CrawlPersonaSummary | null;
   last_run: ProjectSiteRunSummary | null;
   anomaly: ProjectSiteAnomaly;
 };

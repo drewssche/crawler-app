@@ -109,7 +109,7 @@ function SnapshotSelector({
         <option value="" disabled>Выберите версию</option>
         {side.runs.map((run) => (
           <option key={run.id} value={run.id}>
-            {formatRunTitle(run.started_at)} · {getProjectRunBadgeMeta(run.status).label} · {formatOperationalDateTime(run.finished_at || run.started_at)}
+            {formatRunTitle(run.started_at)} · {run.persona?.label || "Гость"} · {getProjectRunBadgeMeta(run.status).label} · {formatOperationalDateTime(run.finished_at || run.started_at)}
           </option>
         ))}
       </UiSelect>
@@ -191,7 +191,7 @@ function VisualSnapshotPanel({
     <Card className="compare-visual-panel">
       <SectionHeaderRow
         title={<div>{label}</div>}
-        actions={<MetaText opacity={0.68}>{snapshot.status_code} · SEO {snapshot.seo.score}%</MetaText>}
+        actions={<MetaText opacity={0.68}>{snapshot.persona?.label || "Гость"} · {snapshot.status_code} · SEO {snapshot.seo.score}%</MetaText>}
       />
       <RenderedSnapshotView
         key={`${snapshot.run_id}-${snapshot.url}`}

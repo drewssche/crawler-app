@@ -223,6 +223,14 @@ test("page inspector exposes on-demand runtime consent audit", () => {
   assert.match(reportSource, /values cookies\/tokens не показываются|Значения cookies\/tokens не показываются/);
 });
 
+test("guest crawl persona is visible in site, compare and page context UX", () => {
+  assert.match(siteCardsSource, /Контекст:/);
+  assert.match(compareSource, /run\.persona\?\.label \|\| "Гость"/);
+  assert.match(reportSource, /Контекст просмотра:/);
+  assert.match(pageDrawerSource, /Контекст просмотра:/);
+  assert.match(compareSource, /snapshot\.persona\?\.label \|\| "Гость"/);
+});
+
 test("compare auto-match suggests but does not force a relative-path pair", () => {
   assert.match(compareSource, /suggestPageMatch/);
   assert.match(compareSource, /Предложение пары/);

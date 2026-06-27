@@ -5,6 +5,7 @@ from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.db.models.page import Page
+from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.run import Run
 
 
@@ -44,6 +45,17 @@ def evaluate_project_site_anomalies(db: Session, site_ids: list[int]) -> dict[in
     if not site_ids:
         return {}
 
+    default_persona_ids = {
+        persona.project_site_id: persona.id
+        for persona in (
+            db.query(CrawlPersona)
+            .filter(
+                CrawlPersona.project_site_id.in_(site_ids),
+                CrawlPersona.is_default.is_(True),
+            )
+            .all()
+        )
+    }
     runs = (
         db.query(Run)
         .filter(
@@ -56,6 +68,9 @@ def evaluate_project_site_anomalies(db: Session, site_ids: list[int]) -> dict[in
     selected_runs: dict[int, list[Run]] = defaultdict(list)
     successful_run_counts: dict[int, int] = defaultdict(int)
     for run in runs:
+        default_persona_id = default_persona_ids.get(run.project_site_id)
+        if default_persona_id is not None and run.crawl_persona_id != default_persona_id:
+            continue
         successful_run_counts[run.project_site_id] += 1
         if len(selected_runs[run.project_site_id]) < BASELINE_RUNS_REQUIRED + 1:
             selected_runs[run.project_site_id].append(run)

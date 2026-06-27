@@ -13,6 +13,7 @@ from app.db.models.profile import Profile
 from app.db.models.page import Page
 from app.db.models.run import Run
 from app.db.models.user import User
+from app.db.models.crawl_persona import CrawlPersona
 from app.schemas.profile import ProfileOut, ProjectCreate
 from app.db.models.project_site import ProjectSite
 from app.services.project_sites import create_primary_site_for_profile
@@ -190,6 +191,8 @@ def delete_profile(
     run_ids = db.query(Run.id).filter(Run.profile_id == profile_id)
     db.query(Page).filter(Page.run_id.in_(run_ids)).delete(synchronize_session=False)
     db.query(Run).filter(Run.profile_id == profile_id).delete(synchronize_session=False)
+    site_ids = db.query(ProjectSite.id).filter(ProjectSite.profile_id == profile_id)
+    db.query(CrawlPersona).filter(CrawlPersona.project_site_id.in_(site_ids)).delete(synchronize_session=False)
     db.query(ProjectSite).filter(ProjectSite.profile_id == profile_id).delete(synchronize_session=False)
     db.delete(obj)
     db.commit()
