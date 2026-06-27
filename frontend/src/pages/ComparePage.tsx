@@ -338,10 +338,12 @@ function SelectedBlockCompare({
   left,
   right,
   onReset,
+  onResetAll,
 }: {
   left: ComparePickedElement | null;
   right: ComparePickedElement | null;
   onReset: (side: SideKey) => void;
+  onResetAll: () => void;
 }) {
   const blockDiff = useMemo(
     () => left && right ? buildLineDiff(left.outerHTML, right.outerHTML, 220) : [],
@@ -357,16 +359,33 @@ function SelectedBlockCompare({
   const rightFingerprint = useMemo(() => buildBlockFingerprint(right), [right]);
   const similarity = useMemo(() => blockSimilarity(leftFingerprint, rightFingerprint), [leftFingerprint, rightFingerprint]);
   const changedBlockLines = blockDiff.filter((line) => line.kind !== "same").length;
+  const nextStep = !left && !right
+    ? "Выберите блок слева и справа."
+    : !left
+      ? "Теперь выберите блок слева."
+      : !right
+        ? "Теперь выберите блок справа."
+        : "Оба блока выбраны — можно смотреть diff и fingerprint.";
 
   return (
     <Card className="compare-selected-blocks" style={{ display: "grid", gap: 10 }}>
       <SectionHeaderRow
         title={<div>Сравнение выбранных блоков</div>}
-        actions={<MetaText opacity={0.68}>{left && right ? `Изменённых HTML-строк: ${changedBlockLines}` : "Выберите блок слева и справа"}</MetaText>}
+        actions={
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <MetaText opacity={0.68}>{left && right ? `Изменённых HTML-строк: ${changedBlockLines}` : nextStep}</MetaText>
+            {(left || right) && (
+              <button type="button" className="element-picker-toggle" onClick={onResetAll}>
+                Очистить оба блока
+              </button>
+            )}
+          </div>
+        }
       />
       <MetaText opacity={0.72}>
         Это ручное сравнение конкретных областей страницы. Оно не пытается само угадать соответствующий блок.
       </MetaText>
+      {(!left || !right) && <StatusText tone="muted">{nextStep}</StatusText>}
       <div className="compare-two-column-grid">
         <SelectedBlockCard label="Блок слева" element={left} onReset={() => onReset("left")} />
         <SelectedBlockCard label="Блок справа" element={right} onReset={() => onReset("right")} />
@@ -648,6 +667,11 @@ export default function ComparePage() {
   const ready = Boolean(left.snapshot && right.snapshot);
   const inspectorReady = Boolean(left.context && right.context);
   const selectionProgress = (left.snapshot ? 1 : 0) + (right.snapshot ? 1 : 0);
+  const selectedBlockCount = (selectedBlocks.left ? 1 : 0) + (selectedBlocks.right ? 1 : 0);
+  const missingElementMapSides = [
+    left.snapshot && !left.snapshot.rendered_snapshot.element_map?.items?.length ? "слева" : "",
+    right.snapshot && !right.snapshot.rendered_snapshot.element_map?.items?.length ? "справа" : "",
+  ].filter(Boolean);
   const rightSuggestion = useMemo(
     () => left.url && right.pages.length ? suggestPageMatch(left.url, right.pages) : null,
     [left.url, right.pages],
@@ -758,13 +782,30 @@ export default function ComparePage() {
             />
             {mode === "visual" && (
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <StatusText tone={selectedBlockCount === 2 ? "success" : "muted"}>
+                  Блоки: {selectedBlockCount}/2
+                </StatusText>
                 <button
                   type="button"
                   className={`element-picker-toggle${blockPickerEnabled ? " is-active" : ""}`}
+                  disabled={missingElementMapSides.length > 0}
+                  title={missingElementMapSides.length ? "Для выбора блоков нужен визуальный снимок новой версии с картой элементов." : undefined}
                   onClick={() => setBlockPickerEnabled((current) => !current)}
                 >
                   {blockPickerEnabled ? "Выбор блоков включён" : "Выбрать блоки"}
                 </button>
+                {(selectedBlocks.left || selectedBlocks.right) && (
+                  <button
+                    type="button"
+                    className="element-picker-toggle"
+                    onClick={() => {
+                      setSelectedBlocks({ left: null, right: null });
+                      setBlockPickerNotice("");
+                    }}
+                  >
+                    Очистить оба блока
+                  </button>
+                )}
                 <SegmentedControl
                   value={visualScale}
                   onChange={setVisualScale}
@@ -883,12 +924,21 @@ export default function ComparePage() {
 
             {mode === "visual" && (
               <>
+                {missingElementMapSides.length > 0 && (
+                  <StatusText tone="warning">
+                    Выбор блоков недоступен {missingElementMapSides.join(" и ")}: пересоздайте визуальный снимок, чтобы появилась карта элементов.
+                  </StatusText>
+                )}
                 {blockPickerNotice && <StatusText tone="warning">{blockPickerNotice}</StatusText>}
                 <SelectedBlockCompare
                   left={selectedBlocks.left}
                   right={selectedBlocks.right}
                   onReset={(side) => {
                     setSelectedBlocks((current) => ({ ...current, [side]: null }));
+                    setBlockPickerNotice("");
+                  }}
+                  onResetAll={() => {
+                    setSelectedBlocks({ left: null, right: null });
                     setBlockPickerNotice("");
                   }}
                 />

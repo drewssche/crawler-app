@@ -213,6 +213,12 @@ test("compare visual mode uses a full focus workspace and persisted rendered sna
   assert.match(compareSource, /Обзор/);
   assert.match(compareSource, /Детально/);
   assert.match(compareSource, /Выбрать блоки/);
+  assert.match(compareSource, /Блоки: \{selectedBlockCount\}\/2/);
+  assert.match(compareSource, /Очистить оба блока/);
+  assert.match(compareSource, /missingElementMapSides/);
+  assert.match(compareSource, /пересоздайте визуальный снимок/);
+  assert.match(compareSource, /Теперь выберите блок слева/);
+  assert.match(compareSource, /Теперь выберите блок справа/);
   assert.match(compareSource, /blockPickerEnabled/);
   assert.match(compareSource, /onElementSelected/);
   assert.match(compareSource, /Сравнение выбранных блоков/);
