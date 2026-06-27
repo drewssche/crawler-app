@@ -68,7 +68,7 @@ def test_has_permission_matrix_basics():
     assert has_permission("viewer", "data.view") is True
     assert has_permission("viewer", "crawler.run") is False
     assert has_permission("editor", "crawler.run") is True
-    assert has_permission("editor", "profiles.edit") is True
+    assert has_permission("editor", "projects.edit") is True
     assert has_permission("admin", "users.manage") is True
     assert has_permission("admin", "root_admins.manage") is False
     assert has_permission("root-admin", "root_admins.manage") is True

@@ -24,10 +24,10 @@ function parentPathFor(pathname: string) {
   if (path === "/" || path === "") return null;
   if (path === "/settings") return null;
   if (path === "/users" || path === "/logs" || path === "/monitoring" || path === "/events" || path === "/root-admins" || path === "/ui-debug") return "/settings";
-  if (/^\/profiles\/[0-9]+\/compare$/.test(path)) return path.replace(/\/compare$/, "");
-  if (/^\/profiles\/[0-9]+\/inspect$/.test(path)) return path.replace(/\/inspect$/, "");
-  if (path === "/profiles/new") return "/";
-  if (/^\/profiles\/[0-9]+$/.test(path)) return "/";
+  if (/^\/projects\/[0-9]+\/compare$/.test(path)) return path.replace(/\/compare$/, "");
+  if (/^\/projects\/[0-9]+\/inspect$/.test(path)) return path.replace(/\/inspect$/, "");
+  if (path === "/projects/new") return "/";
+  if (/^\/projects\/[0-9]+$/.test(path)) return "/";
 
   const parts = path.split("/").filter(Boolean);
   if (parts.length <= 1) return "/";
@@ -56,7 +56,7 @@ export default function AppLayout() {
     path === "/root-admins" ||
     path === "/ui-debug";
   const canViewEvents = hasPermission(user?.role, "events.view");
-  const focusWorkspaceMode = /^\/profiles\/[0-9]+\/(?:compare|inspect)$/.test(path);
+  const focusWorkspaceMode = /^\/projects\/[0-9]+\/(?:compare|inspect)$/.test(path);
 
   const crumbs: Array<{ label: string; path: string }> = [];
 
@@ -77,19 +77,19 @@ export default function AppLayout() {
     }
   } else {
     crumbs.push({ label: "\u0420\u0430\u0431\u043e\u0447\u0430\u044f \u043e\u0431\u043b\u0430\u0441\u0442\u044c", path: "/" });
-    const compareMatch = path.match(/^\/profiles\/([0-9]+)\/compare$/);
-    const inspectMatch = path.match(/^\/profiles\/([0-9]+)\/inspect$/);
+    const compareMatch = path.match(/^\/projects\/([0-9]+)\/compare$/);
+    const inspectMatch = path.match(/^\/projects\/([0-9]+)\/inspect$/);
     if (compareMatch || inspectMatch) {
       const projectMatch = compareMatch || inspectMatch!;
       crumbs.push({
         label: projectCrumbLabel || `Проект #${projectMatch[1]}`,
-        path: `/profiles/${projectMatch[1]}`,
+        path: `/projects/${projectMatch[1]}`,
       });
       crumbs.push({ label: compareMatch ? "Сравнение" : "Анализ страницы", path });
-    } else if (path === "/profiles/new") {
-      crumbs.push({ label: "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442", path: "/profiles/new" });
+    } else if (path === "/projects/new") {
+      crumbs.push({ label: "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442", path: "/projects/new" });
     } else {
-      const match = path.match(/^\/profiles\/([0-9]+)$/);
+      const match = path.match(/^\/projects\/([0-9]+)$/);
       if (match) {
         const immediate = normalizeProjectLabel(stateProjectName, Number(match[1]));
         crumbs.push({ label: projectCrumbLabel || immediate, path });
@@ -98,7 +98,7 @@ export default function AppLayout() {
   }
 
   useEffect(() => {
-    const match = path.match(/^\/profiles\/([0-9]+)(?:\/(?:compare|inspect))?$/);
+    const match = path.match(/^\/projects\/([0-9]+)(?:\/(?:compare|inspect))?$/);
     if (!match) return;
     const projectId = Number(match[1]);
     if (!Number.isFinite(projectId) || projectId <= 0) return;
@@ -113,7 +113,7 @@ export default function AppLayout() {
           setProjectCrumbLabel(normalizeProjectLabel(hit.name, projectId));
           return;
         }
-        const row = await apiGet<{ id: number; name: string }>(`/profiles/${projectId}`);
+        const row = await apiGet<{ id: number; name: string }>(`/projects/${projectId}`);
         if (cancelled) return;
         setProjectCrumbLabel(normalizeProjectLabel(row?.name, projectId));
       } catch {

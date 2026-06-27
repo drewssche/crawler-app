@@ -1,9 +1,9 @@
 from typing import Literal
 
-from pydantic import BaseModel, HttpUrl, Field
+from pydantic import BaseModel, ConfigDict, HttpUrl, Field
 
 
-class ProfileCreate(BaseModel):
+class ProjectBase(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     start_url: HttpUrl
     allowed_domains_csv: str = ""
@@ -17,14 +17,13 @@ class ProfileCreate(BaseModel):
     is_enabled: bool = True
 
 
-class ProjectCreate(ProfileCreate):
+class ProjectCreate(ProjectBase):
     site_name: str | None = Field(default=None, min_length=1, max_length=200)
     scope_mode: Literal["whole_site", "path_prefix"] = "whole_site"
     path_prefix: str | None = None
 
 
-class ProfileOut(ProfileCreate):
+class ProjectOut(ProjectBase):
     id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -28,7 +28,7 @@ const ROLES: BaseRole[] = ["viewer", "editor", "admin", "root-admin"];
 const PERMISSIONS: Permission[] = [
   "data.view",
   "crawler.run",
-  "profiles.edit",
+  "projects.edit",
   "events.view",
   "audit.view",
   "users.manage",
@@ -36,7 +36,7 @@ const PERMISSIONS: Permission[] = [
 ];
 const SURFACES: Array<{ label: string; permission: Permission }> = [
   { label: "Рабочая область и проекты", permission: "data.view" },
-  { label: "Создание и настройки проекта", permission: "profiles.edit" },
+  { label: "Создание и настройки проекта", permission: "projects.edit" },
   { label: "Запуск и повтор прогонов", permission: "crawler.run" },
   { label: "Пользователи", permission: "users.manage" },
   { label: "Центр событий", permission: "events.view" },

@@ -236,24 +236,6 @@ def _retry_page(
     )
 
 
-def _assert_no_active_project_run(db: Session, profile_id: int) -> None:
-    active_run = (
-        db.query(Run)
-        .filter(Run.profile_id == profile_id, Run.status == "RUNNING")
-        .order_by(Run.id.desc())
-        .first()
-    )
-    if active_run is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "run_already_active",
-                "message": "Для этого проекта уже выполняется прогон. Дождитесь его завершения.",
-                "run_id": active_run.id,
-            },
-        )
-
-
 def _assert_no_active_site_run(db: Session, site: ProjectSite) -> None:
     active_run = (
         db.query(Run)
@@ -293,7 +275,7 @@ def _emit_run_completion_event(
             if succeeded
             else run.failure_message or "Crawler не смог завершить прогон."
         ),
-        target_path=f"/profiles/{site.profile_id}",
+        target_path=f"/projects/{site.profile_id}",
         target_ref=f"run:{run.id}",
         actor_user_id=actor_user_id,
         target_user_id=None,
@@ -618,18 +600,18 @@ def start_site_run(
     }
 
 
-@router.post("/start-project/{profile_id}")
+@router.post("/start-project/{project_id}")
 def start_project_sites(
-    profile_id: int,
+    project_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("crawler.run")),
 ):
-    profile = db.get(Profile, profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
+    project = db.get(Profile, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
     sites = (
         db.query(ProjectSite)
-        .filter(ProjectSite.profile_id == profile_id, ProjectSite.is_enabled.is_(True))
+        .filter(ProjectSite.profile_id == project_id, ProjectSite.is_enabled.is_(True))
         .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
         .all()
     )
@@ -701,7 +683,7 @@ def start_project_sites(
 
     return {
         "ok": True,
-        "profile_id": profile_id,
+        "project_id": project_id,
         "sites_total": len(sites),
         "finished": sum(1 for row in results if row["status"] == "FINISHED"),
         "failed": sum(1 for row in results if row["status"] == "FAILED"),
@@ -872,9 +854,9 @@ def retry_problem_pages(
     }
 
 
-@router.get("/by-profile/{profile_id}")
+@router.get("/by-project/{project_id}")
 def list_runs(
-    profile_id: int,
+    project_id: int,
     page: int | None = None,
     page_size: int = 20,
     db: Session = Depends(get_db),
@@ -883,7 +865,7 @@ def list_runs(
     query = (
         db.query(Run, CrawlPersona)
         .outerjoin(CrawlPersona, CrawlPersona.id == Run.crawl_persona_id)
-        .filter(Run.profile_id == profile_id)
+        .filter(Run.profile_id == project_id)
         .order_by(Run.id.desc())
     )
     paged = paginate_query(query, page=page, page_size=page_size)

@@ -100,7 +100,7 @@ type ProjectRunResult = {
 
 type ProjectRunBatch = {
   ok: boolean;
-  profile_id: number;
+  project_id: number;
   sites_total: number;
   finished: number;
   failed: number;
@@ -211,7 +211,7 @@ export default function ProjectDashboardPage() {
   const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
   const [runToasts, setRunToasts] = useState<ToastItem[]>([]);
   const canRunCrawler = hasPermission(user?.role, "crawler.run");
-  const canEditProject = hasPermission(user?.role, "profiles.edit");
+  const canEditProject = hasPermission(user?.role, "projects.edit");
   const canViewEvents = hasPermission(user?.role, "events.view");
 
   function showRunToast(item: Omit<ToastItem, "id">) {
@@ -273,7 +273,7 @@ export default function ProjectDashboardPage() {
     setProject(null);
     setSelectedSiteId(null);
     Promise.all([
-      apiGet<ProjectProfile>(`/profiles/${id}`),
+      apiGet<ProjectProfile>(`/projects/${id}`),
       listProjectSiteSummaries(Number(id)),
     ])
       .then(([nextProject, nextSites]) => {
@@ -530,7 +530,7 @@ export default function ProjectDashboardPage() {
     setDeletePending(true);
     setError("");
     try {
-      await apiDelete(`/profiles/${project.id}`);
+      await apiDelete(`/projects/${project.id}`);
       invalidateProjectsCache();
       navigate("/", { replace: true });
     } catch (e) {
@@ -733,7 +733,7 @@ export default function ProjectDashboardPage() {
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <CardActionButton
                       variant="ghost"
-                      onClick={() => navigate(`/profiles/${project.id}/compare`, { state: { projectName: project.name } })}
+                      onClick={() => navigate(`/projects/${project.id}/compare`, { state: { projectName: project.name } })}
                     >
                       Сравнить страницы
                     </CardActionButton>
@@ -1405,7 +1405,7 @@ export default function ProjectDashboardPage() {
         onOpenFullAnalysis={() => {
           if (!project || !pageContext) return;
           navigate(
-            `/profiles/${project.id}/inspect?run=${pageContext.page.run_id}&url=${encodeURIComponent(pageContext.page.url)}`,
+            `/projects/${project.id}/inspect?run=${pageContext.page.run_id}&url=${encodeURIComponent(pageContext.page.url)}`,
             { state: { projectName: project.name } },
           );
         }}

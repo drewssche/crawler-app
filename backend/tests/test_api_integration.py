@@ -187,8 +187,8 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     viewer_headers = _auth_header("project-viewer@test.local", role="viewer")
     editor_headers = _auth_header("project-editor@test.local", role="editor")
 
-    assert client.get(f"/profiles/{profile_id}").status_code == 401
-    assert client.get(f"/runs/by-profile/{profile_id}").status_code == 401
+    assert client.get(f"/projects/{profile_id}").status_code == 401
+    assert client.get(f"/runs/by-project/{profile_id}").status_code == 401
     assert client.get(f"/runs/{run_id}/pages").status_code == 401
     assert client.get(
         f"/runs/{run_id}/page-context",
@@ -197,8 +197,8 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     assert client.post(f"/runs/start-site/{site_id}").status_code == 401
     assert client.post(f"/runs/{run_id}/retry-pages", json={}).status_code == 401
 
-    assert client.get(f"/profiles/{profile_id}", headers=viewer_headers).status_code == 200
-    assert client.get(f"/runs/by-profile/{profile_id}", headers=viewer_headers).status_code == 200
+    assert client.get(f"/projects/{profile_id}", headers=viewer_headers).status_code == 200
+    assert client.get(f"/runs/by-project/{profile_id}", headers=viewer_headers).status_code == 200
     assert client.get(f"/runs/{run_id}/pages", headers=viewer_headers).status_code == 200
     page_context = client.get(
         f"/runs/{run_id}/page-context",
@@ -225,20 +225,20 @@ def test_project_and_run_endpoints_enforce_role_permissions():
         headers=viewer_headers,
     ).status_code == 403
     assert client.post(
-        "/profiles",
+        "/projects",
         json={"name": "Denied", "start_url": "https://denied.test", "allowed_domains_csv": "denied.test"},
         headers=viewer_headers,
     ).status_code == 403
-    assert client.delete(f"/profiles/{profile_id}", headers=viewer_headers).status_code == 403
+    assert client.delete(f"/projects/{profile_id}", headers=viewer_headers).status_code == 403
 
     assert client.post(f"/runs/start-site/{site_id}", headers=editor_headers).status_code == 409
     created = client.post(
-        "/profiles",
+        "/projects",
         json={"name": "Allowed", "start_url": "https://allowed.test", "allowed_domains_csv": "allowed.test"},
         headers=editor_headers,
     )
     assert created.status_code == 200
-    assert client.delete(f"/profiles/{created.json()['id']}", headers=editor_headers).status_code == 200
+    assert client.delete(f"/projects/{created.json()['id']}", headers=editor_headers).status_code == 200
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
@@ -265,7 +265,7 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     editor_headers = _auth_header("site-editor@test.local", role="editor")
 
     created_profile = client.post(
-        "/profiles",
+        "/projects",
         json={
             "name": "Multi-site project",
             "start_url": "https://primary.example.test/",
@@ -277,7 +277,7 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     profile_id = created_profile.json()["id"]
 
     primary_rows = _extract_success_data(
-        client.get(f"/profiles/{profile_id}/sites", headers=viewer_headers)
+        client.get(f"/projects/{profile_id}/sites", headers=viewer_headers)
     )
     assert len(primary_rows) == 1
     assert primary_rows[0]["role"] == "primary"
@@ -286,14 +286,14 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     primary_id = primary_rows[0]["id"]
 
     denied = client.post(
-        f"/profiles/{profile_id}/sites",
+        f"/projects/{profile_id}/sites",
         json={"name": "Denied", "start_url": "https://denied.example.test"},
         headers=viewer_headers,
     )
     assert denied.status_code == 403
 
     created_site = client.post(
-        f"/profiles/{profile_id}/sites",
+        f"/projects/{profile_id}/sites",
         json={
             "name": "Documentation",
             "start_url": "https://reference.example.test",
@@ -310,7 +310,7 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     assert site["allowed_domains_csv"] == "reference.example.test"
 
     duplicate = client.post(
-        f"/profiles/{profile_id}/sites",
+        f"/projects/{profile_id}/sites",
         json={
             "name": "Duplicate docs",
             "start_url": "https://reference.example.test/docs/",
@@ -323,7 +323,7 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     assert _extract_error_payload(duplicate)["error"]["code"] == "project_site_scope_conflict"
 
     updated = client.patch(
-        f"/profiles/{profile_id}/sites/{site['id']}",
+        f"/projects/{profile_id}/sites/{site['id']}",
         json={"path_prefix": "/help"},
         headers=editor_headers,
     )
@@ -333,11 +333,11 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     assert updated_site["path_prefix"] == "/help/"
 
     assert client.delete(
-        f"/profiles/{profile_id}/sites/{site['id']}",
+        f"/projects/{profile_id}/sites/{site['id']}",
         headers=editor_headers,
     ).status_code == 200
     last_site = client.delete(
-        f"/profiles/{profile_id}/sites/{primary_id}",
+        f"/projects/{profile_id}/sites/{primary_id}",
         headers=editor_headers,
     )
     assert last_site.status_code == 409
@@ -363,7 +363,7 @@ def test_project_creation_supports_atomic_section_primary_site():
 
     client = TestClient(app)
     created = client.post(
-        "/profiles",
+        "/projects",
         json={
             "name": "Documentation monitoring",
             "site_name": "Public docs",
@@ -379,7 +379,7 @@ def test_project_creation_supports_atomic_section_primary_site():
     profile_id = created.json()["id"]
     sites = _extract_success_data(
         client.get(
-            f"/profiles/{profile_id}/sites",
+            f"/projects/{profile_id}/sites",
             headers=_auth_header("section-create@test.local", role="editor"),
         )
     )
@@ -390,7 +390,7 @@ def test_project_creation_supports_atomic_section_primary_site():
     assert sites[0]["path_prefix"] == "/manual/"
 
     another_section = client.post(
-        "/profiles",
+        "/projects",
         json={
             "name": "API monitoring",
             "start_url": "https://docs.example.test",
@@ -402,7 +402,7 @@ def test_project_creation_supports_atomic_section_primary_site():
     assert another_section.status_code == 200
 
     duplicate_section = client.post(
-        "/profiles",
+        "/projects",
         json={
             "name": "Duplicate manual",
             "start_url": "https://docs.example.test/manual/",
@@ -486,7 +486,7 @@ def test_http_errors_metric_includes_404_status():
     engine.dispose()
 
 
-def test_profiles_summary_returns_last_run_and_totals():
+def test_projects_summary_returns_last_run_and_totals():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()
     app.router.on_shutdown.clear()
@@ -528,7 +528,7 @@ def test_profiles_summary_returns_last_run_and_totals():
         db.commit()
 
     client = TestClient(app)
-    response = client.get("/profiles/summary", headers=_auth_header("summary@test.local", role="viewer"))
+    response = client.get("/projects/summary", headers=_auth_header("summary@test.local", role="viewer"))
     assert response.status_code == 200
     data = _extract_success_data(response)
     by_name = {row["name"]: row for row in data}
@@ -643,7 +643,7 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     assert primary_runs.json()[0]["persona"]["key"] == "guest"
     assert [row["id"] for row in secondary_runs.json()] == [secondary_response.json()["run_id"]]
     summaries = _extract_success_data(
-        client.get(f"/profiles/{profile_id}/sites/summary", headers=editor_headers)
+        client.get(f"/projects/{profile_id}/sites/summary", headers=editor_headers)
     )
     summaries_by_id = {row["id"]: row for row in summaries}
     assert summaries_by_id[primary_id]["runs_total"] == 1
@@ -654,19 +654,19 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     assert summaries_by_id[secondary_id]["runs_total"] == 1
     assert summaries_by_id[secondary_id]["last_run"]["id"] == secondary_response.json()["run_id"]
     anomaly_response = client.get(
-        f"/profiles/{profile_id}/sites/{primary_id}/anomaly",
+        f"/projects/{profile_id}/sites/{primary_id}/anomaly",
         headers=editor_headers,
     )
     assert anomaly_response.status_code == 200
     assert _extract_success_data(anomaly_response)["status"] == "insufficient_data"
     delete_with_history = client.delete(
-        f"/profiles/{profile_id}/sites/{secondary_id}",
+        f"/projects/{profile_id}/sites/{secondary_id}",
         headers=editor_headers,
     )
     assert delete_with_history.status_code == 409
     assert _extract_error_payload(delete_with_history)["error"]["code"] == "project_site_has_runs"
 
-    assert client.delete(f"/profiles/{profile_id}", headers=editor_headers).status_code == 200
+    assert client.delete(f"/projects/{profile_id}", headers=editor_headers).status_code == 200
     with SessionLocal() as db:
         assert db.query(CrawlPersona).filter(CrawlPersona.project_site_id.in_([primary_id, secondary_id])).count() == 0
         assert db.query(ProjectSite).filter(ProjectSite.profile_id == profile_id).count() == 0
@@ -858,34 +858,34 @@ def test_create_profile_rejects_duplicate_canonical_scope():
     app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
 
     with SessionLocal() as db:
-        db.add(_make_user(email="profiles@test.local", role="editor", is_approved=True))
+        db.add(_make_user(email="projects@test.local", role="editor", is_approved=True))
         db.add(Profile(name="Existing", start_url="https://example.test/", allowed_domains_csv="example.test"))
         db.commit()
 
     client = TestClient(app)
     response = client.post(
-        "/profiles",
+        "/projects",
         json={
             "name": "Duplicate",
             "start_url": "https://example.test",
             "allowed_domains_csv": "example.test",
         },
-        headers=_auth_header("profiles@test.local", role="editor"),
+        headers=_auth_header("projects@test.local", role="editor"),
     )
     assert response.status_code == 409
     payload = _extract_error_payload(response)
-    assert payload["error"]["code"] == "profile_scope_conflict"
+    assert payload["error"]["code"] == "project_scope_conflict"
     assert "Existing" in payload["error"]["message"]
     assert payload["error"]["details"]["existing_project"]["name"] == "Existing"
 
     distinct_path = client.post(
-        "/profiles",
+        "/projects",
         json={
             "name": "Section",
             "start_url": "https://example.test/docs",
             "allowed_domains_csv": "example.test",
         },
-        headers=_auth_header("profiles@test.local", role="editor"),
+        headers=_auth_header("projects@test.local", role="editor"),
     )
     assert distinct_path.status_code == 200
 
@@ -1085,7 +1085,7 @@ def test_redirect_chain_is_saved_as_friendly_page_result(monkeypatch):
         assert [hop["status_code"] for hop in page.redirect_chain_json] == [301, 200]
         event = db.query(EventFeed).filter(EventFeed.event_type == "crawler.run.finished").one()
         assert event.target_user_id is None
-        assert event.target_path == f"/profiles/{profile_id}"
+        assert event.target_path == f"/projects/{profile_id}"
         assert event.meta_json["run_id"] == run.id
         assert event.meta_json["pages_total"] == 1
         assert event.meta_json["suppress_toast"] is True

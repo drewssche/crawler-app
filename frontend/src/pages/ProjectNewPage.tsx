@@ -52,7 +52,7 @@ export default function ProjectNewPage() {
     setPending(true);
     try {
       const normalizedUrl = normalizeSiteUrl(startUrl);
-      const created = await apiPost<ProjectOut>("/profiles", {
+      const created = await apiPost<ProjectOut>("/projects", {
         name: finalProjectName,
         site_name: finalSiteName,
         start_url: normalizedUrl,
@@ -61,9 +61,9 @@ export default function ProjectNewPage() {
         allowed_domains_csv: "",
       });
       invalidateProjectsCache();
-      navigate(`/profiles/${created.id}`, { state: { projectName: created.name } });
+      navigate(`/projects/${created.id}`, { state: { projectName: created.name } });
     } catch (err) {
-      if (err instanceof ApiError && err.code === "profile_scope_conflict") {
+      if (err instanceof ApiError && err.code === "project_scope_conflict") {
         const details = err.details as { existing_project?: ExistingProjectConflict } | undefined;
         if (details?.existing_project) {
           setExistingProject(details.existing_project);
@@ -133,7 +133,7 @@ export default function ProjectNewPage() {
                 Проект для этого адреса уже существует: «{existingProject.name}».
               </StatusText>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Button type="button" variant="primary" onClick={() => navigate(`/profiles/${existingProject.id}`)}>
+                <Button type="button" variant="primary" onClick={() => navigate(`/projects/${existingProject.id}`)}>
                   Открыть существующий
                 </Button>
                 <Button

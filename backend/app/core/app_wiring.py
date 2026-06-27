@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.events import router as events_router
-from app.api.profiles import router as profiles_router
+from app.api.projects import router as projects_router
 from app.api.project_sites import router as project_sites_router
 from app.api.runs import router as runs_router
 from app.api.system import router as system_router
@@ -18,7 +18,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(auth_router)
     app.include_router(admin_router)
     app.include_router(events_router)
-    app.include_router(profiles_router)
+    app.include_router(projects_router)
     app.include_router(project_sites_router)
     app.include_router(runs_router)
     app.include_router(system_router)

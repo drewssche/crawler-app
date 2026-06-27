@@ -14,14 +14,14 @@ from app.db.models.page import Page
 from app.db.models.run import Run
 from app.db.models.user import User
 from app.db.models.crawl_persona import CrawlPersona
-from app.schemas.profile import ProfileOut, ProjectCreate
+from app.schemas.project import ProjectCreate, ProjectOut
 from app.db.models.project_site import ProjectSite
 from app.services.project_sites import create_primary_site_for_profile
 
-router = APIRouter(prefix="/profiles", tags=["profiles"])
+router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-def _canonical_profile_scope(start_url: str, allowed_domains_csv: str) -> tuple[str, tuple[str, ...]]:
+def _canonical_project_scope(start_url: str, allowed_domains_csv: str) -> tuple[str, tuple[str, ...]]:
     parsed = urlparse(str(start_url).strip())
     scheme = (parsed.scheme or "https").lower()
     host = (parsed.hostname or "").lower()
@@ -35,7 +35,7 @@ def _canonical_profile_scope(start_url: str, allowed_domains_csv: str) -> tuple[
 
 
 @router.get("")
-def list_profiles(
+def list_projects(
     page: int | None = None,
     page_size: int = 20,
     db: Session = Depends(get_db),
@@ -49,11 +49,11 @@ def list_profiles(
     return build_paged_response(items=items, total=total, page=safe_page, page_size=safe_page_size)
 
 
-@router.post("", response_model=ProfileOut)
-def create_profile(
+@router.post("", response_model=ProjectOut)
+def create_project(
     payload: ProjectCreate,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("profiles.edit")),
+    _current_user: User = Depends(require_permission("projects.edit")),
 ):
     try:
         primary_scope = canonicalize_site_scope(
@@ -63,13 +63,13 @@ def create_profile(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    requested_scope = _canonical_profile_scope(primary_scope.start_url, payload.allowed_domains_csv)
+    requested_scope = _canonical_project_scope(primary_scope.start_url, payload.allowed_domains_csv)
     for existing in db.query(Profile).all():
-        if _canonical_profile_scope(existing.start_url, existing.allowed_domains_csv) == requested_scope:
+        if _canonical_project_scope(existing.start_url, existing.allowed_domains_csv) == requested_scope:
             raise HTTPException(
                 status_code=409,
                 detail={
-                    "code": "profile_scope_conflict",
+                    "code": "project_scope_conflict",
                     "message": f'Проект для этого адреса уже существует: «{existing.name}».',
                     "existing_project": {
                         "id": existing.id,
@@ -103,7 +103,7 @@ def create_profile(
 
 
 @router.get("/summary")
-def list_profiles_summary(
+def list_projects_summary(
     request: Request,
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("data.view")),
@@ -167,33 +167,33 @@ def list_profiles_summary(
     return success_response_payload(request, data=data)
 
 
-@router.get("/{profile_id}", response_model=ProfileOut)
-def get_profile(
-    profile_id: int,
+@router.get("/{project_id}", response_model=ProjectOut)
+def get_project(
+    project_id: int,
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("data.view")),
 ):
-    obj = db.get(Profile, profile_id)
+    obj = db.get(Profile, project_id)
     if not obj:
-        raise HTTPException(status_code=404, detail="Profile not found")
+        raise HTTPException(status_code=404, detail="Project not found")
     return obj
 
 
-@router.delete("/{profile_id}")
-def delete_profile(
-    profile_id: int,
+@router.delete("/{project_id}")
+def delete_project(
+    project_id: int,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("profiles.edit")),
+    _current_user: User = Depends(require_permission("projects.edit")),
 ):
-    obj = db.get(Profile, profile_id)
+    obj = db.get(Profile, project_id)
     if not obj:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    run_ids = db.query(Run.id).filter(Run.profile_id == profile_id)
+        raise HTTPException(status_code=404, detail="Project not found")
+    run_ids = db.query(Run.id).filter(Run.profile_id == project_id)
     db.query(Page).filter(Page.run_id.in_(run_ids)).delete(synchronize_session=False)
-    db.query(Run).filter(Run.profile_id == profile_id).delete(synchronize_session=False)
-    site_ids = db.query(ProjectSite.id).filter(ProjectSite.profile_id == profile_id)
+    db.query(Run).filter(Run.profile_id == project_id).delete(synchronize_session=False)
+    site_ids = db.query(ProjectSite.id).filter(ProjectSite.profile_id == project_id)
     db.query(CrawlPersona).filter(CrawlPersona.project_site_id.in_(site_ids)).delete(synchronize_session=False)
-    db.query(ProjectSite).filter(ProjectSite.profile_id == profile_id).delete(synchronize_session=False)
+    db.query(ProjectSite).filter(ProjectSite.profile_id == project_id).delete(synchronize_session=False)
     db.delete(obj)
     db.commit()
     return {"ok": True}

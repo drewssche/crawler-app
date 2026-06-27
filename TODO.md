@@ -24,7 +24,7 @@
   - новый и существующий проект гарантированно получает один primary site;
   - canonical `whole_site/path_prefix` scope защищает границы раздела и выход через `..`;
   - каждый `Run` теперь обязательно принадлежит `ProjectSite`, а `Page` наследует site scope через `run_id`;
-  - legacy `/runs/start/{profile_id}` compatibility endpoint удалён; запуск выполняется через `/runs/start-site/{site_id}` или `/runs/start-project/{profile_id}`;
+  - legacy `/runs/start/{profile_id}` compatibility endpoint удалён; запуск выполняется через `/runs/start-site/{site_id}` или `/runs/start-project/{project_id}`;
   - явные site endpoints: запуск `/runs/start-site/{site_id}` и история `/runs/by-site/{site_id}`;
   - crawler использует настройки `ProjectSite`, проверяет section scope до запроса и после redirect.
 - friendly Create/Settings UX:
@@ -54,7 +54,7 @@
   - SEO score `0–100` состоит из прозрачных checks с весами и рекомендациями;
   - `Открыть на сайте` остаётся явным действием; удалённая страница получает понятное empty/error состояние.
 - manual Compare workspace MVP:
-  - маршрут перенесён внутрь проекта: `/profiles/:id/compare`, Event Center скрывается в focus mode;
+  - маршрут перенесён внутрь проекта: `/projects/:id/compare`, Event Center скрывается в focus mode;
   - левая/правая сторона независимо выбирают сайт, успешный run и страницу;
   - поддержаны cross-site и historical compare без обязательного auto-match;
   - режим `Код` показывает line diff сохранённого HTML, `Структура` сравнивает HTTP/meta/SEO/links/assets;
@@ -80,10 +80,10 @@
 - Legacy audit 2026-06-27:
   - проект находится в dev-stage, поэтому breaking cleanup допустим, если упрощает целевую модель;
   - audit зафиксирован в [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md);
-  - главный долг: продуктово это `Project`, но DB/API/routes/permissions всё ещё во многом называются `Profile/profiles`;
-  - ближайший cleanup после удаления `POST /runs/start/{profile_id}`: пересмотреть `GET /runs/by-profile/{profile_id}` и route/API terminology `profiles → projects`;
+  - главный долг: продуктово это `Project`, но DB/model/FK всё ещё называются `Profile/profiles/profile_id`;
+  - route/API terminology `profiles → projects` закрыта для внешнего контракта;
   - frontend terminology wave закрыта: `ProjectDashboardPage/ProjectNewPage/projectListCache` и project-oriented props/utils без изменения backend API prefix;
-  - крупные волны после этого: `profiles → projects` route/API rename, `profiles.edit → projects.edit`, затем DB rename `profiles → projects` и `profile_id → project_id`.
+  - крупная волна после этого: DB/model rename `Profile/profiles/profile_id → Project/projects/project_id`.
 
 ## Working Rules
 
@@ -222,7 +222,7 @@
   - baseline и anomaly signals всегда scoped по `project_site_id + persona_id + scope`, иначе различия ролей будут ошибочно считаться аномалиями.
 
   **Compare workspace**
-  - отдельный полноширинный маршрут внутри проекта: `/profiles/:id/compare`;
+  - отдельный полноширинный маршрут внутри проекта: `/projects/:id/compare`;
   - верхняя компактная строка выбора:
     `левый сайт + страница/версия ↔ правый сайт + страница/версия`;
   - режимы: `Визуально`, `Код`, `Структура`, позднее `Контент`;
@@ -285,9 +285,9 @@
   Цель: не строить target monitoring поверх старой `Profile`-модели. Стадия разработки позволяет делать breaking cleanup, если оно снижает сложность.
   - Audit: [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md).
   - 1. Safe cleanup: README/user-facing wording and obsolete compatibility endpoints.
-  - 2. Backend cleanup: `POST /runs/start/{profile_id}` удалён; следующий кандидат — `GET /runs/by-profile/{profile_id}` или явный `/projects/{id}/runs` aggregate.
-  - 3. Frontend terminology: `ProfileDashboardPage → ProjectDashboardPage`, `ProfileNewPage → ProjectNewPage`, `profileListCache → projectListCache` — закрыто; backend route/API prefix пока остаётся `/profiles/*`.
-  - 4. Route/API rename: `/profiles/* → /projects/*`, `/profiles/{id}/sites → /projects/{id}/sites`, `profiles.edit → projects.edit`.
+  - 2. Backend cleanup: `POST /runs/start/{profile_id}` удалён; `GET /runs/by-profile/{profile_id}` заменён на `/runs/by-project/{project_id}`.
+  - 3. Frontend terminology: `ProfileDashboardPage → ProjectDashboardPage`, `ProfileNewPage → ProjectNewPage`, `profileListCache → projectListCache` — закрыто.
+  - 4. Route/API rename: `/profiles/* → /projects/*`, `/profiles/{id}/sites → /projects/{id}/sites`, `profiles.edit → projects.edit` — закрыто.
   - 5. DB rename wave: `profiles → projects`, `profile_id → project_id`; удалить дублирующие site-поля из project container после site-aware summary/search.
 
 - [ ] **P0 Stabilization gate** (`HIGH`, implementation mostly complete).
@@ -386,7 +386,7 @@
   - Вклад в цели: визуальное сравнение получило отдельное рабочее пространство (`high` UX); snapshot не исполняет сохранённый активный контент (`high` security).
 - [x] **P1 Full-width manual Compare workspace MVP**.
   - Что было: `/compare` был общей страницей-заглушкой без контекста проекта и данных.
-  - Что стало: `/profiles/:id/compare` позволяет вручную выбрать любые две страницы/версии; HTML line diff и structural diff работают для разных сайтов и истории одного сайта, Event Center скрыт для полезной ширины.
+  - Что стало: `/projects/:id/compare` позволяет вручную выбрать любые две страницы/версии; HTML line diff и structural diff работают для разных сайтов и истории одного сайта, Event Center скрыт для полезной ширины.
   - Как проверить: `Проект → Сравнить страницы` → выбрать site/run/page слева и справа → переключить `Код/Структура`; на узком экране селекторы переходят в одну колонку.
   - Вклад в цели: compare стал реальным рабочим инструментом без блокирующего auto-match (`high` product value); выбор snapshot остаётся явным и объяснимым (`high` UX).
 - [x] **P1 Page context drawer + technical SEO checklist MVP**.
@@ -422,11 +422,11 @@
 - [x] **P1 ProjectSite foundation — model, migration, canonical scope API**.
   - Что было: один `Profile` смешивал проект, стартовый сайт и общий список доменов; второй домен не имел самостоятельного результата.
   - Что стало: проект хранит `1+ ProjectSite`; миграция создаёт primary site для каждого существующего проекта; API позволяет читать/добавлять/редактировать/удалять сайты с RBAC, duplicate conflict и запретом удалить последний сайт.
-  - Как проверить: `alembic current` → `8f2b1c4d6e90`; `GET /profiles/{id}/sites`; section scope `/docs/` принимает `/docs/page`, но отклоняет `/docs-old` и `/docs/../admin`.
+  - Как проверить: `alembic current` → `8f2b1c4d6e90`; `GET /projects/{id}/sites`; section scope `/docs/` принимает `/docs/page`, но отклоняет `/docs-old` и `/docs/../admin`.
   - Вклад в цели: создан совместимый фундамент multi-site и section-only мониторинга без преждевременного изменения crawler/UI (`high` architecture/reliability).
 - [x] **P0 Project/run RBAC parity**.
   - Что было: project/run API были доступны без согласованных permissions; viewer видел mutation controls, а editor формально не отличался от viewer.
-  - Что стало: permissions `data.view/crawler.run/profiles.edit` добавлены в backend/frontend source-of-truth; routes и endpoints защищены; viewer читает, editor редактирует/запускает, admin/root наследуют возможности.
+  - Что стало: permissions `data.view/crawler.run/projects.edit` добавлены в backend/frontend source-of-truth; routes и endpoints защищены; viewer читает, editor редактирует/запускает, admin/root наследуют возможности.
   - Как проверить: anonymous project/run API → `401`; viewer read → `200`, mutations → `403`; editor create/start/delete разрешены; direct frontend URL guarded.
   - Вклад в цели: закрыт security blocker для `ProjectSite`, role preview и future membership (`high`).
 - [x] **P1 Dev-only UI Debug Center — fixture stage**.

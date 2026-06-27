@@ -26,7 +26,7 @@ export default function SidebarLeft() {
   const lastMeRefreshRef = useRef(0);
 
   useEffect(() => {
-    const force = location.pathname.startsWith("/profiles/new");
+    const force = location.pathname.startsWith("/projects/new");
     getProjectsSummaryCached(force)
       .then(setProjects)
       .catch(() => setProjects([]));
@@ -57,11 +57,11 @@ export default function SidebarLeft() {
 
   const inWorkspace =
     location.pathname === "/" ||
-    location.pathname.startsWith("/profiles/");
+    location.pathname.startsWith("/projects/");
 
   const envLabel = (import.meta.env.MODE || "dev").toUpperCase();
   const canOpenSettings = hasPermission(user?.role, "users.manage");
-  const canEditProjects = hasPermission(user?.role, "profiles.edit");
+  const canEditProjects = hasPermission(user?.role, "projects.edit");
 
   return (
     <aside
@@ -133,9 +133,9 @@ export default function SidebarLeft() {
 
         {canEditProjects && (
           <Button
-            onClick={() => navigate("/profiles/new")}
+            onClick={() => navigate("/projects/new")}
             variant="primary"
-            active={location.pathname.startsWith("/profiles/new")}
+            active={location.pathname.startsWith("/projects/new")}
             fullWidth
           >
             + {"\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0435\u043a\u0442"}
@@ -171,14 +171,14 @@ export default function SidebarLeft() {
         )}
         {filtered.map((match) => {
           const p = match.project;
-          const active = location.pathname === `/profiles/${p.id}`;
+          const active = location.pathname === `/projects/${p.id}`;
           const statusMeta = getProjectRunBadgeMeta(p.last_run?.status);
           const domainSummary = summarizeProjectDomains(p.allowed_domains_csv, p.start_url);
           const showMatchHint = shouldShowProjectMatchHint(match, [p.name, domainSummary]);
           return (
             <Card
               key={p.id}
-              onClick={() => navigate(`/profiles/${p.id}`, { state: { projectName: p.name } })}
+              onClick={() => navigate(`/projects/${p.id}`, { state: { projectName: p.name } })}
               interactive
               className="project-row"
               role="button"
@@ -186,7 +186,7 @@ export default function SidebarLeft() {
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  navigate(`/profiles/${p.id}`, { state: { projectName: p.name } });
+                  navigate(`/projects/${p.id}`, { state: { projectName: p.name } });
                 }
               }}
               style={{

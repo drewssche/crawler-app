@@ -52,7 +52,7 @@ export async function getProjectsSummaryCached(force = false): Promise<ProjectSu
     return projectsSummaryEntry.value;
   }
   if (projectsSummaryEntry.inFlight) return projectsSummaryEntry.inFlight;
-  projectsSummaryEntry.inFlight = apiGet<ProjectSummaryItem[]>("/profiles/summary")
+  projectsSummaryEntry.inFlight = apiGet<ProjectSummaryItem[]>("/projects/summary")
     .then((rows) => {
       projectsSummaryEntry.value = rows || [];
       projectsSummaryEntry.expiresAt = Date.now() + TTL_MS;

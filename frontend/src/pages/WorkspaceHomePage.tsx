@@ -37,7 +37,7 @@ export default function WorkspaceHomePage() {
 
   const filtered = useMemo(() => searchProjects(projects, search), [projects, search]);
   const searchActive = isMeaningfulProjectSearch(search);
-  const canEditProjects = hasPermission(user?.role, "profiles.edit");
+  const canEditProjects = hasPermission(user?.role, "projects.edit");
 
   useEffect(() => {
     getProjectsSummaryCached(false)
@@ -58,7 +58,7 @@ export default function WorkspaceHomePage() {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <div style={{ fontSize: 18, fontWeight: 800 }}>Проекты</div>
             {canEditProjects && (
-              <Button variant="primary" onClick={() => navigate("/profiles/new")}>
+              <Button variant="primary" onClick={() => navigate("/projects/new")}>
                 + Создать проект
               </Button>
             )}
@@ -98,7 +98,7 @@ export default function WorkspaceHomePage() {
                   p.name,
                   domainSummary,
                 ]);
-                const openProject = () => navigate(`/profiles/${p.id}`, { state: { projectName: p.name } });
+                const openProject = () => navigate(`/projects/${p.id}`, { state: { projectName: p.name } });
                 return (
                   <Card
                     key={p.id}

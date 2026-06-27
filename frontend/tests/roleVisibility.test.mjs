@@ -10,15 +10,15 @@ const permissionsSource = await readFile(new URL("../src/utils/permissions.ts", 
 const debugSource = await readFile(new URL("../src/pages/UiDebugPage.tsx", import.meta.url), "utf8");
 
 test("project routes use explicit permissions", () => {
-  assert.match(appSource, /permission="profiles\.edit"[\s\S]*?<ProjectNewPage/);
+  assert.match(appSource, /permission="projects\.edit"[\s\S]*?<ProjectNewPage/);
   assert.match(appSource, /permission="data\.view"[\s\S]*?<ProjectDashboardPage/);
-  assert.match(appSource, /path="profiles\/:id\/compare"[\s\S]*?permission="data\.view"[\s\S]*?<ComparePage/);
-  assert.match(appSource, /path="profiles\/:id\/inspect"[\s\S]*?permission="data\.view"[\s\S]*?<PageInspectorPage/);
+  assert.match(appSource, /path="projects\/:id\/compare"[\s\S]*?permission="data\.view"[\s\S]*?<ComparePage/);
+  assert.match(appSource, /path="projects\/:id\/inspect"[\s\S]*?permission="data\.view"[\s\S]*?<PageInspectorPage/);
 });
 
 test("viewer and editor project capabilities are distinct", () => {
   assert.match(permissionsSource, /viewer:\s*new Set\(\["data\.view"\]\)/);
-  assert.match(permissionsSource, /editor:\s*new Set\(\["data\.view", "crawler\.run", "profiles\.edit"\]\)/);
+  assert.match(permissionsSource, /editor:\s*new Set\(\["data\.view", "crawler\.run", "projects\.edit"\]\)/);
   assert.match(permissionsSource, /raw in PERMISSIONS_BY_ROLE \? raw : "viewer"/);
 });
 

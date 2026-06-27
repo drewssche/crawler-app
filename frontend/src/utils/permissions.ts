@@ -3,7 +3,7 @@ import type { BaseRole } from "./roles";
 export type Permission =
   | "data.view"
   | "crawler.run"
-  | "profiles.edit"
+  | "projects.edit"
   | "events.view"
   | "audit.view"
   | "users.manage"
@@ -11,12 +11,12 @@ export type Permission =
 
 const PERMISSIONS_BY_ROLE: Record<BaseRole, Set<Permission>> = {
   viewer: new Set(["data.view"]),
-  editor: new Set(["data.view", "crawler.run", "profiles.edit"]),
-  admin: new Set(["data.view", "crawler.run", "profiles.edit", "events.view", "audit.view", "users.manage"]),
+  editor: new Set(["data.view", "crawler.run", "projects.edit"]),
+  admin: new Set(["data.view", "crawler.run", "projects.edit", "events.view", "audit.view", "users.manage"]),
   "root-admin": new Set([
     "data.view",
     "crawler.run",
-    "profiles.edit",
+    "projects.edit",
     "events.view",
     "audit.view",
     "users.manage",

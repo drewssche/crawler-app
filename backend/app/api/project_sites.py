@@ -16,20 +16,20 @@ from app.services.crawl_personas import ensure_guest_persona
 from app.services.project_sites import build_project_site
 from app.services.site_anomalies import evaluate_project_site_anomalies
 
-router = APIRouter(prefix="/profiles/{profile_id}/sites", tags=["project-sites"])
+router = APIRouter(prefix="/projects/{project_id}/sites", tags=["project-sites"])
 
 
-def _get_profile_or_404(db: Session, profile_id: int) -> Profile:
-    profile = db.get(Profile, profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    return profile
+def _get_project_or_404(db: Session, project_id: int) -> Profile:
+    project = db.get(Profile, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
 
 
-def _get_site_or_404(db: Session, profile_id: int, site_id: int) -> ProjectSite:
+def _get_site_or_404(db: Session, project_id: int, site_id: int) -> ProjectSite:
     site = (
         db.query(ProjectSite)
-        .filter(ProjectSite.id == site_id, ProjectSite.profile_id == profile_id)
+        .filter(ProjectSite.id == site_id, ProjectSite.profile_id == project_id)
         .first()
     )
     if not site:
@@ -49,15 +49,15 @@ def _scope_conflict() -> HTTPException:
 
 @router.get("")
 def list_project_sites(
-    profile_id: int,
+    project_id: int,
     request: Request,
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("data.view")),
 ):
-    _get_profile_or_404(db, profile_id)
+    _get_project_or_404(db, project_id)
     rows = (
         db.query(ProjectSite)
-        .filter(ProjectSite.profile_id == profile_id)
+        .filter(ProjectSite.profile_id == project_id)
         .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
         .all()
     )
@@ -67,12 +67,12 @@ def list_project_sites(
 
 @router.get("/summary")
 def list_project_sites_summary(
-    profile_id: int,
+    project_id: int,
     request: Request,
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("data.view")),
 ):
-    _get_profile_or_404(db, profile_id)
+    _get_project_or_404(db, project_id)
     last_run_sq = (
         db.query(
             Run.project_site_id.label("project_site_id"),
@@ -110,7 +110,7 @@ def list_project_sites_summary(
         .outerjoin(Run, Run.id == last_run_sq.c.last_run_id)
         .outerjoin(CrawlPersona, CrawlPersona.id == Run.crawl_persona_id)
         .outerjoin(runs_count_sq, runs_count_sq.c.project_site_id == ProjectSite.id)
-        .filter(ProjectSite.profile_id == profile_id)
+        .filter(ProjectSite.profile_id == project_id)
         .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
         .all()
     )
@@ -177,34 +177,34 @@ def list_project_sites_summary(
 
 @router.get("/{site_id}/anomaly")
 def get_project_site_anomaly(
-    profile_id: int,
+    project_id: int,
     site_id: int,
     request: Request,
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("data.view")),
 ):
-    _get_site_or_404(db, profile_id, site_id)
+    _get_site_or_404(db, project_id, site_id)
     anomaly = evaluate_project_site_anomalies(db, [site_id])[site_id]
     return success_response_payload(request, data=anomaly)
 
 
 @router.post("")
 def create_project_site(
-    profile_id: int,
+    project_id: int,
     payload: ProjectSiteCreate,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("profiles.edit")),
+    _current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_profile_or_404(db, profile_id)
+    _get_project_or_404(db, project_id)
     next_order = (
         db.query(ProjectSite)
-        .filter(ProjectSite.profile_id == profile_id)
+        .filter(ProjectSite.profile_id == project_id)
         .count()
     )
     try:
         site = build_project_site(
-            profile_id=profile_id,
+            profile_id=project_id,
             name=payload.name,
             start_url=str(payload.start_url),
             scope_mode=payload.scope_mode,
@@ -239,14 +239,14 @@ def create_project_site(
 
 @router.patch("/{site_id}")
 def update_project_site(
-    profile_id: int,
+    project_id: int,
     site_id: int,
     payload: ProjectSiteUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("profiles.edit")),
+    _current_user: User = Depends(require_permission("projects.edit")),
 ):
-    site = _get_site_or_404(db, profile_id, site_id)
+    site = _get_site_or_404(db, project_id, site_id)
     changes = payload.model_dump(exclude_unset=True)
     nullable_fields = {
         key
@@ -266,7 +266,7 @@ def update_project_site(
     if {"start_url", "scope_mode", "path_prefix"} & payload.model_fields_set:
         try:
             normalized = build_project_site(
-                profile_id=profile_id,
+                profile_id=project_id,
                 name=str(changes.get("name", site.name)),
                 start_url=start_url,
                 scope_mode=str(scope_mode),
@@ -304,13 +304,13 @@ def update_project_site(
 
 @router.delete("/{site_id}")
 def delete_project_site(
-    profile_id: int,
+    project_id: int,
     site_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("profiles.edit")),
+    _current_user: User = Depends(require_permission("projects.edit")),
 ):
-    site = _get_site_or_404(db, profile_id, site_id)
+    site = _get_site_or_404(db, project_id, site_id)
     runs_count = db.query(Run).filter(Run.project_site_id == site_id).count()
     if runs_count:
         raise HTTPException(
@@ -321,7 +321,7 @@ def delete_project_site(
                 "runs_count": runs_count,
             },
         )
-    site_count = db.query(ProjectSite).filter(ProjectSite.profile_id == profile_id).count()
+    site_count = db.query(ProjectSite).filter(ProjectSite.profile_id == project_id).count()
     if site_count <= 1:
         raise HTTPException(
             status_code=409,

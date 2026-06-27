@@ -52,15 +52,15 @@ export default function App() {
           }
         />
         <Route
-          path="profiles/new"
+          path="projects/new"
           element={
-            <RequirePermission permission="profiles.edit">
+            <RequirePermission permission="projects.edit">
               <ProjectNewPage />
             </RequirePermission>
           }
         />
         <Route
-          path="profiles/:id"
+          path="projects/:id"
           element={
             <RequirePermission permission="data.view">
               <ProjectDashboardPage />
@@ -68,7 +68,7 @@ export default function App() {
           }
         />
         <Route
-          path="profiles/:id/compare"
+          path="projects/:id/compare"
           element={
             <RequirePermission permission="data.view">
               <ComparePage />
@@ -76,7 +76,7 @@ export default function App() {
           }
         />
         <Route
-          path="profiles/:id/inspect"
+          path="projects/:id/inspect"
           element={
             <RequirePermission permission="data.view">
               <PageInspectorPage />

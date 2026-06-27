@@ -3,7 +3,7 @@
 Permission = Literal[
     "data.view",
     "crawler.run",
-    "profiles.edit",
+    "projects.edit",
     "events.view",
     "audit.view",
     "users.manage",
@@ -12,12 +12,12 @@ Permission = Literal[
 
 PERMISSIONS_BY_ROLE: dict[str, set[Permission]] = {
     "viewer": {"data.view"},
-    "editor": {"data.view", "crawler.run", "profiles.edit"},
-    "admin": {"data.view", "crawler.run", "profiles.edit", "events.view", "audit.view", "users.manage"},
+    "editor": {"data.view", "crawler.run", "projects.edit"},
+    "admin": {"data.view", "crawler.run", "projects.edit", "events.view", "audit.view", "users.manage"},
     "root-admin": {
         "data.view",
         "crawler.run",
-        "profiles.edit",
+        "projects.edit",
         "events.view",
         "audit.view",
         "users.manage",
@@ -41,7 +41,7 @@ def has_permission(role: str | None, permission: Permission) -> bool:
 PERMISSION_LABELS: dict[Permission, str] = {
     "data.view": "Просмотр проектов и данных",
     "crawler.run": "Запуск прогонов",
-    "profiles.edit": "Редактирование проектов",
+    "projects.edit": "Редактирование проектов",
     "events.view": "Просмотр центра событий",
     "audit.view": "Просмотр журнала действий",
     "users.manage": "Управление пользователями",
@@ -52,7 +52,7 @@ PERMISSION_LABELS: dict[Permission, str] = {
 CAPABILITY_MATRIX: list[dict] = [
     {"id": "data.view", "label": "Просмотр данных", "roles": ["viewer", "editor", "admin", "root-admin"]},
     {"id": "crawler.run", "label": "Запуск прогонов", "roles": ["editor", "admin", "root-admin"]},
-    {"id": "profiles.edit", "label": "Редактирование профилей", "roles": ["editor", "admin", "root-admin"]},
+    {"id": "projects.edit", "label": "Редактирование проектов", "roles": ["editor", "admin", "root-admin"]},
     {"id": "users.manage", "label": "Управление пользователями", "roles": ["admin", "root-admin"]},
     {"id": "root_admins.manage", "label": "Управление системными администраторами", "roles": ["root-admin"]},
 ]

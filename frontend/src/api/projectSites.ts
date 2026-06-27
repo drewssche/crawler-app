@@ -89,15 +89,15 @@ export type ProjectSiteInput = {
 };
 
 export function listProjectSites(projectId: number): Promise<ProjectSite[]> {
-  return apiGet<ProjectSite[]>(`/profiles/${projectId}/sites`);
+  return apiGet<ProjectSite[]>(`/projects/${projectId}/sites`);
 }
 
 export function listProjectSiteSummaries(projectId: number): Promise<ProjectSiteSummary[]> {
-  return apiGet<ProjectSiteSummary[]>(`/profiles/${projectId}/sites/summary`);
+  return apiGet<ProjectSiteSummary[]>(`/projects/${projectId}/sites/summary`);
 }
 
 export function createProjectSite(projectId: number, input: ProjectSiteInput): Promise<ProjectSite> {
-  return apiPost<ProjectSite>(`/profiles/${projectId}/sites`, input);
+  return apiPost<ProjectSite>(`/projects/${projectId}/sites`, input);
 }
 
 export function updateProjectSite(
@@ -105,9 +105,9 @@ export function updateProjectSite(
   siteId: number,
   input: Partial<ProjectSiteInput>,
 ): Promise<ProjectSite> {
-  return apiPatch<ProjectSite>(`/profiles/${projectId}/sites/${siteId}`, input);
+  return apiPatch<ProjectSite>(`/projects/${projectId}/sites/${siteId}`, input);
 }
 
 export function deleteProjectSite(projectId: number, siteId: number): Promise<{ deleted: boolean }> {
-  return apiDelete<{ deleted: boolean }>(`/profiles/${projectId}/sites/${siteId}`);
+  return apiDelete<{ deleted: boolean }>(`/projects/${projectId}/sites/${siteId}`);
 }
