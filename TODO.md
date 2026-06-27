@@ -255,7 +255,7 @@
   15. Расширить anomaly/Compare на redirect, resources, consent и persona-scoped signals.
   15.1 Compare layout refinement: split page info into left/right contextual panels around the central two-page comparison; keep adaptive fallback for medium/narrow screens and preserve a separate differences-only report — готово.
   15.2 Element-level inspection: visual/DOM block picker → linked HTML fragment → code highlight; later selected-block compare and target fingerprint monitoring. DOM picker и rendered snapshot element-map MVP готовы: новые визуальные снимки сохраняют карту блоков, чтобы клик по screenshot выбирал HTML-элемент. UX-stabilization: выбранный блок показывает источник (`Визуальный снимок`/`DOM`), пустой клик получает friendly warning, подсветка кода честно объясняет mismatch, есть `Сбросить выбор`.
-  15.3 Selected-block compare: после стабилизации picker добавить выбор блока слева/справа в Compare, HTML/text diff только выбранных блоков, размеры/selector/fingerprint и warning, если блоки структурно не похожи.
+  15.3 Selected-block compare: ручной выбор блока слева/справа в Compare, HTML/text diff только выбранных блоков, размеры/selector и warning, если блоки структурно не похожи — MVP готов. Следующие расширения: fingerprint, auto-suggest похожего блока и сохранение target monitoring.
   16. Backend schedule contract: сохранённое расписание, timezone, duplicate-run guard, pause/resume и следующий запуск; текущий settings-блок остаётся честным manual-only состоянием до этого этапа.
   17. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile` и compatibility endpoint `/runs/start/{profile_id}`.
 

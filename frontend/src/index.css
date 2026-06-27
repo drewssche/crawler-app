@@ -424,6 +424,44 @@ button:focus-visible {
   overflow: hidden;
 }
 
+.compare-selected-blocks {
+  margin-top: 10px;
+}
+
+.compare-block-diff {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(0,0,0,0.18);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.compare-block-diff-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: rgba(255,255,255,0.06);
+}
+
+.compare-block-diff-row pre {
+  margin: 0;
+  padding: 4px 7px;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0,0,0,0.14);
+}
+
+.compare-block-diff-row pre.is-removed {
+  background: rgba(213,85,85,0.16);
+}
+
+.compare-block-diff-row pre.is-added {
+  background: rgba(97,190,130,0.16);
+}
+
 .compare-inspector-report {
   min-height: 0;
   height: clamp(520px, calc(100vh - 275px), 1120px);

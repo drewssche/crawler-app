@@ -7,6 +7,7 @@ import {
   type ComparePageItem,
   type CompareRun,
   type CompareSnapshot,
+  type RenderedSnapshotElement,
 } from "../api/compare";
 import { listProjectSites, type ProjectSite } from "../api/projectSites";
 import Card from "../components/ui/Card";
@@ -29,6 +30,7 @@ type CompareMode = "visual" | "code" | "structure";
 type SideKey = "left" | "right";
 type PanelView = "both" | "left" | "right";
 type VisualScale = "overview" | "detail";
+type ComparePickedElement = RenderedSnapshotElement & { side: SideKey };
 
 const PAGE_PICKER_LIMIT = 80;
 
@@ -178,12 +180,20 @@ function VisualSnapshotPanel({
   snapshot,
   scale,
   canGenerate,
+  blockPickerEnabled,
+  selectedElement,
+  onElementSelected,
+  onElementMiss,
   onRenderedSnapshotCreated,
 }: {
   label: string;
   snapshot: CompareSnapshot;
   scale: VisualScale;
   canGenerate: boolean;
+  blockPickerEnabled: boolean;
+  selectedElement: ComparePickedElement | null;
+  onElementSelected: (element: RenderedSnapshotElement) => void;
+  onElementMiss: () => void;
   onRenderedSnapshotCreated: (metadata: CompareSnapshot["rendered_snapshot"]) => void;
 }) {
   return (
@@ -199,8 +209,118 @@ function VisualSnapshotPanel({
         metadata={snapshot.rendered_snapshot}
         canGenerate={canGenerate}
         scale={scale === "overview" ? "fit" : "actual"}
+        elementPicker={blockPickerEnabled}
+        selectedElement={selectedElement}
+        onElementSelected={onElementSelected}
+        onElementMiss={onElementMiss}
         onCreated={onRenderedSnapshotCreated}
       />
+    </Card>
+  );
+}
+
+function SelectedBlockCard({
+  label,
+  element,
+  onReset,
+}: {
+  label: string;
+  element: ComparePickedElement | null;
+  onReset: () => void;
+}) {
+  return (
+    <Card variant={element ? "hint" : "default"} style={{ display: "grid", gap: 7 }}>
+      <SectionHeaderRow
+        title={<div>{label}</div>}
+        actions={element && (
+          <button type="button" className="element-picker-toggle" onClick={onReset}>
+            Сбросить
+          </button>
+        )}
+      />
+      {!element && (
+        <MetaText opacity={0.68}>Блок ещё не выбран. Включите выбор и кликните нужную область на snapshot.</MetaText>
+      )}
+      {element && (
+        <>
+          <MetaText>Элемент: &lt;{element.tag}&gt;</MetaText>
+          <MetaText style={{ wordBreak: "break-word" }}>Selector: {element.selector}</MetaText>
+          <MetaText>
+            Область: {element.rect.width}×{element.rect.height}px · x:{element.rect.x}, y:{element.rect.y}
+          </MetaText>
+          {element.text && <MetaText style={{ whiteSpace: "pre-wrap" }}>{element.text.slice(0, 240)}</MetaText>}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function SelectedBlockCompare({
+  left,
+  right,
+  onReset,
+}: {
+  left: ComparePickedElement | null;
+  right: ComparePickedElement | null;
+  onReset: (side: SideKey) => void;
+}) {
+  const blockDiff = useMemo(
+    () => left && right ? buildLineDiff(left.outerHTML, right.outerHTML, 220) : [],
+    [left, right],
+  );
+  const textDiff = useMemo(
+    () => left && right ? buildLineDiff(left.text || "", right.text || "", 120) : [],
+    [left, right],
+  );
+  const sameTag = Boolean(left && right && left.tag === right.tag);
+  const sameSelector = Boolean(left && right && left.selector === right.selector);
+  const changedBlockLines = blockDiff.filter((line) => line.kind !== "same").length;
+
+  return (
+    <Card className="compare-selected-blocks" style={{ display: "grid", gap: 10 }}>
+      <SectionHeaderRow
+        title={<div>Сравнение выбранных блоков</div>}
+        actions={<MetaText opacity={0.68}>{left && right ? `Изменённых HTML-строк: ${changedBlockLines}` : "Выберите блок слева и справа"}</MetaText>}
+      />
+      <MetaText opacity={0.72}>
+        Это ручное сравнение конкретных областей страницы. Оно не пытается само угадать соответствующий блок.
+      </MetaText>
+      <div className="compare-two-column-grid">
+        <SelectedBlockCard label="Блок слева" element={left} onReset={() => onReset("left")} />
+        <SelectedBlockCard label="Блок справа" element={right} onReset={() => onReset("right")} />
+      </div>
+      {left && right && !sameTag && (
+        <StatusText tone="warning">Выбраны разные HTML-теги: &lt;{left.tag}&gt; слева и &lt;{right.tag}&gt; справа. Сравнение возможно, но структурно блоки могут быть не парой.</StatusText>
+      )}
+      {left && right && sameTag && !sameSelector && (
+        <StatusText tone="warning">Selector отличается. Это нормально для разных сайтов, но проверьте, что выбраны смыслово одинаковые блоки.</StatusText>
+      )}
+      {left && right && (
+        <div style={{ display: "grid", gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>HTML выбранных блоков</div>
+            <div className="compare-block-diff">
+              {blockDiff.map((line, index) => (
+                <div key={`${index}-${line.kind}`} className="compare-block-diff-row">
+                  <pre className={line.kind === "removed" ? "is-removed" : ""}>{line.left || " "}</pre>
+                  <pre className={line.kind === "added" ? "is-added" : ""}>{line.right || " "}</pre>
+                </div>
+              ))}
+            </div>
+          </div>
+          <details className="inspector-details">
+            <summary>Текстовый diff выбранных блоков</summary>
+            <div className="compare-block-diff" style={{ marginTop: 8 }}>
+              {textDiff.map((line, index) => (
+                <div key={`${index}-${line.kind}`} className="compare-block-diff-row">
+                  <pre className={line.kind === "removed" ? "is-removed" : ""}>{line.left || " "}</pre>
+                  <pre className={line.kind === "added" ? "is-added" : ""}>{line.right || " "}</pre>
+                </div>
+              ))}
+            </div>
+          </details>
+        </div>
+      )}
     </Card>
   );
 }
@@ -329,6 +449,9 @@ export default function ComparePage() {
   const [mode, setMode] = useState<CompareMode>("visual");
   const [panelView, setPanelView] = useState<PanelView>("both");
   const [visualScale, setVisualScale] = useState<VisualScale>("overview");
+  const [blockPickerEnabled, setBlockPickerEnabled] = useState(false);
+  const [selectedBlocks, setSelectedBlocks] = useState<{ left: ComparePickedElement | null; right: ComparePickedElement | null }>({ left: null, right: null });
+  const [blockPickerNotice, setBlockPickerNotice] = useState("");
   const [error, setError] = useState("");
   const canGenerateSnapshot = hasPermission(user?.role, "crawler.run");
 
@@ -358,6 +481,7 @@ export default function ComparePage() {
   }, [updateSide]);
 
   async function selectRun(key: SideKey, runId: number) {
+    setSelectedBlocks((current) => ({ ...current, [key]: null }));
     updateSide(key, (current) => ({
       ...current,
       runId,
@@ -380,6 +504,8 @@ export default function ComparePage() {
   async function selectPage(key: SideKey, url: string) {
     const side = key === "left" ? left : right;
     if (!side.runId) return;
+    setSelectedBlocks((current) => ({ ...current, [key]: null }));
+    setBlockPickerNotice("");
     updateSide(key, (current) => ({ ...current, url, snapshot: null, context: null, loading: true, error: "" }));
     try {
       const [snapshot, context] = await Promise.all([
@@ -526,14 +652,23 @@ export default function ComparePage() {
               ]}
             />
             {mode === "visual" && (
-              <SegmentedControl
-                value={visualScale}
-                onChange={setVisualScale}
-                options={[
-                  { value: "overview", label: "Обзор" },
-                  { value: "detail", label: "Детально" },
-                ]}
-              />
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className={`element-picker-toggle${blockPickerEnabled ? " is-active" : ""}`}
+                  onClick={() => setBlockPickerEnabled((current) => !current)}
+                >
+                  {blockPickerEnabled ? "Выбор блоков включён" : "Выбрать блоки"}
+                </button>
+                <SegmentedControl
+                  value={visualScale}
+                  onChange={setVisualScale}
+                  options={[
+                    { value: "overview", label: "Обзор" },
+                    { value: "detail", label: "Детально" },
+                  ]}
+                />
+              </div>
             )}
           </div>
         </Card>
@@ -558,6 +693,13 @@ export default function ComparePage() {
                     snapshot={left.snapshot}
                     scale={visualScale}
                     canGenerate={canGenerateSnapshot}
+                    blockPickerEnabled={blockPickerEnabled}
+                    selectedElement={selectedBlocks.left}
+                    onElementSelected={(element) => {
+                      setSelectedBlocks((current) => ({ ...current, left: { ...element, side: "left" } }));
+                      setBlockPickerNotice("");
+                    }}
+                    onElementMiss={() => setBlockPickerNotice("Слева в этой точке snapshot не найден HTML-блок. Попробуйте кликнуть по видимому тексту, изображению или карточке.")}
                     onRenderedSnapshotCreated={(metadata) => {
                       setLeft((current) => current.snapshot
                         ? { ...current, snapshot: { ...current.snapshot, rendered_snapshot: metadata } }
@@ -571,6 +713,13 @@ export default function ComparePage() {
                     snapshot={right.snapshot}
                     scale={visualScale}
                     canGenerate={canGenerateSnapshot}
+                    blockPickerEnabled={blockPickerEnabled}
+                    selectedElement={selectedBlocks.right}
+                    onElementSelected={(element) => {
+                      setSelectedBlocks((current) => ({ ...current, right: { ...element, side: "right" } }));
+                      setBlockPickerNotice("");
+                    }}
+                    onElementMiss={() => setBlockPickerNotice("Справа в этой точке snapshot не найден HTML-блок. Попробуйте кликнуть по видимому тексту, изображению или карточке.")}
                     onRenderedSnapshotCreated={(metadata) => {
                       setRight((current) => current.snapshot
                         ? { ...current, snapshot: { ...current.snapshot, rendered_snapshot: metadata } }
@@ -625,6 +774,20 @@ export default function ComparePage() {
                 <MetricRow label="Scripts" left={left.snapshot.assets.scripts.total} right={right.snapshot.assets.scripts.total} />
                 <MetricRow label="Styles" left={left.snapshot.assets.styles.total} right={right.snapshot.assets.styles.total} />
               </Card>
+            )}
+
+            {mode === "visual" && (
+              <>
+                {blockPickerNotice && <StatusText tone="warning">{blockPickerNotice}</StatusText>}
+                <SelectedBlockCompare
+                  left={selectedBlocks.left}
+                  right={selectedBlocks.right}
+                  onReset={(side) => {
+                    setSelectedBlocks((current) => ({ ...current, [side]: null }));
+                    setBlockPickerNotice("");
+                  }}
+                />
+              </>
             )}
           </div>
 

@@ -212,6 +212,15 @@ test("compare visual mode uses a full focus workspace and persisted rendered sna
   assert.match(compareSource, /Визуально/);
   assert.match(compareSource, /Обзор/);
   assert.match(compareSource, /Детально/);
+  assert.match(compareSource, /Выбрать блоки/);
+  assert.match(compareSource, /blockPickerEnabled/);
+  assert.match(compareSource, /onElementSelected/);
+  assert.match(compareSource, /Сравнение выбранных блоков/);
+  assert.match(compareSource, /HTML выбранных блоков/);
+  assert.match(compareSource, /Текстовый diff выбранных блоков/);
+  assert.match(compareSource, /Selector отличается/);
+  assert.match(compareSource, /разные HTML-теги/);
+  assert.match(cssSource, /compare-block-diff/);
   assert.match(compareSource, /value: "both", label: "Обе"/);
   assert.match(compareSource, /value: "left", label: "Левая"/);
   assert.match(compareSource, /value: "right", label: "Правая"/);
