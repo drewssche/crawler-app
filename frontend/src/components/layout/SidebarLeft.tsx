@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../hooks/auth";
 import { hasPermission } from "../../utils/permissions";
-import { getProfilesSummaryCached, type ProfileSummaryItem } from "../../utils/profileListCache";
+import { getProjectsSummaryCached, type ProjectSummaryItem } from "../../utils/projectListCache";
 import { summarizeProjectDomains } from "../../utils/projectDomains";
 import { applyProjectRunLiveUpdate, subscribeProjectRunLive } from "../../utils/projectRunLiveStore";
 import { isMeaningfulProjectSearch, searchProjects, shouldShowProjectMatchHint } from "../../utils/projectSearch";
@@ -21,19 +21,19 @@ export default function SidebarLeft() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout, refreshMe } = useAuth();
-  const [profiles, setProfiles] = useState<ProfileSummaryItem[]>([]);
+  const [projects, setProjects] = useState<ProjectSummaryItem[]>([]);
   const [search, setSearch] = useState("");
   const lastMeRefreshRef = useRef(0);
 
   useEffect(() => {
     const force = location.pathname.startsWith("/profiles/new");
-    getProfilesSummaryCached(force)
-      .then(setProfiles)
-      .catch(() => setProfiles([]));
+    getProjectsSummaryCached(force)
+      .then(setProjects)
+      .catch(() => setProjects([]));
   }, [location.pathname]);
 
   useEffect(() => subscribeProjectRunLive((update) => {
-    setProfiles((prev) => prev.map((row) => applyProjectRunLiveUpdate(row, update)));
+    setProjects((prev) => prev.map((row) => applyProjectRunLiveUpdate(row, update)));
   }), []);
 
   useEffect(() => {
@@ -43,7 +43,7 @@ export default function SidebarLeft() {
     refreshMe().catch(() => null);
   }, [location.pathname, refreshMe]);
 
-  const filtered = useMemo(() => searchProjects(profiles, search), [profiles, search]);
+  const filtered = useMemo(() => searchProjects(projects, search), [projects, search]);
   const searchActive = isMeaningfulProjectSearch(search);
 
   const inSettings =

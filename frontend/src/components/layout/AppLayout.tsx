@@ -5,7 +5,7 @@ import InlineActionButton from "../ui/InlineActionButton";
 import { apiGet } from "../../api/client";
 import SidebarLeft from "./SidebarLeft";
 import SidebarRight from "./SidebarRight";
-import { getProfilesCached } from "../../utils/profileListCache";
+import { getProjectsCached } from "../../utils/projectListCache";
 import { useAuth } from "../../hooks/auth";
 import { hasPermission } from "../../utils/permissions";
 
@@ -40,7 +40,7 @@ export default function AppLayout() {
   const location = useLocation();
   const { user } = useAuth();
   const [rightCollapsed, setRightCollapsed] = useState(false);
-  const [profileCrumbLabel, setProfileCrumbLabel] = useState<string | null>(null);
+  const [projectCrumbLabel, setProjectCrumbLabel] = useState<string | null>(null);
 
   const path = location.pathname.split("?")[0];
   const stateProjectName =
@@ -82,7 +82,7 @@ export default function AppLayout() {
     if (compareMatch || inspectMatch) {
       const projectMatch = compareMatch || inspectMatch!;
       crumbs.push({
-        label: profileCrumbLabel || `Проект #${projectMatch[1]}`,
+        label: projectCrumbLabel || `Проект #${projectMatch[1]}`,
         path: `/profiles/${projectMatch[1]}`,
       });
       crumbs.push({ label: compareMatch ? "Сравнение" : "Анализ страницы", path });
@@ -92,7 +92,7 @@ export default function AppLayout() {
       const match = path.match(/^\/profiles\/([0-9]+)$/);
       if (match) {
         const immediate = normalizeProjectLabel(stateProjectName, Number(match[1]));
-        crumbs.push({ label: profileCrumbLabel || immediate, path });
+        crumbs.push({ label: projectCrumbLabel || immediate, path });
       }
     }
   }
@@ -100,28 +100,28 @@ export default function AppLayout() {
   useEffect(() => {
     const match = path.match(/^\/profiles\/([0-9]+)(?:\/(?:compare|inspect))?$/);
     if (!match) return;
-    const profileId = Number(match[1]);
-    if (!Number.isFinite(profileId) || profileId <= 0) return;
+    const projectId = Number(match[1]);
+    if (!Number.isFinite(projectId) || projectId <= 0) return;
 
     let cancelled = false;
-    async function loadProfileLabel() {
+    async function loadProjectLabel() {
       try {
-        const cached = await getProfilesCached(false);
+        const cached = await getProjectsCached(false);
         if (cancelled) return;
-        const hit = cached.find((p) => p.id === profileId);
+        const hit = cached.find((p) => p.id === projectId);
         if (hit?.name) {
-          setProfileCrumbLabel(normalizeProjectLabel(hit.name, profileId));
+          setProjectCrumbLabel(normalizeProjectLabel(hit.name, projectId));
           return;
         }
-        const row = await apiGet<{ id: number; name: string }>(`/profiles/${profileId}`);
+        const row = await apiGet<{ id: number; name: string }>(`/profiles/${projectId}`);
         if (cancelled) return;
-        setProfileCrumbLabel(normalizeProjectLabel(row?.name, profileId));
+        setProjectCrumbLabel(normalizeProjectLabel(row?.name, projectId));
       } catch {
         if (cancelled) return;
-        setProfileCrumbLabel(`\u041f\u0440\u043e\u0435\u043a\u0442 #${profileId}`);
+        setProjectCrumbLabel(`\u041f\u0440\u043e\u0435\u043a\u0442 #${projectId}`);
       }
     }
-    void loadProfileLabel();
+    void loadProjectLabel();
 
     return () => {
       cancelled = true;

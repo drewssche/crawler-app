@@ -12,17 +12,17 @@ import {
   normalizeSiteUrl,
   validateSiteDraft,
 } from "../utils/siteScope";
-import { invalidateProfilesCache } from "../utils/profileListCache";
+import { invalidateProjectsCache } from "../utils/projectListCache";
 
-type ProfileOut = {
+type ProjectOut = {
   id: number;
   name: string;
   start_url: string;
 };
 
-type ExistingProjectConflict = Pick<ProfileOut, "id" | "name" | "start_url">;
+type ExistingProjectConflict = Pick<ProjectOut, "id" | "name" | "start_url">;
 
-export default function ProfileNewPage() {
+export default function ProjectNewPage() {
   const navigate = useNavigate();
   const startUrlRef = useRef<HTMLInputElement>(null);
   const [projectName, setProjectName] = useState("");
@@ -52,7 +52,7 @@ export default function ProfileNewPage() {
     setPending(true);
     try {
       const normalizedUrl = normalizeSiteUrl(startUrl);
-      const created = await apiPost<ProfileOut>("/profiles", {
+      const created = await apiPost<ProjectOut>("/profiles", {
         name: finalProjectName,
         site_name: finalSiteName,
         start_url: normalizedUrl,
@@ -60,7 +60,7 @@ export default function ProfileNewPage() {
         path_prefix: scopeMode === "path_prefix" ? normalizePathPrefix(pathPrefix) : "/",
         allowed_domains_csv: "",
       });
-      invalidateProfilesCache();
+      invalidateProjectsCache();
       navigate(`/profiles/${created.id}`, { state: { projectName: created.name } });
     } catch (err) {
       if (err instanceof ApiError && err.code === "profile_scope_conflict") {

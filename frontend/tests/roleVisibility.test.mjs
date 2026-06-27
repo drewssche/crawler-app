@@ -5,13 +5,13 @@ import test from "node:test";
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
 const sidebarSource = await readFile(new URL("../src/components/layout/SidebarLeft.tsx", import.meta.url), "utf8");
 const workspaceSource = await readFile(new URL("../src/pages/WorkspaceHomePage.tsx", import.meta.url), "utf8");
-const projectSource = await readFile(new URL("../src/pages/ProfileDashboardPage.tsx", import.meta.url), "utf8");
+const projectSource = await readFile(new URL("../src/pages/ProjectDashboardPage.tsx", import.meta.url), "utf8");
 const permissionsSource = await readFile(new URL("../src/utils/permissions.ts", import.meta.url), "utf8");
 const debugSource = await readFile(new URL("../src/pages/UiDebugPage.tsx", import.meta.url), "utf8");
 
 test("project routes use explicit permissions", () => {
-  assert.match(appSource, /permission="profiles\.edit"[\s\S]*?<ProfileNewPage/);
-  assert.match(appSource, /permission="data\.view"[\s\S]*?<ProfileDashboardPage/);
+  assert.match(appSource, /permission="profiles\.edit"[\s\S]*?<ProjectNewPage/);
+  assert.match(appSource, /permission="data\.view"[\s\S]*?<ProjectDashboardPage/);
   assert.match(appSource, /path="profiles\/:id\/compare"[\s\S]*?permission="data\.view"[\s\S]*?<ComparePage/);
   assert.match(appSource, /path="profiles\/:id\/inspect"[\s\S]*?permission="data\.view"[\s\S]*?<PageInspectorPage/);
 });

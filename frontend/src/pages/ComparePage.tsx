@@ -650,7 +650,7 @@ function PageInspectionDifferences({
 export default function ComparePage() {
   const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
-  const profileId = Number(id);
+  const projectId = Number(id);
   const [sites, setSites] = useState<ProjectSite[]>([]);
   const [left, setLeft] = useState<SideState>(EMPTY_SIDE);
   const [right, setRight] = useState<SideState>(EMPTY_SIDE);
@@ -731,8 +731,8 @@ export default function ComparePage() {
   }
 
   useEffect(() => {
-    if (!Number.isFinite(profileId)) return;
-    listProjectSites(profileId)
+    if (!Number.isFinite(projectId)) return;
+    listProjectSites(projectId)
       .then((rows) => {
         setSites(rows);
         const leftSite = rows[0];
@@ -741,7 +741,7 @@ export default function ComparePage() {
         if (rightSite) void selectSite("right", rightSite.id);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Не удалось загрузить сайты проекта."));
-  }, [profileId, selectSite]);
+  }, [projectId, selectSite]);
 
   const diff = useMemo(
     () => left.snapshot && right.snapshot ? buildLineDiff(left.snapshot.html, right.snapshot.html) : [],

@@ -22,10 +22,8 @@
 | Legacy | Где найдено | Целевое имя | Комментарий |
 | --- | --- | --- | --- |
 | DB table/model `Profile` / `profiles` | `backend/app/db/models/profile.py`, `backend/app/api/profiles.py`, migrations | `Project` / `projects` | Основной терминологический долг. Переименование затронет FK `runs.profile_id`, `project_sites.profile_id`, API, tests. Делать отдельной миграционной волной. |
-| Frontend routes `/profiles/*` | `frontend/src/App.tsx`, layout, navigation, tests | `/projects/*` | Сейчас UI текст уже “Проект”, но URL и компоненты остаются profile. На dev-stage лучше менять route прямо, с временным redirect только если это нужно для локальных ссылок. |
-| Components `ProfileDashboardPage`, `ProfileNewPage` | `frontend/src/pages/*` | `ProjectDashboardPage`, `ProjectNewPage` | Переименовать вместе с route/API terminology, чтобы тесты не закрепляли старую модель. |
+| Frontend routes `/profiles/*` | `frontend/src/App.tsx`, layout, navigation, tests | `/projects/*` | Компоненты уже переименованы в `Project*`, но URL остаётся legacy до route/API wave. На dev-stage лучше менять route прямо, с временным redirect только если это нужно для локальных ссылок. |
 | Permission `profiles.edit` | `backend/app/core/permissions.py`, `frontend/src/utils/permissions.ts`, tests | `projects.edit` | Это capability для редактирования проектов, не профилей. Переименовать synchronized backend/frontend. |
-| Frontend cache `profileListCache` and `ProfileSummaryItem` | `frontend/src/utils/profileListCache.ts` | `projectListCache`, `ProjectSummaryItem` | Без изменения поведения; снижает когнитивный шум перед target monitoring. |
 | API module `profiles.py` and schemas `ProfileCreate/ProfileOut` | `backend/app/api/profiles.py`, `backend/app/schemas/profile.py` | `projects.py`, `ProjectCreate/ProjectOut` | Сейчас есть `ProjectCreate`, но response всё ещё `ProfileOut`; это явный mixed contract. |
 
 ### 3. Оставить временно с deadline
@@ -50,7 +48,7 @@
 
 1. **Safe docs/contract cleanup**: README/TODO wording, audit doc, убрать упоминания “profiles” из пользовательских текстов, где это не API/path.
 2. **Remove obsolete compatibility endpoints**: `POST /runs/start/{profile_id}` удалён; дальше решить судьбу `GET /runs/by-profile/{profile_id}`.
-3. **Frontend terminology wave**: `ProfileDashboardPage → ProjectDashboardPage`, `ProfileNewPage → ProjectNewPage`, `profileListCache → projectListCache`; route still may be `/profiles/*` until backend route wave.
+3. **Frontend terminology wave**: closed for page/component/cache names and frontend props/utils; route still may be `/profiles/*` until backend route wave.
 4. **API route wave**: `/profiles → /projects`, `/profiles/{id}/sites → /projects/{id}/sites`, permissions `profiles.edit → projects.edit`.
 5. **DB migration wave**: `profiles → projects`, `profile_id → project_id`; удалить дублирующие site-поля из project container after summary/search are site-aware.
 
@@ -63,3 +61,4 @@
 - README wording “краулинг-профили” заменён на проекты мониторинга сайтов.
 - Compatibility endpoint `POST /runs/start/{profile_id}` удалён.
 - Backend tests переведены на `POST /runs/start-site/{site_id}`.
+- Frontend terminology wave закрыта: `ProjectDashboardPage`, `ProjectNewPage`, `projectListCache`, project-oriented live update and site settings props.

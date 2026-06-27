@@ -10,14 +10,14 @@ import ProjectRunBadge, { getProjectRunBadgeMeta } from "../components/ui/Projec
 import HighlightedText from "../components/ui/HighlightedText";
 import { MetaText, StatusText } from "../components/ui/StatusText";
 import { formatOperationalDateTime } from "../utils/datetime";
-import { getProfilesSummaryCached, type ProfileSummaryItem } from "../utils/profileListCache";
+import { getProjectsSummaryCached, type ProjectSummaryItem } from "../utils/projectListCache";
 import { applyProjectRunLiveUpdate, subscribeProjectRunLive } from "../utils/projectRunLiveStore";
 import { isMeaningfulProjectSearch, searchProjects, shouldShowProjectMatchHint } from "../utils/projectSearch";
 import { summarizeProjectDomains } from "../utils/projectDomains";
 import { useAuth } from "../hooks/auth";
 import { hasPermission } from "../utils/permissions";
 
-function lastRunLabel(project: ProfileSummaryItem): string {
+function lastRunLabel(project: ProjectSummaryItem): string {
   const run = project.last_run;
   if (!run) return "Еще не запускался";
   if (run.status === "RUNNING") {
@@ -30,7 +30,7 @@ function lastRunLabel(project: ProfileSummaryItem): string {
 export default function WorkspaceHomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [projects, setProjects] = useState<ProfileSummaryItem[]>([]);
+  const [projects, setProjects] = useState<ProjectSummaryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -40,7 +40,7 @@ export default function WorkspaceHomePage() {
   const canEditProjects = hasPermission(user?.role, "profiles.edit");
 
   useEffect(() => {
-    getProfilesSummaryCached(false)
+    getProjectsSummaryCached(false)
       .then((items) => setProjects(items))
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));

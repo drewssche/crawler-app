@@ -82,7 +82,8 @@
   - audit зафиксирован в [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md);
   - главный долг: продуктово это `Project`, но DB/API/routes/permissions всё ещё во многом называются `Profile/profiles`;
   - ближайший cleanup после удаления `POST /runs/start/{profile_id}`: пересмотреть `GET /runs/by-profile/{profile_id}` и route/API terminology `profiles → projects`;
-  - крупные волны после этого: `profiles → projects` route/API rename, `profiles.edit → projects.edit`, `ProfileDashboardPage/ProfileNewPage/profileListCache` terminology cleanup, затем DB rename `profiles → projects` и `profile_id → project_id`.
+  - frontend terminology wave закрыта: `ProjectDashboardPage/ProjectNewPage/projectListCache` и project-oriented props/utils без изменения backend API prefix;
+  - крупные волны после этого: `profiles → projects` route/API rename, `profiles.edit → projects.edit`, затем DB rename `profiles → projects` и `profile_id → project_id`.
 
 ## Working Rules
 
@@ -285,7 +286,7 @@
   - Audit: [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md).
   - 1. Safe cleanup: README/user-facing wording and obsolete compatibility endpoints.
   - 2. Backend cleanup: `POST /runs/start/{profile_id}` удалён; следующий кандидат — `GET /runs/by-profile/{profile_id}` или явный `/projects/{id}/runs` aggregate.
-  - 3. Frontend terminology: `ProfileDashboardPage → ProjectDashboardPage`, `ProfileNewPage → ProjectNewPage`, `profileListCache → projectListCache`.
+  - 3. Frontend terminology: `ProfileDashboardPage → ProjectDashboardPage`, `ProfileNewPage → ProjectNewPage`, `profileListCache → projectListCache` — закрыто; backend route/API prefix пока остаётся `/profiles/*`.
   - 4. Route/API rename: `/profiles/* → /projects/*`, `/profiles/{id}/sites → /projects/{id}/sites`, `profiles.edit → projects.edit`.
   - 5. DB rename wave: `profiles → projects`, `profile_id → project_id`; удалить дублирующие site-поля из project container после site-aware summary/search.
 

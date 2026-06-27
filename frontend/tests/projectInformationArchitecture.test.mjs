@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const source = await readFile(new URL("../src/pages/ProfileDashboardPage.tsx", import.meta.url), "utf8");
+const source = await readFile(new URL("../src/pages/ProjectDashboardPage.tsx", import.meta.url), "utf8");
 const sitesSource = await readFile(new URL("../src/components/projects/ProjectSitesSettings.tsx", import.meta.url), "utf8");
-const createSource = await readFile(new URL("../src/pages/ProfileNewPage.tsx", import.meta.url), "utf8");
+const createSource = await readFile(new URL("../src/pages/ProjectNewPage.tsx", import.meta.url), "utf8");
 const siteCardsSource = await readFile(new URL("../src/components/projects/ProjectSiteContextCards.tsx", import.meta.url), "utf8");
 const pageDrawerSource = await readFile(new URL("../src/components/projects/PageContextDrawer.tsx", import.meta.url), "utf8");
 const directoryDrawerSource = await readFile(new URL("../src/components/projects/DirectoryContextDrawer.tsx", import.meta.url), "utf8");

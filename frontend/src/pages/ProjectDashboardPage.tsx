@@ -29,7 +29,7 @@ import ToastHost, { type ToastItem } from "../components/ui/ToastHost";
 import UiSelect from "../components/ui/UiSelect";
 import { MetaText, StatusText } from "../components/ui/StatusText";
 import { formatOperationalDateTime, formatRunTitle } from "../utils/datetime";
-import { invalidateProfilesCache } from "../utils/profileListCache";
+import { invalidateProjectsCache } from "../utils/projectListCache";
 import { publishProjectRunLive } from "../utils/projectRunLiveStore";
 import { useAuth } from "../hooks/auth";
 import { hasPermission } from "../utils/permissions";
@@ -162,7 +162,7 @@ function formatTimeAgo(raw?: string | null): string {
   return `${days} дн назад`;
 }
 
-export default function ProfileDashboardPage() {
+export default function ProjectDashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
@@ -224,10 +224,10 @@ export default function ProfileDashboardPage() {
     return Array.isArray(rows) ? rows : [];
   }
 
-  const loadSiteSummaries = useCallback(async (profileId: number, silent = false) => {
+  const loadSiteSummaries = useCallback(async (projectId: number, silent = false) => {
     if (!silent) setSitesLoading(true);
     try {
-      const next = await listProjectSiteSummaries(profileId);
+      const next = await listProjectSiteSummaries(projectId);
       setSites(next);
       setSelectedSiteId((current) => {
         if (current && next.some((site) => site.id === current)) return current;
@@ -250,7 +250,7 @@ export default function ProfileDashboardPage() {
       const first = next[0];
       if (first && project) {
         publishProjectRunLive({
-          profileId: project.id,
+          projectId: project.id,
           status: first.status,
           startedAt: first.started_at,
           finishedAt: first.finished_at,
@@ -355,7 +355,7 @@ export default function ProfileDashboardPage() {
       accent: "info",
     });
     publishProjectRunLive({
-      profileId: project.id,
+      projectId: project.id,
       status: "RUNNING",
       startedAt: new Date().toISOString(),
       pagesTotal: 0,
@@ -531,7 +531,7 @@ export default function ProfileDashboardPage() {
     setError("");
     try {
       await apiDelete(`/profiles/${project.id}`);
-      invalidateProfilesCache();
+      invalidateProjectsCache();
       navigate("/", { replace: true });
     } catch (e) {
       setError(String(e));
@@ -1327,7 +1327,7 @@ export default function ProfileDashboardPage() {
           {activeTab === "settings" && canEditProject && (
             <div style={{ display: "grid", gap: 12 }}>
               <ProjectSitesSettings
-                profileId={project.id}
+                projectId={project.id}
                 onChanged={() => {
                   void loadSiteSummaries(project.id, true);
                 }}

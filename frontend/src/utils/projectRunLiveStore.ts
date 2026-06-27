@@ -1,7 +1,7 @@
-import type { ProfileSummaryItem } from "./profileListCache";
+import type { ProjectSummaryItem } from "./projectListCache";
 
 export type ProjectRunLiveUpdate = {
-  profileId: number;
+  projectId: number;
   status: string;
   startedAt?: string | null;
   finishedAt?: string | null;
@@ -23,8 +23,8 @@ export function subscribeProjectRunLive(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
-export function applyProjectRunLiveUpdate(row: ProfileSummaryItem, update: ProjectRunLiveUpdate): ProfileSummaryItem {
-  if (row.id !== update.profileId) return row;
+export function applyProjectRunLiveUpdate(row: ProjectSummaryItem, update: ProjectRunLiveUpdate): ProjectSummaryItem {
+  if (row.id !== update.projectId) return row;
   const prev = row.last_run;
   const nextLastRun = {
     id: prev?.id || -Date.now(),

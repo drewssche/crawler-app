@@ -46,10 +46,10 @@ function scopeLabel(site: ProjectSite): string {
 }
 
 export default function ProjectSitesSettings({
-  profileId,
+  projectId,
   onChanged,
 }: {
-  profileId: number;
+  projectId: number;
   onChanged?: () => void;
 }) {
   const [sites, setSites] = useState<ProjectSite[]>([]);
@@ -67,13 +67,13 @@ export default function ProjectSitesSettings({
     setLoading(true);
     setError("");
     try {
-      setSites(await listProjectSites(profileId));
+      setSites(await listProjectSites(projectId));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось загрузить сайты проекта.");
     } finally {
       setLoading(false);
     }
-  }, [profileId]);
+  }, [projectId]);
 
   useEffect(() => {
     void load();
@@ -93,7 +93,7 @@ export default function ProjectSitesSettings({
     setError("");
     setMessage("");
     try {
-      const created = await createProjectSite(profileId, {
+      const created = await createProjectSite(projectId, {
         name: draft.name.trim() || new URL(normalizeSiteUrl(draft.startUrl)).hostname,
         start_url: normalizeSiteUrl(draft.startUrl),
         scope_mode: draft.scopeMode,
@@ -126,7 +126,7 @@ export default function ProjectSitesSettings({
     setError("");
     setMessage("");
     try {
-      const updated = await updateProjectSite(profileId, site.id, {
+      const updated = await updateProjectSite(projectId, site.id, {
         name: editDraft.name.trim(),
         start_url: normalizeSiteUrl(editDraft.startUrl),
         scope_mode: editDraft.scopeMode,
@@ -152,7 +152,7 @@ export default function ProjectSitesSettings({
     setError("");
     setMessage("");
     try {
-      const updated = await updateProjectSite(profileId, site.id, { is_enabled: !site.is_enabled });
+      const updated = await updateProjectSite(projectId, site.id, { is_enabled: !site.is_enabled });
       setSites((current) => current.map((row) => row.id === updated.id ? updated : row));
       setMessage(updated.is_enabled ? "Сайт включён." : "Сайт отключён. История сохранена.");
       onChanged?.();
@@ -169,7 +169,7 @@ export default function ProjectSitesSettings({
     setError("");
     setMessage("");
     try {
-      await deleteProjectSite(profileId, deleteSite.id);
+      await deleteProjectSite(projectId, deleteSite.id);
       setSites((current) => current.filter((row) => row.id !== deleteSite.id));
       setDeleteSite(null);
       setMessage("Сайт удалён.");

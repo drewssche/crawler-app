@@ -88,26 +88,26 @@ export type ProjectSiteInput = {
   is_enabled?: boolean;
 };
 
-export function listProjectSites(profileId: number): Promise<ProjectSite[]> {
-  return apiGet<ProjectSite[]>(`/profiles/${profileId}/sites`);
+export function listProjectSites(projectId: number): Promise<ProjectSite[]> {
+  return apiGet<ProjectSite[]>(`/profiles/${projectId}/sites`);
 }
 
-export function listProjectSiteSummaries(profileId: number): Promise<ProjectSiteSummary[]> {
-  return apiGet<ProjectSiteSummary[]>(`/profiles/${profileId}/sites/summary`);
+export function listProjectSiteSummaries(projectId: number): Promise<ProjectSiteSummary[]> {
+  return apiGet<ProjectSiteSummary[]>(`/profiles/${projectId}/sites/summary`);
 }
 
-export function createProjectSite(profileId: number, input: ProjectSiteInput): Promise<ProjectSite> {
-  return apiPost<ProjectSite>(`/profiles/${profileId}/sites`, input);
+export function createProjectSite(projectId: number, input: ProjectSiteInput): Promise<ProjectSite> {
+  return apiPost<ProjectSite>(`/profiles/${projectId}/sites`, input);
 }
 
 export function updateProjectSite(
-  profileId: number,
+  projectId: number,
   siteId: number,
   input: Partial<ProjectSiteInput>,
 ): Promise<ProjectSite> {
-  return apiPatch<ProjectSite>(`/profiles/${profileId}/sites/${siteId}`, input);
+  return apiPatch<ProjectSite>(`/profiles/${projectId}/sites/${siteId}`, input);
 }
 
-export function deleteProjectSite(profileId: number, siteId: number): Promise<{ deleted: boolean }> {
-  return apiDelete<{ deleted: boolean }>(`/profiles/${profileId}/sites/${siteId}`);
+export function deleteProjectSite(projectId: number, siteId: number): Promise<{ deleted: boolean }> {
+  return apiDelete<{ deleted: boolean }>(`/profiles/${projectId}/sites/${siteId}`);
 }

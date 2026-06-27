@@ -5,8 +5,8 @@ import RequirePermission from "./components/RequirePermission";
 import AppLayout from "./components/layout/AppLayout";
 import ComparePage from "./pages/ComparePage";
 import LoginPage from "./pages/LoginPage";
-import ProfileDashboardPage from "./pages/ProfileDashboardPage";
-import ProfileNewPage from "./pages/ProfileNewPage";
+import ProjectDashboardPage from "./pages/ProjectDashboardPage";
+import ProjectNewPage from "./pages/ProjectNewPage";
 import PageInspectorPage from "./pages/PageInspectorPage";
 import RootAdminsPage from "./pages/RootAdminsPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -55,7 +55,7 @@ export default function App() {
           path="profiles/new"
           element={
             <RequirePermission permission="profiles.edit">
-              <ProfileNewPage />
+              <ProjectNewPage />
             </RequirePermission>
           }
         />
@@ -63,7 +63,7 @@ export default function App() {
           path="profiles/:id"
           element={
             <RequirePermission permission="data.view">
-              <ProfileDashboardPage />
+              <ProjectDashboardPage />
             </RequirePermission>
           }
         />
