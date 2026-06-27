@@ -2,6 +2,7 @@ import type { ProjectSiteSummary } from "../../api/projectSites";
 import { formatOperationalDateTime } from "../../utils/datetime";
 import Card from "../ui/Card";
 import ProjectRunBadge from "../ui/ProjectRunBadge";
+import AccentPill from "../ui/AccentPill";
 import { MetaText, StatusText } from "../ui/StatusText";
 
 function scopeLabel(site: ProjectSiteSummary): string {
@@ -10,7 +11,8 @@ function scopeLabel(site: ProjectSiteSummary): string {
 
 function anomalyLabel(site: ProjectSiteSummary): { text: string; tone: "success" | "warning" | "danger" | "muted" } {
   if (site.anomaly.status === "insufficient_data") {
-    return { text: `Baseline: недостаточно данных (${site.anomaly.successful_runs} успешных)`, tone: "muted" };
+    const required = site.anomaly.baseline_runs_required + 1;
+    return { text: `Мониторинг: ${Math.min(site.anomaly.successful_runs, required)} из ${required} прогонов`, tone: "muted" };
   }
   if (site.anomaly.status === "anomaly") {
     return {
@@ -73,6 +75,13 @@ export default function ProjectSiteContextCards({
               </div>
               <ProjectRunBadge status={lastRun?.status} />
             </div>
+            {selected && (
+              <div>
+                <AccentPill tone="info" title="Показатели, структура и история ниже относятся к этому сайту.">
+                  Выбранный сайт
+                </AccentPill>
+              </div>
+            )}
 
             {lastRun ? (
               <>
@@ -95,7 +104,13 @@ export default function ProjectSiteContextCards({
               <MetaText opacity={0.68}>Прогонов пока нет</MetaText>
             )}
 
-            {!site.is_enabled && <StatusText tone="warning" style={{ fontSize: 12 }}>Сайт отключён</StatusText>}
+            {!site.is_enabled && (
+              <div>
+                <AccentPill tone="warning" title="Новые прогоны отключены, предыдущие результаты сохранены.">
+                  Сайт отключён
+                </AccentPill>
+              </div>
+            )}
             <StatusText tone={anomaly.tone} style={{ fontSize: 12 }}>{anomaly.text}</StatusText>
           </Card>
         );

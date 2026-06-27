@@ -1,4 +1,16 @@
-import { apiGet } from "./client";
+import { apiDownload, apiGet, apiPost } from "./client";
+
+export type RenderedSnapshotMetadata = {
+  available: boolean;
+  capture_source: "stored_html_live_assets";
+  captured_at?: string;
+  width?: number;
+  height?: number;
+  full_height?: number;
+  clipped?: boolean;
+  mime_type?: string;
+  explanation: string;
+};
 
 export type CompareRun = {
   id: number;
@@ -24,6 +36,7 @@ export type CompareSnapshot = {
   content_type: string;
   html: string;
   html_hash: string;
+  rendered_snapshot: RenderedSnapshotMetadata;
   meta: {
     title: string;
     description: string;
@@ -52,4 +65,15 @@ export function listComparePages(runId: number): Promise<ComparePageItem[]> {
 
 export function getCompareSnapshot(runId: number, url: string): Promise<CompareSnapshot> {
   return apiGet<CompareSnapshot>(`/runs/${runId}/snapshot?url=${encodeURIComponent(url)}`);
+}
+
+export function createRenderedSnapshot(runId: number, url: string): Promise<RenderedSnapshotMetadata> {
+  return apiPost<RenderedSnapshotMetadata>(
+    `/runs/${runId}/rendered-snapshot?url=${encodeURIComponent(url)}`,
+    {},
+  );
+}
+
+export function downloadRenderedSnapshot(runId: number, url: string): Promise<Blob> {
+  return apiDownload(`/runs/${runId}/rendered-snapshot?url=${encodeURIComponent(url)}`);
 }

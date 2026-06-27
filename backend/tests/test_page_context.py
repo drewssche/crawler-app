@@ -219,3 +219,63 @@ def test_page_context_includes_retry_history_without_overwriting_original(db_ses
     assert context["page"]["retry_attempts"][0]["status"] == "SUCCEEDED"
     assert context["page"]["retry_attempts"][0]["final_status_code"] == 200
     assert context["page"]["can_retry"] is False
+
+
+def test_page_context_builds_safe_tracking_cookie_and_consent_inventory(db_session: Session):
+    profile = Profile(name="Tracking", start_url="https://tracking.test/")
+    db_session.add(profile)
+    db_session.flush()
+    site = create_primary_site_for_profile(db_session, profile)
+    db_session.flush()
+    run = Run(
+        profile_id=profile.id,
+        project_site_id=site.id,
+        status="FINISHED",
+        started_at=datetime.utcnow(),
+        finished_at=datetime.utcnow(),
+        pages_total=1,
+        pages_changed=1,
+    )
+    db_session.add(run)
+    db_session.flush()
+    page = Page(
+        run_id=run.id,
+        url="https://tracking.test/",
+        status_code=200,
+        final_status_code=200,
+        content_type="text/html",
+        html="""
+        <html>
+          <head>
+            <script src="https://www.googletagmanager.com/gtm.js?id=GTM-ABC123&token=must-not-leak"></script>
+            <script type="text/plain" data-cookieconsent="statistics">
+              gtag('config', 'G-ABCDE12345');
+              document.cookie = "analytics_consent=yes; path=/";
+            </script>
+            <script>
+              gtag('config', 'AW-123456789');
+              const secret = "token-value-must-not-be-returned";
+            </script>
+            <script src="https://consent.cookiebot.com/uc.js"></script>
+          </head>
+        </html>
+        """,
+        html_hash="tracking",
+    )
+    db_session.add(page)
+    db_session.flush()
+
+    tracking = build_page_context(db_session, run, page)["tracking"]
+    identifiers = {item["id"] for item in tracking["identifiers"]}
+
+    assert {"GTM-ABC123", "G-ABCDE12345", "AW-123456789"} <= identifiers
+    assert tracking["cookies"]["names"] == ["analytics_consent"]
+    assert tracking["cookies"]["values_exposed"] is False
+    assert tracking["consent"]["frameworks"] == ["Cookiebot"]
+    assert tracking["consent"]["runtime_audit"] == "not_run"
+    assert any(
+        item["consent_state"] == "blocked_until_consent"
+        for item in tracking["scripts"]["items"]
+    )
+    assert all("token=" not in (item["source"] or "") for item in tracking["scripts"]["items"])
+    assert "token-value-must-not-be-returned" not in str(tracking)

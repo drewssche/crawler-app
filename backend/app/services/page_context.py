@@ -1,3 +1,4 @@
+import re
 from urllib.parse import urldefrag, urljoin, urlparse
 
 from bs4 import BeautifulSoup
@@ -20,10 +21,32 @@ SEO_WEIGHTS = {
     "heading_structure": 5,
 }
 
+ANALYTICS_ID_PATTERNS = (
+    ("google_tag_manager", "Google Tag Manager", "container", re.compile(r"\bGTM-[A-Z0-9]+\b", re.I)),
+    ("google_analytics", "Google Analytics", "measurement", re.compile(r"\bG-[A-Z0-9]{5,}\b", re.I)),
+    ("google_analytics", "Google Analytics", "legacy_property", re.compile(r"\bUA-\d+-\d+\b", re.I)),
+    ("google_ads", "Google Ads", "conversion", re.compile(r"\bAW-\d+\b", re.I)),
+    ("google_campaign_manager", "Google Campaign Manager", "advertiser", re.compile(r"\bDC-\d+\b", re.I)),
+)
+
+CONSENT_PROVIDERS = (
+    ("OneTrust", ("onetrust", "optanon")),
+    ("Cookiebot", ("cookiebot", "cookieconsent")),
+    ("Didomi", ("didomi",)),
+    ("Quantcast Choice", ("quantcast", "__tcfapi")),
+    ("Iubenda", ("iubenda",)),
+    ("Consentmanager", ("consentmanager", "cmpbox")),
+)
+
 
 def _normalize_url(url: str) -> str:
     clean, _ = urldefrag(url)
     return clean.strip()
+
+
+def _safe_script_source(url: str) -> str:
+    parsed = urlparse(url)
+    return parsed._replace(query="", fragment="").geturl()
 
 
 def _check(
@@ -54,6 +77,123 @@ def _redirect_explanation(status_code: int) -> str:
     if status_code == 308:
         return "Постоянное перенаправление с сохранением метода запроса."
     return "Страница перенаправляет запрос на другой адрес."
+
+
+def _script_provider(source: str, text: str, identifiers: list[dict]) -> tuple[str, str]:
+    providers = {item["provider_key"] for item in identifiers}
+    haystack = f"{source} {text}".lower()
+    if "google_tag_manager" in providers or "googletagmanager.com/gtm.js" in haystack:
+        return "Google Tag Manager", "Управление тегами и подключением аналитики."
+    if "google_analytics" in providers or "google-analytics.com" in haystack or "gtag/js" in haystack:
+        return "Google Analytics", "Аналитика посещений и событий."
+    if "google_ads" in providers or "googleadservices.com" in haystack:
+        return "Google Ads", "Реклама и отслеживание конверсий."
+    if "google_campaign_manager" in providers or "doubleclick.net" in haystack:
+        return "Google Campaign Manager", "Рекламные и конверсионные теги."
+    if "mc.yandex.ru" in haystack or "ym(" in haystack:
+        return "Яндекс Метрика", "Веб-аналитика и поведение посетителей."
+    if "connect.facebook.net" in haystack or "fbq(" in haystack:
+        return "Meta Pixel", "Рекламная аналитика Meta."
+    return "Не определён", "Назначение не удалось надёжно определить по статическому HTML."
+
+
+def _build_tracking_inventory(soup: BeautifulSoup, page_url: str, html: str) -> dict:
+    identifiers_by_key: dict[tuple[str, str], dict] = {}
+    script_items = []
+    for index, tag in enumerate(soup.find_all("script")):
+        raw_source = _normalize_url(urljoin(page_url, str(tag.get("src") or ""))) if tag.get("src") else ""
+        source = _safe_script_source(raw_source) if raw_source else ""
+        text = tag.get_text(" ", strip=False)[:100_000]
+        searchable = f"{raw_source}\n{text}"
+        script_identifiers = []
+        for provider_key, provider, identifier_type, pattern in ANALYTICS_ID_PATTERNS:
+            for match in pattern.findall(searchable):
+                value = str(match).upper()
+                key = (provider_key, value)
+                item = identifiers_by_key.setdefault(
+                    key,
+                    {
+                        "provider_key": provider_key,
+                        "provider": provider,
+                        "type": identifier_type,
+                        "id": value,
+                        "sources": [],
+                    },
+                )
+                source_label = source or f"inline script #{index + 1}"
+                if source_label not in item["sources"]:
+                    item["sources"].append(source_label)
+                script_identifiers.append(
+                    {
+                        "provider_key": provider_key,
+                        "provider": provider,
+                        "type": identifier_type,
+                        "id": value,
+                    }
+                )
+
+        provider, purpose = _script_provider(source, text, script_identifiers)
+        script_type = str(tag.get("type") or "").lower()
+        consent_attrs = " ".join(
+            str(tag.get(name) or "").lower()
+            for name in ("data-cookieconsent", "data-consent", "data-category", "data-purpose")
+        )
+        blocked = script_type in {"text/plain", "text/x-cookie-consent"} or bool(consent_attrs.strip())
+        script_items.append(
+            {
+                "source": source or None,
+                "inline": not bool(source),
+                "provider": provider,
+                "purpose": purpose,
+                "identifiers": script_identifiers,
+                "consent_state": "blocked_until_consent" if blocked else "present_in_saved_html",
+                "consent_explanation": (
+                    "Тег явно помечен как ожидающий согласия."
+                    if blocked
+                    else "Тег присутствует в HTML; статический анализ не подтверждает момент его выполнения."
+                ),
+            }
+        )
+
+    cookie_names = sorted(
+        {
+            match.group(1)
+            for match in re.finditer(
+                r"document\.cookie\s*=\s*[\"'`]([A-Za-z0-9_.-]{1,120})\s*=",
+                html,
+                re.I,
+            )
+        }
+    )
+    consent_frameworks = [
+        name
+        for name, markers in CONSENT_PROVIDERS
+        if any(marker in html.lower() for marker in markers)
+    ]
+    return {
+        "scripts": {
+            "total": len(script_items),
+            "recognized": sum(1 for item in script_items if item["provider"] != "Не определён"),
+            "items": script_items[:100],
+        },
+        "identifiers": list(identifiers_by_key.values())[:100],
+        "cookies": {
+            "names": cookie_names[:100],
+            "total": len(cookie_names),
+            "values_exposed": False,
+            "explanation": (
+                "Показаны только имена из явных document.cookie-записей; значения cookies и токены не сохраняются."
+            ),
+        },
+        "consent": {
+            "frameworks": consent_frameworks,
+            "runtime_audit": "not_run",
+            "explanation": (
+                "Статический HTML не доказывает, какие теги реально запускаются до или после согласия. "
+                "Для этого потребуется отдельный двухфазный browser-аудит."
+            ),
+        },
+    }
 
 
 def build_page_context(db: Session, run: Run, page: Page) -> dict:
@@ -193,6 +333,7 @@ def build_page_context(db: Session, run: Run, page: Page) -> dict:
         ),
     ]
     score = round(sum(item["points"] for item in checklist))
+    tracking = _build_tracking_inventory(soup, page.url, html)
 
     return {
         "page": {
@@ -263,6 +404,7 @@ def build_page_context(db: Session, run: Run, page: Page) -> dict:
             "scripts": {"total": len(scripts), "items": scripts[:100]},
             "styles": {"total": len(styles), "items": styles[:100]},
         },
+        "tracking": tracking,
         "seo": {
             "score": score,
             "grade": "good" if score >= 80 else "needs_work" if score >= 55 else "poor",

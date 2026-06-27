@@ -14,6 +14,7 @@ import CardActionButton from "../ui/CardActionButton";
 import CardFooterActions from "../ui/CardFooterActions";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import SectionHeaderRow from "../ui/SectionHeaderRow";
+import AccentPill from "../ui/AccentPill";
 import { MetaText, StatusText } from "../ui/StatusText";
 import SiteScopeFields from "./SiteScopeFields";
 
@@ -276,9 +277,12 @@ export default function ProjectSitesSettings({
                       </div>
                     }
                     actions={
-                      <StatusText tone={site.is_enabled ? "success" : "warning"}>
+                      <AccentPill
+                        tone={site.is_enabled ? "success" : "warning"}
+                        title={site.is_enabled ? "Сайт участвует в новых запусках." : "Новые прогоны сайта отключены, история сохранена."}
+                      >
                         {site.is_enabled ? "Включён" : "Отключён"}
-                      </StatusText>
+                      </AccentPill>
                     }
                   />
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

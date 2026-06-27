@@ -212,6 +212,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     )
     assert snapshot.status_code == 200
     assert snapshot.json()["html"] == "<html></html>"
+    assert snapshot.json()["rendered_snapshot"]["available"] is False
     assert client.post(f"/runs/start/{profile_id}", headers=viewer_headers).status_code == 403
     assert client.post(
         f"/runs/{run_id}/retry-pages",

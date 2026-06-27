@@ -8,6 +8,7 @@ from urllib.parse import urldefrag, urljoin, urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from bs4 import BeautifulSoup
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -30,6 +31,11 @@ from app.core.events import (
 )
 from app.services.project_sites import create_primary_site_for_profile
 from app.services.page_context import build_page_context
+from app.crawler.renderer import (
+    get_rendered_snapshot_metadata,
+    render_page_snapshot,
+    rendered_snapshot_file,
+)
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -969,6 +975,7 @@ def get_page_snapshot(
         "content_type": page.content_type,
         "html": page.html,
         "html_hash": page.html_hash,
+        "rendered_snapshot": get_rendered_snapshot_metadata(page),
         "meta": context["meta"],
         "seo": context["seo"],
         "links": {
@@ -985,4 +992,48 @@ def get_page_snapshot(
             "scripts": {"total": context["assets"]["scripts"]["total"]},
             "styles": {"total": context["assets"]["styles"]["total"]},
         },
+        "tracking": context["tracking"],
     }
+
+
+@router.post("/{run_id}/rendered-snapshot")
+def create_rendered_page_snapshot(
+    run_id: int,
+    url: str = Query(min_length=1),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("crawler.run")),
+):
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    page = db.query(Page).filter(Page.run_id == run_id, Page.url == url).first()
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found in this run")
+    try:
+        return render_page_snapshot(page)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Не удалось создать визуальный снимок. Проверьте, что Chromium установлен "
+                "в backend-контейнере, и повторите попытку."
+            ),
+        ) from exc
+
+
+@router.get("/{run_id}/rendered-snapshot")
+def get_rendered_page_snapshot(
+    run_id: int,
+    url: str = Query(min_length=1),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("data.view")),
+):
+    page = db.query(Page).filter(Page.run_id == run_id, Page.url == url).first()
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found in this run")
+    image_path = rendered_snapshot_file(page)
+    if image_path is None:
+        raise HTTPException(status_code=404, detail="Rendered snapshot not found")
+    return FileResponse(image_path, media_type="image/jpeg", filename=f"page-{page.id}.jpg")

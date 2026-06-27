@@ -9,6 +9,7 @@ import {
 } from "../api/pageContext";
 import { ApiError, apiDelete, apiGet, apiPost } from "../api/client";
 import PageContextDrawer from "../components/projects/PageContextDrawer";
+import DirectoryContextDrawer from "../components/projects/DirectoryContextDrawer";
 import ProjectSiteContextCards from "../components/projects/ProjectSiteContextCards";
 import ProjectSitesSettings from "../components/projects/ProjectSitesSettings";
 import Card from "../components/ui/Card";
@@ -19,13 +20,15 @@ import ConfirmDialog from "../components/ui/ConfirmDialog";
 import ListTotalMeta from "../components/ui/ListTotalMeta";
 import ProjectRunBadge from "../components/ui/ProjectRunBadge";
 import StructureLegendHint from "../components/ui/StructureLegendHint";
-import ProjectStructureTree from "../components/ui/ProjectStructureTree";
+import ProjectStructureTree, {
+  type ProjectStructureDirectoryContext,
+} from "../components/ui/ProjectStructureTree";
 import SegmentedControl from "../components/ui/SegmentedControl";
 import SectionHeaderRow from "../components/ui/SectionHeaderRow";
 import ToastHost, { type ToastItem } from "../components/ui/ToastHost";
 import UiSelect from "../components/ui/UiSelect";
 import { MetaText, StatusText } from "../components/ui/StatusText";
-import { formatOperationalDateTime } from "../utils/datetime";
+import { formatOperationalDateTime, formatRunTitle } from "../utils/datetime";
 import { invalidateProfilesCache } from "../utils/profileListCache";
 import { publishProjectRunLive } from "../utils/projectRunLiveStore";
 import { useAuth } from "../hooks/auth";
@@ -182,6 +185,7 @@ export default function ProfileDashboardPage() {
   const [pageContextLoading, setPageContextLoading] = useState(false);
   const [pageContextError, setPageContextError] = useState("");
   const [pageContext, setPageContext] = useState<PageContext | null>(null);
+  const [directoryContext, setDirectoryContext] = useState<ProjectStructureDirectoryContext | null>(null);
   const [pageRetryPending, setPageRetryPending] = useState(false);
   const [pageRetryMessage, setPageRetryMessage] = useState("");
   const [pageRetrySucceeded, setPageRetrySucceeded] = useState<boolean | null>(null);
@@ -416,6 +420,7 @@ export default function ProfileDashboardPage() {
 
   async function handleOpenPageContext(url: string) {
     if (structureRunId === null) return;
+    setDirectoryContext(null);
     setPageContextOpen(true);
     setPageContextLoading(true);
     setPageContextError("");
@@ -778,14 +783,15 @@ export default function ProfileDashboardPage() {
                   sites={sites}
                   selectedSiteId={selectedSiteId}
                   onSelect={(siteId) => {
+                    if (siteId === selectedSiteId) return;
                     setSelectedSiteId(siteId);
-                    setLastRunPages([]);
-                    setPrevRunPages([]);
                     setRunsError("");
                     setPagesError("");
                     setStructureSearch("");
                     setStructureViewFilter("all");
                     setFailureDetailsOpen(false);
+                    setPageContextOpen(false);
+                    setDirectoryContext(null);
                   }}
                 />
               )}
@@ -838,7 +844,7 @@ export default function ProfileDashboardPage() {
                 >
                   <div style={{ display: "grid", gap: 7 }}>
                     <SectionHeaderRow
-                      title={<div style={{ fontWeight: 700 }}>Состояние сайта: {selectedSite.name}</div>}
+                      title={<div style={{ fontWeight: 700 }}>Мониторинг отклонений: {selectedSite.name}</div>}
                       actions={
                         selectedSite.anomaly.status === "anomaly"
                           ? <StatusText tone={selectedSite.anomaly.severity === "danger" ? "danger" : "warning"}>Аномалия</StatusText>
@@ -849,9 +855,14 @@ export default function ProfileDashboardPage() {
                     />
                     <MetaText>{selectedSite.anomaly.message}</MetaText>
                     {selectedSite.anomaly.status === "insufficient_data" && (
-                      <MetaText opacity={0.68}>
-                        Успешных прогонов: {selectedSite.anomaly.successful_runs}. Для оценки нужны текущий прогон и минимум {selectedSite.anomaly.baseline_runs_required} предыдущих успешных прогона.
-                      </MetaText>
+                      <>
+                        <StatusText tone="muted">
+                          Накоплено {selectedSite.anomaly.successful_runs} из {selectedSite.anomaly.baseline_runs_required + 1} успешных прогонов.
+                        </StatusText>
+                        <MetaText opacity={0.68}>
+                          После накопления истории сервис начнёт сравнивать количество страниц, HTTP-ошибки и объём изменений с обычным уровнем сайта.
+                        </MetaText>
+                      </>
                     )}
                     {selectedSite.anomaly.reasons.map((reason) => (
                       <StatusText
@@ -864,7 +875,7 @@ export default function ProfileDashboardPage() {
                     ))}
                     {selectedSite.anomaly.baseline && selectedSite.anomaly.latest && (
                       <MetaText opacity={0.65}>
-                        Baseline: в среднем {selectedSite.anomaly.baseline.pages_average} страниц · последний прогон: {selectedSite.anomaly.latest.pages_total}.
+                        Обычный уровень: в среднем {selectedSite.anomaly.baseline.pages_average} страниц · последний прогон: {selectedSite.anomaly.latest.pages_total}.
                       </MetaText>
                     )}
                   </div>
@@ -891,7 +902,7 @@ export default function ProfileDashboardPage() {
                   )}
                   {!runsLoading && lastRun && (
                     <div style={{ display: "grid", gap: 6 }}>
-                      <MetaText>Статус: {lastRun.status}</MetaText>
+                      <div><ProjectRunBadge status={lastRun.status} /></div>
                       <MetaText>Старт: {formatOperationalDateTime(lastRun.started_at)}</MetaText>
                       <MetaText>
                         Завершение: {lastRun.finished_at ? formatOperationalDateTime(lastRun.finished_at) : "еще выполняется"}
@@ -1001,11 +1012,11 @@ export default function ProfileDashboardPage() {
                         <div style={{ fontWeight: 700 }}>Структура сайта</div>
                         <MetaText opacity={0.68}>
                           {structureIsLive
-                            ? `Структура строится в реальном времени · run #${liveStructureRun.id}`
+                            ? `Структура строится в реальном времени · ${formatRunTitle(liveStructureRun.started_at)}`
                             : structureUpdatePending && structureRun
-                              ? `Показан последний готовый срез · run #${structureRun.id}`
+                              ? `Показан последний готовый срез · ${formatRunTitle(structureRun.started_at)}`
                               : structureRun
-                                ? `Готовый срез · run #${structureRun.id}`
+                                ? `Готовый срез · ${formatRunTitle(structureRun.started_at)}`
                               : "Структура появится после первого успешного обхода"}
                         </MetaText>
                       </div>
@@ -1120,7 +1131,7 @@ export default function ProfileDashboardPage() {
                           <div>
                             <div style={{ fontWeight: 700 }}>Прогон завершён — структура готова</div>
                             <MetaText opacity={0.68}>
-                              Run #{structureRun.id} · {formatDuration(structureRun.started_at, structureRun.finished_at)}
+                              {formatRunTitle(structureRun.started_at)} · {formatDuration(structureRun.started_at, structureRun.finished_at)}
                             </MetaText>
                           </div>
                         }
@@ -1238,6 +1249,10 @@ export default function ProfileDashboardPage() {
                       rows={structureRowsFiltered}
                       query={structureSearch}
                       onPageSelect={(url) => void handleOpenPageContext(url)}
+                      onDirectorySelect={(context) => {
+                        setPageContextOpen(false);
+                        setDirectoryContext(context);
+                      }}
                       canRetry={canRunCrawler && !structureUpdatePending}
                       retryingUrl={structureRetryingUrl}
                       retryResultByUrl={structureRetryResultByUrl}
@@ -1277,7 +1292,7 @@ export default function ProfileDashboardPage() {
                     <Card key={run.id} style={{ padding: 10 }}>
                       <div style={{ display: "grid", gap: 6 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                          <div style={{ fontWeight: 700 }}>run #{run.id}</div>
+                          <div style={{ fontWeight: 700 }}>{formatRunTitle(run.started_at)}</div>
                           <ProjectRunBadge status={run.status} />
                         </div>
                         <MetaText>Старт: {formatOperationalDateTime(run.started_at)}</MetaText>
@@ -1374,10 +1389,21 @@ export default function ProfileDashboardPage() {
         retryMessage={pageRetryMessage}
         retrySucceeded={pageRetrySucceeded}
         onRetry={() => void handleRetryCurrentPage()}
+        onOpenFullAnalysis={() => {
+          if (!project || !pageContext) return;
+          navigate(
+            `/profiles/${project.id}/inspect?run=${pageContext.page.run_id}&url=${encodeURIComponent(pageContext.page.url)}`,
+            { state: { projectName: project.name } },
+          );
+        }}
         onClose={() => {
           setPageContextOpen(false);
           setPageContextError("");
         }}
+      />
+      <DirectoryContextDrawer
+        context={directoryContext}
+        onClose={() => setDirectoryContext(null)}
       />
     </div>
   );

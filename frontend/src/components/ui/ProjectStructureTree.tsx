@@ -27,6 +27,16 @@ type TreeNode = {
   errors: number;
 };
 
+export type ProjectStructureDirectoryContext = {
+  label: string;
+  url: string;
+  totalPages: number;
+  changedPages: number;
+  errorPages: number;
+  directSections: number;
+  directPages: number;
+};
+
 const NODE_BATCH_SIZE = 20;
 
 function statusLabel(status: StructureStatus): string {
@@ -239,6 +249,7 @@ function TreeRow({
   onToggle,
   onLoadMore,
   onPageSelect,
+  onDirectorySelect,
   canRetry,
   retryingUrl,
   retryResultByUrl,
@@ -255,6 +266,7 @@ function TreeRow({
   onToggle: (key: string) => void;
   onLoadMore: (key: string) => void;
   onPageSelect?: (url: string) => void;
+  onDirectorySelect?: (context: ProjectStructureDirectoryContext) => void;
   canRetry: boolean;
   retryingUrl?: string | null;
   retryResultByUrl?: Record<string, "success" | "failed" | "skipped">;
@@ -299,7 +311,15 @@ function TreeRow({
               onPageSelect(node.url);
               return;
             }
-            window.open(node.url, "_blank", "noopener,noreferrer");
+            onDirectorySelect?.({
+              label: node.label,
+              url: node.url,
+              totalPages: node.total,
+              changedPages: node.changed,
+              errorPages: node.errors,
+              directSections: node.children.filter((child) => child.isDirectory).length,
+              directPages: node.children.filter((child) => child.hasPage && !child.isDirectory).length,
+            });
           }}
           title={node.url}
         >
@@ -381,6 +401,7 @@ function TreeRow({
                 onToggle={onToggle}
                 onLoadMore={onLoadMore}
                 onPageSelect={onPageSelect}
+                onDirectorySelect={onDirectorySelect}
                 canRetry={canRetry}
                 retryingUrl={retryingUrl}
                 retryResultByUrl={retryResultByUrl}
@@ -409,6 +430,7 @@ export default function ProjectStructureTree({
   rows,
   query = "",
   onPageSelect,
+  onDirectorySelect,
   canRetry = false,
   retryingUrl = null,
   retryResultByUrl = {},
@@ -419,6 +441,7 @@ export default function ProjectStructureTree({
   rows: ProjectStructureRow[];
   query?: string;
   onPageSelect?: (url: string) => void;
+  onDirectorySelect?: (context: ProjectStructureDirectoryContext) => void;
   canRetry?: boolean;
   retryingUrl?: string | null;
   retryResultByUrl?: Record<string, "success" | "failed" | "skipped">;
@@ -442,8 +465,8 @@ export default function ProjectStructureTree({
     const nextUrls = new Set(rows.map((row) => row.url));
     if (!live) {
       previousUrlsRef.current = nextUrls;
-      setRecentNodeKeys(new Set());
-      return;
+      const resetTimer = window.setTimeout(() => setRecentNodeKeys(new Set()), 0);
+      return () => window.clearTimeout(resetTimer);
     }
     const addedUrls = rows
       .map((row) => row.url)
@@ -498,6 +521,7 @@ export default function ProjectStructureTree({
             }));
           }}
           onPageSelect={onPageSelect}
+          onDirectorySelect={onDirectorySelect}
           canRetry={canRetry}
           retryingUrl={retryingUrl}
           retryResultByUrl={retryResultByUrl}

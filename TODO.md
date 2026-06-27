@@ -69,15 +69,21 @@
   - `301/302/307/308` отображаются отдельным жёлтым page-result с friendly-пояснением и адресом назначения;
   - timeout/connect/TLS/redirect failures сохраняются как красный page-level result и не валят run при наличии других успешных HTML-страниц;
   - полный run остаётся `FAILED`, если не получено ни одной пригодной HTML-страницы.
-- Последние проверки: backend `57 passed, 2 skipped`; PostgreSQL migration `c7e4a2b9d130` verified; RBAC parity passed; frontend tests `29 passed`; frontend production build passed; targeted ESLint passed; `git diff --check` passed.
+- Последние проверки: backend `62 passed, 2 skipped`; PostgreSQL migration `c7e4a2b9d130` verified; RBAC parity passed; frontend tests `32 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; `git diff --check` passed.
 - Общий frontend lint имеет ранее существовавшие ошибки вне текущих изменений; не считать их регрессией этой волны.
-- Следующий рекомендуемый пункт: **rich snapshot для cookies/scripts/GTM inventory**. Compare sync scroll/resize можно делать после этого как независимую UX-волну.
+- UX-аудит 2026-06-26 подтвердил четыре приоритетные волны:
+  1. исправить потерю Structure при повторном выборе site card и открывать контекст раздела дерева вместо внешнего сайта;
+  2. превратить Page Inspector из сводки счётчиков в понятное исследование links/assets/tracking с легендами и progressive disclosure;
+  3. заменить обрезанный sanitized DOM на достоверный сохранённый rendered snapshot, сохранив безопасный DOM/code-режим отдельно;
+  4. сделать Compare пригодным для тысяч страниц: searchable picker, progressive controls и полноразмерные/изменяемые панели без фиксированной высоты документа.
+- Следующий рекомендуемый пункт: **UX correctness wave — site context persistence + directory context + human run/status labels**, затем rendered snapshot и searchable Compare picker.
 
 ## Working Rules
 
 - Сначала читать этот файл и `git diff`; не перезаписывать незакоммиченные изменения.
 - Формат закрытия: `Что было → Что стало → Как проверить → Вклад в цели`.
 - Новые бизнес-правила — server-first; frontend только объясняет состояние и доступные действия.
+- Friendly operational UX — сквозной контракт: длительное действие показывает реальный текущий этап, animation/spinner только при фактической работе, понятный следующий результат, мгновенный success/error state и при необходимости toast/Event Center. Не использовать декоративный progress, ложный ETA, бесконечную анимацию после завершения или скрытый background refresh; соблюдать `prefers-reduced-motion`.
 - Reuse-first, no-regression, server-load и multi-user правила: [`docs/ENGINEERING_PLAYBOOK.md`](docs/ENGINEERING_PLAYBOOK.md).
 - Release-gate и Browser-проверки не запускать автоматически.
 
@@ -115,6 +121,8 @@
 
   **Site cards visual contract**
   - на `Основной` компактные карточки сайтов являются переключателем рабочего контекста, а не декоративной сеткой;
+  - повторный клик по уже выбранной карточке ничего не сбрасывает; при смене сайта последний готовый контекст сохраняется до загрузки нового и получает loading overlay вместо пустой Structure;
+  - выбранная карточка явно подписана `Выбранный сайт`/`Рабочий контекст`, чтобы клик и область его влияния не требовали догадки;
   - карточка показывает название, scope, состояние последнего прогона, страницы, изменения и время; выбранный сайт выделяется без лишнего визуального шума;
   - KPI, Structure, History и ручной запуск ниже всегда относятся к выбранному сайту;
   - в `Настройках` используются раскрываемые management cards с add/edit/enable/disable/delete;
@@ -146,9 +154,12 @@
   - сигналы: рост `4xx/5xx`, падение coverage/pages, массовое исчезновение URL, необычный объём изменений, изменение title/canonical/robots, broken links/resources и время ответа;
   - до накопления baseline показывать `Недостаточно данных`, а не ложную аномалию;
   - severity и причина рассчитываются backend и видны отдельно по сайту.
+  - UI-название `Состояние сайта` заменить на `Мониторинг отклонений`; до готовности baseline показывать прогресс `1 из 4 успешных прогонов` и кратко объяснять, какие показатели начнут сравниваться;
+  - термин `baseline` использовать только в раскрываемых технических деталях; основной текст — `обычный уровень по предыдущим прогонам`.
 
   **Page intelligence**
   - клик по узлу Structure сначала открывает read-only context drawer, не внешний сайт;
+  - агрегирующий узел-раздел без собственной сохранённой страницы открывает контекст раздела: число дочерних страниц, статусы, ошибки и быстрый поиск внутри раздела; внешний переход остаётся отдельной кнопкой;
   - drawer: site/scope, URL, HTTP/status, snapshot/meta, links/resources, текущий/предыдущий run и явное действие `Открыть на сайте`;
   - redirect URL сохраняется отдельным узлом/result, даже если конечная страница также успешно просканирована;
   - redirect diagnostics: исходный URL, конечный URL, полная chain, количество переходов, выход за scope/loop и friendly-пояснение:
@@ -158,7 +169,10 @@
     - `308 — постоянное перенаправление с сохранением метода запроса`;
   - обычный валидный redirect показывать системным жёлтым состоянием `Перенаправляет на …`; loop, длинную chain, недоступную конечную страницу или выход за scope — красным с причиной;
   - анализ выбранной страницы выполняется on-demand по сохранённому HTML, без массового пересчёта всего сайта при каждом открытии проекта;
-  - links/resources: внутренние/внешние ссылки, известные broken targets текущего run, изображения/scripts/styles и отсутствующие обязательные атрибуты;
+  - links/resources:
+    - searchable/filterable список ссылок `Все | Внутренние | Внешние | Битые` с anchor text, destination URL и известным HTTP status;
+    - inventory изображений/scripts/styles с URL, alt, first/third-party признаком и известной доступностью; summary-счётчики остаются входом, но не заменяют список;
+    - граф ссылок/структура переходов — отдельное расширение после стабильного списка, не блокирует первую полезную версию;
   - cookies/scripts intelligence:
     - cookies, установленные ответом страницы и client-side scripts, с доменом, path, expiry, SameSite/Secure/HttpOnly и friendly-пояснением назначения, если оно достоверно определено;
     - first-party/third-party scripts, источник, категория (`необходимый`, `аналитика`, `маркетинг`, `неизвестный`) и страницы, где они обнаружены;
@@ -169,12 +183,24 @@
     - состояния `запущен до согласия`, `ожидает согласия`, `появился после согласия`, `поведение не определено`; неизвестное не выдавать за нарушение;
     - drawer объясняет наблюдаемое техническое поведение, но не подменяет юридическую оценку GDPR/ePrivacy;
     - значения auth/session cookies и tokens никогда не возвращать в UI: только безопасные metadata и masked identifiers.
+    - UI сначала показывает вывод: `аналитика не обнаружена` либо распознанные providers/IDs; generic scripts группируются в сворачиваемый блок `Прочие scripts`, а повторяющиеся карточки `Не определён` не занимают основной экран;
+    - статический анализ и runtime consent audit визуально разделяются: `найдено в HTML` не означает `запустилось`, а `не проверено` получает короткое пояснение и ссылку на скрываемую легенду.
   - SEO checklist MVP: `title`, description, один содержательный `h1`, canonical, indexability/robots, lang, viewport, image alt и базовая структура headings;
   - SEO score `0–100` рассчитывается backend по прозрачным весам; UI показывает процент, passed/warning/failed пункты и конкретную рекомендацию, а не обещание позиции в поиске;
   - score является технической полнотой страницы, не универсальной оценкой качества контента или гарантией SEO-результата;
   - позднее расширить structured data/Open Graph/hreflang/content duplication только после стабильного snapshot contract;
   - unchanged page показывает одно состояние `Изменений нет`, без дублирования одинаковых окон;
   - subscriptions, occurrence search и target fingerprint добавляются после стабильных snapshot/diff contracts.
+  - full-width Page Inspector: основная область показывает безопасный snapshot с режимами `Визуально | Код`, вторичная панель — единый вертикальный отчёт с секциями и sticky-якорями вместо скрывающих контекст вкладок;
+  - `Визуально` должен показывать сохранённый rendered screenshot/full-page capture со стилями, изображениями и фактическим viewport; текущий sanitized HTML остаётся отдельным режимом `DOM`, а не имитацией визуального вида;
+  - не подгружать live CSS/images исходного сайта внутрь исторического snapshot по умолчанию: это ломает воспроизводимость, может выполнить нежелательные запросы и смешивает состояние разных дат;
+  - секции Inspector: `Сводка`, `SEO`, `Ссылки`, `Ассеты`, `Аналитика`, `Cookies/consent`, `Повторные проверки`; drawer остаётся кратким входом с действием `Открыть полный анализ`;
+  - `Технический контекст` использует человеческие названия и скрываемую легенду `Что означает`; внутренние `run_id/site_id` находятся только в `Технических деталях`;
+  - sticky-навигация Inspector оформляется компактными chips без стандартных подчёркнутых ссылок, подсвечивает текущую секцию и допускает горизонтальный scroll на узком экране;
+  - единый status-chip contract для project/site/run/page/tracking: icon + label + tooltip, семантические tones `success/info/warning/danger/neutral`; сырые тексты `Включён`, `Не определён`, `FINISHED` и цвет без пояснения не использовать;
+  - пользовательские названия прогонов строятся по дате/времени и сайту (`Прогон от 25.06.2026, 17:05`); глобальный DB `run #5` показывается только в раскрываемых технических деталях и не выдаётся за пятый прогон проекта.
+  - широкий экран использует пропорцию около `2fr / minmax(320px, 0.9fr)`; на узком экране области складываются вертикально. Отчёт не должен уменьшать snapshot до нечитаемой миниатюры;
+  - те же report sections переиспользуются в Compare с переключателем `Левая | Правая | Различия`; режим различий показывает только значимые расхождения HTTP/SEO/resources/analytics IDs/cookies/CMP и не повторяет одинаковые данные — MVP готов.
 
   **Crawl personas / user contexts**
   - один `ProjectSite` поддерживает несколько контекстов просмотра: минимум `Гость`, позднее `Авторизованный` и `Партнёр`;
@@ -193,12 +219,16 @@
   - верхняя компактная строка выбора:
     `левый сайт + страница/версия ↔ правый сайт + страница/версия`;
   - режимы: `Визуально`, `Код`, `Структура`, позднее `Контент`;
+  - mode controls скрыты или disabled с пояснением, пока обе страницы не выбраны; сценарий читается как `1. Выберите страницы → 2. Выберите режим → 3. Исследуйте различия`;
+  - выбор страницы — searchable combobox с URL/title/status, keyboard navigation и virtualization/server-side search для run с сотнями и тысячами страниц; native select не является целевым решением;
   - пользователь может вручную выбрать любые две страницы; auto-match по normalized relative path только предлагает пару и не блокирует ручной выбор;
   - поддержать cross-site compare и historical compare одной страницы/сайта одним UI;
   - Compare работает как настоящий focus workspace: скрываются оба sidebar, остаются компактная навигация назад и рабочая область;
   - широкий экран: две полноценные панели; средний/узкий: переключение `Обе | Левая | Правая`, без двух нечитаемых миниатюр;
-  - visual mode использует sandboxed snapshot iframe без scripts/forms/network navigation; режим `Обзор` масштабирует страницу, `Детально` сохраняет читаемый 100% scroll;
-  - селекторы после выбора остаются компактными над соответствующей панелью; позднее добавить resize и optional sync scroll.
+  - visual mode использует сохранённый rendered snapshot; sandboxed DOM доступен отдельно для исследования структуры без scripts/forms/network navigation;
+  - высота документа не задаётся константой: full-page capture либо измеренный DOM не должен обрезаться после 1600 px или создавать ложную пустую область;
+  - режимы масштаба: `Вписать по ширине | 100% | Вся страница`; обе snapshot-панели и Inspector используют высоту viewport, независимый scroll и не уменьшаются до коротких окон;
+  - селекторы после выбора остаются компактными над соответствующей панелью; добавить resize рабочей области и Inspector, затем optional sync scroll.
 
   **Implementation order**
   1. Data model/migration: `ProjectSite`, site-scoped runs/pages и compatibility для существующих данных — готово.
@@ -211,10 +241,17 @@
   8. Visual mode/focus workspace и auto page matching — готовы; sync scroll/resize, subscriptions/outbox остаются.
   9. Persisted redirect chain + page-level network failures и friendly diagnostics — готово.
   10. Bounded bulk/single-page retry attempts внутри исходного run — готово.
-  11. Rich snapshot: response timing, cookies/scripts/GTM inventory и consent behavior `до/после`.
-  12. `CrawlPersona`: guest → encrypted session bundle → browser login scenarios.
-  13. Расширить anomaly/Compare на redirect, resources, consent и persona-scoped signals.
-  14. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile` и compatibility endpoint `/runs/start/{profile_id}`.
+  11. Rich snapshot: response timing, cookies/scripts/GTM inventory и consent behavior `до/после` — static inventory готов; runtime consent audit остаётся.
+  12. Full-width single-page Inspector и общий Inspector в Compare — каркас MVP готов; UX-аудит требует следующей волны:
+      - 12.1 site-card persistence, directory context, human run/status labels и anomaly explanation — готово;
+      - 12.2 полные searchable links/assets inventories, grouped tracking и section legend/chips — готово;
+      - 12.3 persisted rendered full-page snapshot + отдельные безопасные `DOM/Код` режимы — on-demand reconstruction готова; нативный screenshot в момент crawl остаётся для browser-persona этапа;
+      - 12.4 searchable/virtualized Compare picker, progressive controls, dynamic height и resizable panels.
+  13. Runtime consent audit `до/после`, затем отображение наблюдаемого поведения cookies/scripts.
+  14. `CrawlPersona`: guest → encrypted session bundle → browser login scenarios.
+  15. Расширить anomaly/Compare на redirect, resources, consent и persona-scoped signals.
+  16. Backend schedule contract: сохранённое расписание, timezone, duplicate-run guard, pause/resume и следующий запуск; текущий settings-блок остаётся честным manual-only состоянием до этого этапа.
+  17. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile` и compatibility endpoint `/runs/start/{profile_id}`.
 
   **Verification**
   - single-site whole-domain и section-only проекты не выходят за scope;
@@ -259,6 +296,22 @@
 
 ## Recently Done
 
+- [x] **P1 Persisted rendered page reconstruction for Inspector and Compare**.
+  - Что было: `Визуально` показывал sanitized HTML без styles/images, поэтому выглядел как сломанная страница; фиксированная iframe-высота обрезала длинный контент.
+  - Что стало: editor/admin может явно создать JPEG-реконструкцию из HTML выбранного прогона; scripts/forms/XHR блокируются, CSS/images/fonts разрешены только для отрисовки; артефакт сохраняется в отдельном Docker volume и повторно используется в Inspector/Compare. Inspector разделён на `Снимок | DOM | Код`, Compare использует снимок с `Обзор/Детально`; viewer может читать готовый артефакт, но не создавать новый.
+  - Как проверить: пересобрать backend, открыть полный анализ → `Снимок → Создать визуальный снимок`; после генерации обновить страницу — используется сохранённый JPEG. В Compare создать снимки обеих сторон и переключить `Обзор/Детально`.
+  - Вклад в цели: страница отображается со стилями и изображениями без исполнения сохранённого активного кода (`high` UX/security); генерация выполняется только по запросу и не удваивает нагрузку crawl на тысячи страниц (`high` operations).
+  - Ограничение: это реконструкция сохранённого HTML с ресурсами, загруженными в момент создания. Для полностью исторически точного вида понадобится browser-capture непосредственно во время persona-run с retention/quota.
+- [x] **P1 Page Inspector research inventories and explainable tracking UX**.
+  - Что было: links/assets показывались только счётчиками и известными ошибками; каждый неизвестный script занимал отдельную большую карточку; sticky-навигация выглядела как набор обычных ссылок без текущего контекста.
+  - Что стало: ссылки фильтруются и ищутся по URL/anchor text, показывают тип и известный HTTP; изображения/scripts/styles получили собственные searchable inventories и first/third-party маркировку; распознанные analytics IDs/scripts показаны первыми, неизвестные свёрнуты в `Прочие scripts`; технические ограничения и статический/runtime смысл объясняются inline; навигация оформлена chips с active section.
+  - Как проверить: открыть `Полный анализ` страницы → `Ссылки` и переключить `Все/Внутренние/Внешние/Битые`; найти asset; открыть `Аналитика` и раскрыть `Прочие scripts`; при прокрутке текущая секция подсвечивается.
+  - Вклад в цели: Page Inspector стал пригоден для исследования страницы, а не только чтения агрегатов (`high` product value); неизвестные и непроверенные данные больше не выглядят как подтверждённая проблема (`high` trust/friendly UX).
+- [x] **P1 UX correctness — site context, directory context and human statuses**.
+  - Что было: повторный клик по выбранной site card очищал Structure; агрегирующий раздел дерева открывал внешний сайт; `run #ID`, `FINISHED/Активен` и `Baseline` требовали знания внутренней модели.
+  - Что стало: повторный выбор является no-op, а при смене сайта сохраняется последний готовый срез до загрузки нового; раздел без собственной страницы открывает drawer со сводкой вложенных страниц; выбранная карточка, успешный run, история и мониторинг отклонений получили понятные labels/chips, внутренние ID убраны в технические детали.
+  - Как проверить: после готового прогона повторно нажать выбранную карточку — Structure остаётся; нажать `/catalogue/` без page-result — открывается `Контекст раздела`; история показывает `Прогон от …`, а baseline — прогресс накопления истории.
+  - Вклад в цели: устранена потеря пользовательского контекста (`high` correctness); дерево и мониторинг больше не требуют понимания DB IDs и статистической терминологии (`high` friendly UX).
 - [x] **P1 Bounded retry attempts for problem pages**.
   - Что было: page-level failure сохранялся, но для проверки восстановления требовался новый полный прогон сайта.
   - Что стало: editor/admin может повторить одну страницу прямо из Structure или drawer, либо до 50 проблемных страниц массово; максимум 3 attempts на страницу, успешный retry больше не предлагается, исходный `Page` и статус run не перезаписываются. Во время crawl остаётся последний готовый срез с явным статусом и автоматическим обновлением после завершения.

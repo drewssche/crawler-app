@@ -7,6 +7,7 @@ import ComparePage from "./pages/ComparePage";
 import LoginPage from "./pages/LoginPage";
 import ProfileDashboardPage from "./pages/ProfileDashboardPage";
 import ProfileNewPage from "./pages/ProfileNewPage";
+import PageInspectorPage from "./pages/PageInspectorPage";
 import RootAdminsPage from "./pages/RootAdminsPage";
 import SettingsPage from "./pages/SettingsPage";
 import WorkspaceHomePage from "./pages/WorkspaceHomePage";
@@ -71,6 +72,14 @@ export default function App() {
           element={
             <RequirePermission permission="data.view">
               <ComparePage />
+            </RequirePermission>
+          }
+        />
+        <Route
+          path="profiles/:id/inspect"
+          element={
+            <RequirePermission permission="data.view">
+              <PageInspectorPage />
             </RequirePermission>
           }
         />

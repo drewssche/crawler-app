@@ -22,6 +22,7 @@ export default function PageContextDrawer({
   retryMessage,
   retrySucceeded,
   onRetry,
+  onOpenFullAnalysis,
   onClose,
 }: {
   open: boolean;
@@ -33,8 +34,12 @@ export default function PageContextDrawer({
   retryMessage: string;
   retrySucceeded: boolean | null;
   onRetry: () => void;
+  onOpenFullAnalysis: () => void;
   onClose: () => void;
 }) {
+  const recognizedScripts = context?.tracking.scripts.items.filter((script) => script.provider !== "Не определён") || [];
+  const unknownScripts = context?.tracking.scripts.items.filter((script) => script.provider === "Не определён") || [];
+
   return (
     <SlidePanel open={open} width="min(620px, 94vw)" onClose={onClose}>
       <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
@@ -45,7 +50,16 @@ export default function PageContextDrawer({
               <MetaText opacity={0.68} style={{ wordBreak: "break-word" }}>{context?.page.url || ""}</MetaText>
             </div>
           }
-          actions={<Button variant="ghost" size="sm" onClick={onClose}>Закрыть</Button>}
+          actions={
+            <div style={{ display: "flex", gap: 8 }}>
+              {context && (
+                <Button variant="accent" size="sm" onClick={onOpenFullAnalysis}>
+                  Открыть полный анализ
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={onClose}>Закрыть</Button>
+            </div>
+          }
         />
       </div>
 
@@ -69,11 +83,16 @@ export default function PageContextDrawer({
                 }
               />
               <MetaText>HTTP: {context.page.status_code} · {context.page.content_type || "тип неизвестен"}</MetaText>
-              <MetaText>Run #{context.page.run_id} · site #{context.page.project_site_id}</MetaText>
               <MetaText>Title: {context.meta.title || "не задан"}</MetaText>
               <MetaText>Description: {context.meta.description || "не задан"}</MetaText>
               <MetaText>Canonical: {context.meta.canonical || "не задан"}</MetaText>
               <MetaText>Robots: {context.meta.robots || "явные директивы отсутствуют"}</MetaText>
+              <details>
+                <summary style={{ cursor: "pointer", fontSize: 12, opacity: 0.78 }}>Технические детали</summary>
+                <MetaText style={{ marginTop: 6 }}>
+                  ID прогона: {context.page.run_id} · ID сайта: {context.page.project_site_id}
+                </MetaText>
+              </details>
             </Card>
 
             {context.page.redirect && (
@@ -202,6 +221,99 @@ export default function PageContextDrawer({
                   Нет alt: {item.url}
                 </StatusText>
               ))}
+            </Card>
+
+            <Card style={{ display: "grid", gap: 9 }}>
+              <SectionHeaderRow
+                title={
+                  <div>
+                    <div style={{ fontWeight: 700 }}>Аналитика, scripts и cookies</div>
+                    <MetaText opacity={0.68}>Без значений cookies, токенов и других секретов</MetaText>
+                  </div>
+                }
+                actions={
+                  <MetaText>
+                    Распознано: {context.tracking.scripts.recognized}/{context.tracking.scripts.total}
+                  </MetaText>
+                }
+              />
+
+              {context.tracking.identifiers.length > 0 ? (
+                <div style={{ display: "grid", gap: 6 }}>
+                  <MetaText opacity={0.72}>Найденные идентификаторы</MetaText>
+                  {context.tracking.identifiers.map((item) => (
+                    <Card key={`${item.provider_key}-${item.id}`} style={{ padding: 9, display: "grid", gap: 4 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                        <StatusText tone="success">{item.provider}</StatusText>
+                        <code style={{ fontSize: 12 }}>{item.id}</code>
+                      </div>
+                      <MetaText opacity={0.7}>
+                        Тип: {item.type} · источников: {item.sources.length}
+                      </MetaText>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <MetaText opacity={0.68}>GTM/Analytics/Ads identifiers в сохранённом HTML не обнаружены.</MetaText>
+              )}
+
+              {context.tracking.scripts.items.length > 0 && (
+                <div style={{ display: "grid", gap: 6 }}>
+                  <MetaText opacity={0.72}>Распознанные scripts</MetaText>
+                  {recognizedScripts.length === 0 && (
+                    <MetaText opacity={0.68}>Распознанных аналитических или рекламных scripts нет.</MetaText>
+                  )}
+                  {recognizedScripts.slice(0, 10).map((script, index) => (
+                    <Card key={`${script.source || "inline"}-${index}`} style={{ padding: 9, display: "grid", gap: 4 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 650 }}>{script.provider}</div>
+                        <StatusText tone={script.consent_state === "blocked_until_consent" ? "success" : "warning"}>
+                          {script.consent_state === "blocked_until_consent"
+                            ? "Ожидает согласия"
+                            : "Момент запуска не проверен"}
+                        </StatusText>
+                      </div>
+                      <MetaText>{script.purpose}</MetaText>
+                      <MetaText opacity={0.68} style={{ wordBreak: "break-word" }}>
+                        {script.source || `Inline script #${index + 1}`}
+                      </MetaText>
+                      <MetaText opacity={0.68}>{script.consent_explanation}</MetaText>
+                    </Card>
+                  ))}
+                  {unknownScripts.length > 0 && (
+                    <details className="inspector-details">
+                      <summary>Прочие scripts · {unknownScripts.length}</summary>
+                      <MetaText opacity={0.68} style={{ marginTop: 7 }}>
+                        Они найдены в HTML, но их назначение нельзя надёжно определить без дополнительного анализа.
+                      </MetaText>
+                    </details>
+                  )}
+                  <MetaText opacity={0.65}>
+                    Полный список scripts, ссылок и ассетов доступен в полном анализе страницы.
+                  </MetaText>
+                </div>
+              )}
+
+              <Card variant="hint" style={{ padding: 9, display: "grid", gap: 5 }}>
+                <div style={{ fontWeight: 650 }}>Cookies</div>
+                <MetaText>
+                  Явно записываемых имён: {context.tracking.cookies.total}
+                  {context.tracking.cookies.names.length > 0
+                    ? ` · ${context.tracking.cookies.names.join(", ")}`
+                    : ""}
+                </MetaText>
+                <MetaText opacity={0.68}>{context.tracking.cookies.explanation}</MetaText>
+              </Card>
+
+              <Card variant="warning" style={{ padding: 9, display: "grid", gap: 5 }}>
+                <div style={{ fontWeight: 650 }}>Поведение согласия не проверено</div>
+                <MetaText>
+                  CMP: {context.tracking.consent.frameworks.length > 0
+                    ? context.tracking.consent.frameworks.join(", ")
+                    : "не распознан"}
+                </MetaText>
+                <MetaText opacity={0.72}>{context.tracking.consent.explanation}</MetaText>
+              </Card>
             </Card>
           </>
         )}

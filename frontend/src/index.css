@@ -167,6 +167,140 @@ button:focus-visible {
   gap: 10px;
 }
 
+.page-inspector-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 0.9fr);
+  gap: 10px;
+  min-height: 0;
+  height: 100%;
+}
+
+.compare-inspector-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.42fr);
+  gap: 10px;
+  min-width: 0;
+  align-items: start;
+}
+
+.inspector-section-nav {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 2px;
+  background: linear-gradient(180deg, rgba(25, 28, 34, 0.98), rgba(25, 28, 34, 0.94));
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  scrollbar-width: thin;
+}
+
+.inspector-section-nav button {
+  appearance: none;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: inherit;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0.78;
+}
+
+.inspector-section-nav button:hover,
+.inspector-section-nav button.active {
+  opacity: 1;
+  border-color: rgba(120,166,255,0.58);
+  background: rgba(120,166,255,0.13);
+  color: #cddcff;
+}
+
+.inspector-inventory-list {
+  display: grid;
+  gap: 7px;
+  max-height: 430px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.inspector-resource-url {
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  color: rgba(226,231,239,0.92);
+}
+
+.inspector-details {
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.025);
+}
+
+.inspector-details > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.82;
+}
+
+.rendered-snapshot-shell {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.rendered-snapshot-scroll {
+  min-height: 0;
+  overflow: auto;
+  border-radius: 8px;
+  background:
+    linear-gradient(45deg, #eee 25%, transparent 25%),
+    linear-gradient(-45deg, #eee 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #eee 75%),
+    linear-gradient(-45deg, transparent 75%, #eee 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+}
+
+.rendered-snapshot-fit img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+}
+
+.rendered-snapshot-actual img {
+  display: block;
+  max-width: none;
+  height: auto;
+  background: #fff;
+}
+
+@media (max-width: 980px) {
+  .page-inspector-grid {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .page-inspector-report {
+    max-height: none;
+  }
+
+  .compare-inspector-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .compare-inspector-report {
+    max-height: none !important;
+  }
+}
+
 @media (max-width: 900px) {
   .compare-two-column-grid {
     grid-template-columns: minmax(0, 1fr);

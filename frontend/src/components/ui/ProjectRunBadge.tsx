@@ -50,7 +50,7 @@ export function getProjectRunBadgeMeta(statusRaw?: string | null): Meta {
   }
   if (status === "FINISHED") {
     return {
-      label: "Активен",
+      label: "Прогон успешен",
       icon: "✓",
       tone: "success",
       hint: "Последний прогон завершен успешно.",

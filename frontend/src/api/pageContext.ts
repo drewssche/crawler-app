@@ -76,6 +76,44 @@ export type PageContext = {
     scripts: { total: number; items: string[] };
     styles: { total: number; items: string[] };
   };
+  tracking: {
+    scripts: {
+      total: number;
+      recognized: number;
+      items: Array<{
+        source: string | null;
+        inline: boolean;
+        provider: string;
+        purpose: string;
+        identifiers: Array<{
+          provider_key: string;
+          provider: string;
+          type: string;
+          id: string;
+        }>;
+        consent_state: "blocked_until_consent" | "present_in_saved_html";
+        consent_explanation: string;
+      }>;
+    };
+    identifiers: Array<{
+      provider_key: string;
+      provider: string;
+      type: string;
+      id: string;
+      sources: string[];
+    }>;
+    cookies: {
+      names: string[];
+      total: number;
+      values_exposed: false;
+      explanation: string;
+    };
+    consent: {
+      frameworks: string[];
+      runtime_audit: "not_run";
+      explanation: string;
+    };
+  };
   seo: {
     score: number;
     grade: "good" | "needs_work" | "poor";

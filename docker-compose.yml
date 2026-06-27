@@ -31,6 +31,7 @@ services:
     volumes:
       - ./backend:/app
       - ./.env:/app/.env.root
+      - rendered_snapshots:/app/data/rendered_snapshots
     ports:
       - "8000:8000"
     depends_on:
@@ -72,3 +73,4 @@ volumes:
   postgres_data:
   frontend_node_modules:
   prometheus_data:
+  rendered_snapshots:

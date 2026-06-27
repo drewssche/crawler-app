@@ -7,9 +7,15 @@ const sitesSource = await readFile(new URL("../src/components/projects/ProjectSi
 const createSource = await readFile(new URL("../src/pages/ProfileNewPage.tsx", import.meta.url), "utf8");
 const siteCardsSource = await readFile(new URL("../src/components/projects/ProjectSiteContextCards.tsx", import.meta.url), "utf8");
 const pageDrawerSource = await readFile(new URL("../src/components/projects/PageContextDrawer.tsx", import.meta.url), "utf8");
+const directoryDrawerSource = await readFile(new URL("../src/components/projects/DirectoryContextDrawer.tsx", import.meta.url), "utf8");
 const structureSource = await readFile(new URL("../src/components/ui/ProjectStructureTree.tsx", import.meta.url), "utf8");
 const compareSource = await readFile(new URL("../src/pages/ComparePage.tsx", import.meta.url), "utf8");
 const layoutSource = await readFile(new URL("../src/components/layout/AppLayout.tsx", import.meta.url), "utf8");
+const inspectorSource = await readFile(new URL("../src/pages/PageInspectorPage.tsx", import.meta.url), "utf8");
+const reportSource = await readFile(new URL("../src/components/projects/PageInspectionReport.tsx", import.meta.url), "utf8");
+const safeSnapshotSource = await readFile(new URL("../src/utils/safeSnapshotDocument.ts", import.meta.url), "utf8");
+const cssSource = await readFile(new URL("../src/index.css", import.meta.url), "utf8");
+const renderedSnapshotSource = await readFile(new URL("../src/components/projects/RenderedSnapshotView.tsx", import.meta.url), "utf8");
 
 test("project page exposes the consolidated three-tab information architecture", () => {
   for (const label of ["Основная", "История", "Настройки"]) {
@@ -52,6 +58,9 @@ test("site cards select the context used by runs, history and structure", () => 
   assert.match(siteCardsSource, /aria-pressed=\{selected\}/);
   assert.match(siteCardsSource, /Страниц:/);
   assert.match(siteCardsSource, /Изменений:/);
+  assert.match(siteCardsSource, /Выбранный сайт/);
+  assert.match(source, /if \(siteId === selectedSiteId\) return/);
+  assert.doesNotMatch(source, /if \(siteId === selectedSiteId\) return;[\s\S]{0,180}setLastRunPages\(\[\]\)/);
 });
 
 test("project-level run preserves per-site outcomes", () => {
@@ -64,9 +73,12 @@ test("project-level run preserves per-site outcomes", () => {
 
 test("site anomaly UX distinguishes baseline, normal and anomaly states", () => {
   assert.match(source, /Недостаточно данных/);
+  assert.match(source, /Мониторинг отклонений/);
+  assert.match(source, /Накоплено/);
+  assert.match(source, /Обычный уровень/);
   assert.match(source, /selectedSite\.anomaly\.status === "normal"/);
   assert.match(source, /selectedSite\.anomaly\.reasons\.map/);
-  assert.match(siteCardsSource, /Baseline: недостаточно данных/);
+  assert.match(siteCardsSource, /Мониторинг:/);
   assert.match(siteCardsSource, /Аномалий не обнаружено/);
   assert.match(siteCardsSource, /Обнаружена критичная аномалия/);
 });
@@ -75,12 +87,44 @@ test("structure opens an on-demand page context drawer with SEO and broken links
   assert.match(source, /getPageContext\(structureRunId, url\)/);
   assert.match(source, /PageContextDrawer/);
   assert.match(structureSource, /onPageSelect\(node\.url\)/);
+  assert.match(structureSource, /onDirectorySelect/);
+  assert.doesNotMatch(structureSource, /window\.open\(node\.url/);
+  assert.match(source, /DirectoryContextDrawer/);
+  assert.match(directoryDrawerSource, /Контекст раздела/);
+  assert.match(directoryDrawerSource, /Открыть раздел на сайте/);
   assert.match(pageDrawerSource, /SEO checklist/);
   assert.match(pageDrawerSource, /known_broken/);
   assert.match(pageDrawerSource, /Ассеты/);
   assert.match(pageDrawerSource, /Открыть на сайте/);
   assert.match(pageDrawerSource, /Перенаправление/);
   assert.match(pageDrawerSource, /Ошибка относится только к этой странице/);
+  assert.match(pageDrawerSource, /Аналитика, scripts и cookies/);
+  assert.match(pageDrawerSource, /Найденные идентификаторы/);
+  assert.match(pageDrawerSource, /Момент запуска не проверен/);
+  assert.match(pageDrawerSource, /Поведение согласия не проверено/);
+  assert.match(pageDrawerSource, /Прочие scripts/);
+  assert.match(pageDrawerSource, /Без значений cookies, токенов/);
+  assert.match(pageDrawerSource, /Открыть полный анализ/);
+  assert.match(source, /\/inspect\?run=/);
+});
+
+test("full page inspector keeps the snapshot and a scrollable section report visible together", () => {
+  assert.match(inspectorSource, /page-inspector-grid/);
+  assert.match(inspectorSource, /Снимок/);
+  assert.match(inspectorSource, /DOM/);
+  assert.match(inspectorSource, /Сохранённый HTML/);
+  assert.match(inspectorSource, /sandbox=""/);
+  assert.match(inspectorSource, /RenderedSnapshotView/);
+  assert.match(inspectorSource, /PageInspectionReport/);
+  assert.match(cssSource, /\.inspector-section-nav[\s\S]*position: sticky/);
+  assert.match(reportSource, /Найти ссылку по адресу или тексту/);
+  assert.match(reportSource, /Найти ассет по адресу или alt/);
+  assert.match(reportSource, /Прочие scripts/);
+  assert.match(reportSource, /Что означают технические поля/);
+  assert.match(reportSource, /inspector-section-nav/);
+  for (const label of ["Сводка", "SEO", "Ссылки", "Ассеты", "Аналитика", "Cookies", "Повторы"]) {
+    assert.match(reportSource, new RegExp(label));
+  }
 });
 
 test("problem pages support bounded single and bulk retry without replacing the original result", () => {
@@ -131,13 +175,22 @@ test("manual compare supports arbitrary site run and page selection", () => {
   assert.match(compareSource, /getCompareSnapshot/);
   assert.match(compareSource, /HTML diff/);
   assert.match(compareSource, /Структурное сравнение/);
+  assert.match(compareSource, /PageInspectionReport/);
+  assert.match(compareSource, /Информация о страницах/);
+  assert.match(compareSource, /value: "differences", label: "Различия"/);
+  assert.match(compareSource, /PageInspectionDifferences/);
+  assert.match(compareSource, /Только слева ID/);
+  assert.match(compareSource, /Только справа cookies/);
 });
 
-test("compare visual mode uses a full focus workspace and safe snapshot frames", () => {
-  assert.match(layoutSource, /compareFocusMode/);
-  assert.match(layoutSource, /!compareFocusMode && \(/);
-  assert.match(compareSource, /sandbox=""/);
-  assert.match(compareSource, /Content-Security-Policy/);
+test("compare visual mode uses a full focus workspace and persisted rendered snapshots", () => {
+  assert.match(layoutSource, /focusWorkspaceMode/);
+  assert.match(layoutSource, /!focusWorkspaceMode && \(/);
+  assert.match(compareSource, /RenderedSnapshotView/);
+  assert.match(renderedSnapshotSource, /Создать визуальный снимок/);
+  assert.match(renderedSnapshotSource, /downloadRenderedSnapshot/);
+  assert.match(renderedSnapshotSource, /metadata\.explanation/);
+  assert.match(safeSnapshotSource, /Content-Security-Policy/);
   assert.match(compareSource, /Визуально/);
   assert.match(compareSource, /Обзор/);
   assert.match(compareSource, /Детально/);

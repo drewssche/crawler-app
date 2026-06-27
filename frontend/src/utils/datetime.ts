@@ -70,6 +70,21 @@ export function formatOperationalDateTime(value: string, locale: string = "ru-RU
   return formatApiDateTime(value, locale);
 }
 
+export function formatRunTitle(value?: string | null, locale: string = "ru-RU"): string {
+  if (!value) return "Прогон";
+  const date = parseApiDate(value);
+  if (!date) return "Прогон";
+  const formatter = new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return `Прогон от ${formatter.format(date)}`;
+}
+
 export function formatOperationalTime(value: string, locale: string = "ru-RU"): string {
   return formatApiTime(value, locale);
 }
