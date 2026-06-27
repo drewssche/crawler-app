@@ -15,6 +15,20 @@ export type CrawlPersonaSummary = {
   has_secrets?: boolean;
   session_bundle_updated_at?: string | null;
   session_bundle_expires_at?: string | null;
+  session_bundle_summary?: {
+    status: "not_required" | "missing" | "connected" | "unavailable" | string;
+    expiry_status: "none" | "active" | "expiring" | "expired" | string;
+    expires_in_days: number | null;
+    http_applicable: boolean;
+    browser_state_stored: boolean;
+    cookies_count: number;
+    headers_count: number;
+    local_storage_count: number;
+    session_storage_count: number;
+    applied_now: string[];
+    stored_for_browser: string[];
+    values_exposed: boolean;
+  };
   secret_version?: number;
 };
 

@@ -76,7 +76,7 @@
   2. превратить Page Inspector из сводки счётчиков в понятное исследование links/assets/tracking с легендами и progressive disclosure;
   3. заменить обрезанный sanitized DOM на достоверный сохранённый rendered snapshot, сохранив безопасный DOM/code-режим отдельно;
   4. сделать Compare пригодным для тысяч страниц: searchable picker, progressive controls и полноразмерные/изменяемые панели без фиксированной высоты документа.
-- Следующий рекомендуемый пункт: **encrypted session bundle для Crawl Personas** с masked UI и запретом viewer читать secrets. Guest-persona foundation закрыт без Browser-smoke.
+- Следующий рекомендуемый пункт: **browser-based Crawl Persona flow**: friendly login capture, применение `localStorage/sessionStorage`, MFA/manual checkpoint и честные UX-пояснения по истечению сессии.
 - Legacy audit 2026-06-27:
   - проект находится в dev-stage, поэтому breaking cleanup допустим, если упрощает целевую модель;
   - audit зафиксирован в [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md);
@@ -215,7 +215,7 @@
   - Compare позволяет выбирать persona вместе с site/run/page: гость ↔ авторизованный, партнёр ↔ партнёр другого сайта и historical compare одной persona;
   - staged implementation:
     1. guest context и статические безопасные headers — готово;
-    2. encrypted cookie/session bundle с masked UI, audit и запретом viewer читать secrets — backend + первый UI готовы; HTTP-crawler применяет cookies/headers из session bundle; `localStorage/sessionStorage` применяются на следующем browser-based crawler этапе;
+    2. encrypted cookie/session bundle с masked UI, expiry-status и запретом viewer читать secrets — backend + первый UI готовы; HTTP-crawler применяет cookies/headers из session bundle; `localStorage/sessionStorage` применяются на следующем browser-based crawler этапе;
     3. browser-based login scenario для CSRF/dynamic forms;
     4. MFA/manual checkpoint только как явный управляемый workflow;
   - согласованный UX:

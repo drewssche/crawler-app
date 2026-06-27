@@ -75,7 +75,7 @@ function personaKindLabel(kind: string): string {
   return kind || "Другая роль";
 }
 
-function personaSecretLabel(persona: CrawlPersonaSummary): { tone: "success" | "warning" | "neutral"; label: string; title: string } {
+function personaSecretLabel(persona: CrawlPersonaSummary): { tone: "success" | "warning" | "danger" | "neutral"; label: string; title: string } {
   if (persona.kind === "guest") {
     return {
       tone: "neutral",
@@ -84,6 +84,21 @@ function personaSecretLabel(persona: CrawlPersonaSummary): { tone: "success" | "
     };
   }
   if (persona.has_secrets) {
+    const expiry = persona.session_bundle_summary?.expiry_status;
+    if (expiry === "expired") {
+      return {
+        tone: "danger",
+        label: "Сессия просрочена",
+        title: "Session bundle сохранён, но срок действия уже прошёл. Подключите сессию заново.",
+      };
+    }
+    if (expiry === "expiring") {
+      return {
+        tone: "warning",
+        label: "Сессия истекает",
+        title: "Session bundle скоро может перестать работать. Лучше обновить сессию заранее.",
+      };
+    }
     return {
       tone: "success",
       label: "Сессия подключена",
@@ -95,6 +110,47 @@ function personaSecretLabel(persona: CrawlPersonaSummary): { tone: "success" | "
     label: "Сессия не подключена",
     title: "Персону можно выбрать, но без session bundle она фактически откроется как обычный браузер без авторизации.",
   };
+}
+
+function personaSessionSummaryText(persona: CrawlPersonaSummary): string {
+  const summary = persona.session_bundle_summary;
+  if (!summary || summary.status === "missing") {
+    return persona.kind === "guest"
+      ? "Гость открывает сайт без session bundle."
+      : "Session bundle ещё не подключён.";
+  }
+  if (summary.status === "not_required") {
+    return "Гостевой контекст не хранит cookies/tokens.";
+  }
+  if (summary.status === "unavailable") {
+    return "Session bundle сохранён, но сейчас недоступен для расшифровки. Подключите сессию заново.";
+  }
+  const httpParts = [];
+  if (summary.cookies_count) httpParts.push(`cookies: ${summary.cookies_count}`);
+  if (summary.headers_count) httpParts.push(`headers: ${summary.headers_count}`);
+  const browserParts = [];
+  if (summary.local_storage_count) browserParts.push(`localStorage: ${summary.local_storage_count}`);
+  if (summary.session_storage_count) browserParts.push(`sessionStorage: ${summary.session_storage_count}`);
+  const chunks = [];
+  chunks.push(httpParts.length ? `HTTP-crawler применит ${httpParts.join(", ")}` : "Для HTTP-crawler применимых cookies/headers нет");
+  if (browserParts.length) chunks.push(`сохранено для browser-crawler: ${browserParts.join(", ")}`);
+  if (summary.expiry_status === "expired") {
+    chunks.push("срок действия истёк");
+  } else if (summary.expiry_status === "expiring" && summary.expires_in_days) {
+    chunks.push(`истекает примерно через ${summary.expires_in_days} дн.`);
+  } else if (summary.expiry_status === "active" && summary.expires_in_days) {
+    chunks.push(`активна ещё примерно ${summary.expires_in_days} дн.`);
+  }
+  chunks.push("значения скрыты");
+  return chunks.join(" · ");
+}
+
+function toDateTimeLocalValue(value?: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
 }
 
 function makePersonaKey(label: string, kind: string): string {
@@ -143,6 +199,7 @@ function ProjectSitePersonasPanel({
   const [draft, setDraft] = useState<PersonaDraft>(EMPTY_PERSONA_DRAFT);
   const [sessionPersonaId, setSessionPersonaId] = useState<number | null>(null);
   const [sessionJson, setSessionJson] = useState("{\n  \"cookies\": [],\n  \"localStorage\": [],\n  \"sessionStorage\": []\n}");
+  const [sessionExpiresAt, setSessionExpiresAt] = useState("");
   const [pending, setPending] = useState<number | "new" | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -211,9 +268,11 @@ function ProjectSitePersonasPanel({
     setError("");
     setMessage("");
     try {
-      const updated = await saveProjectSitePersonaSessionBundle(projectId, site.id, persona.id, bundle);
+      const expiresAt = sessionExpiresAt ? new Date(sessionExpiresAt).toISOString() : null;
+      const updated = await saveProjectSitePersonaSessionBundle(projectId, site.id, persona.id, bundle, expiresAt);
       setPersonas((current) => current.map((row) => row.id === updated.id ? updated : row));
       setSessionPersonaId(null);
+      setSessionExpiresAt("");
       setMessage("Session bundle сохранён encrypted-at-rest. В интерфейсе виден только статус подключения.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось сохранить session bundle.");
@@ -265,7 +324,7 @@ function ProjectSitePersonasPanel({
 
       <Card variant="default" style={{ padding: 10 }}>
         <MetaText opacity={0.72}>
-          MVP: session bundle вставляется вручную JSON-объектом, например cookies/localStorage/sessionStorage. Значения cookies и tokens не показываются после сохранения.
+          MVP: session bundle вставляется вручную JSON-объектом. Текущий HTTP-crawler применяет cookies/headers; localStorage/sessionStorage сохраняются для следующего browser-crawler этапа. Значения cookies и tokens не показываются после сохранения.
         </MetaText>
       </Card>
 
@@ -358,6 +417,7 @@ function ProjectSitePersonasPanel({
               Ключ: {persona.key}
               {persona.session_bundle_updated_at ? ` · сессия обновлена ${formatOperationalDateTime(persona.session_bundle_updated_at)}` : ""}
             </MetaText>
+            <MetaText opacity={0.72}>{personaSessionSummaryText(persona)}</MetaText>
             {persona.kind !== "guest" && (
               <>
                 {editingSession ? (
@@ -371,8 +431,21 @@ function ProjectSitePersonasPanel({
                         style={textAreaStyle}
                       />
                     </label>
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span>Срок действия сессии</span>
+                      <input
+                        type="datetime-local"
+                        value={sessionExpiresAt}
+                        onChange={(event) => setSessionExpiresAt(event.target.value)}
+                        disabled={pending === persona.id}
+                        style={inputStyle}
+                      />
+                      <MetaText opacity={0.62}>
+                        Необязательно. Если знаете, когда cookies/token истекают, укажите дату — UI заранее покажет “Сессия истекает”.
+                      </MetaText>
+                    </label>
                     <MetaText opacity={0.68}>
-                      Рекомендуемый формат: объект с массивами `cookies`, `localStorage`, `sessionStorage`. После сохранения значения будут зашифрованы и скрыты.
+                      Рекомендуемый формат: объект с `cookies`, опционально `headers`, `localStorage`, `sessionStorage`. Сейчас cookies/headers применяются в HTTP-прогоне; browser storage пригодится на следующем этапе.
                     </MetaText>
                     <CardFooterActions>
                       <CardActionButton variant="primary" disabled={pending === persona.id} onClick={() => void handleSaveSession(persona)}>
@@ -392,6 +465,7 @@ function ProjectSitePersonasPanel({
                       onClick={() => {
                         setSessionPersonaId(persona.id);
                         setSessionJson("{\n  \"cookies\": [],\n  \"localStorage\": [],\n  \"sessionStorage\": []\n}");
+                        setSessionExpiresAt(toDateTimeLocalValue(persona.session_bundle_expires_at));
                         setError("");
                         setMessage("");
                       }}

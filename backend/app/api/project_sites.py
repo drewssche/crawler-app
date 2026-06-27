@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -16,7 +16,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.project_site import ProjectSiteCreate, ProjectSiteOut, ProjectSiteUpdate
 from app.services.crawl_personas import ensure_guest_persona
-from app.services.persona_secrets import encrypt_session_bundle
+from app.services.persona_secrets import decrypt_session_bundle, encrypt_session_bundle, summarize_session_bundle
 from app.services.project_sites import build_project_site
 from app.services.site_anomalies import evaluate_project_site_anomalies
 
@@ -37,6 +37,50 @@ class PersonaSessionBundleIn(BaseModel):
     expires_at: datetime | None = None
 
 
+def _empty_session_summary(status: str) -> dict:
+    return {
+        "status": status,
+        "expiry_status": "none",
+        "expires_in_days": None,
+        "http_applicable": False,
+        "browser_state_stored": False,
+        "cookies_count": 0,
+        "headers_count": 0,
+        "local_storage_count": 0,
+        "session_storage_count": 0,
+        "applied_now": [],
+        "stored_for_browser": [],
+        "values_exposed": False,
+    }
+
+
+def _session_expiry_summary(expires_at: datetime | None) -> dict:
+    if expires_at is None:
+        return {"expiry_status": "none", "expires_in_days": None}
+    now = datetime.now(expires_at.tzinfo) if expires_at.tzinfo else datetime.utcnow()
+    if expires_at <= now:
+        return {"expiry_status": "expired", "expires_in_days": 0}
+    delta = expires_at - now
+    expires_in_days = max(1, int(delta.total_seconds() // 86_400) + 1)
+    if expires_at <= now + timedelta(days=7):
+        return {"expiry_status": "expiring", "expires_in_days": expires_in_days}
+    return {"expiry_status": "active", "expires_in_days": expires_in_days}
+
+
+def _persona_session_bundle_summary(persona: CrawlPersona) -> dict:
+    if persona.kind == "guest":
+        return _empty_session_summary("not_required")
+    if not persona.has_secrets or not persona.encrypted_session_bundle:
+        return _empty_session_summary("missing")
+    try:
+        return {
+            **summarize_session_bundle(decrypt_session_bundle(persona.encrypted_session_bundle)),
+            **_session_expiry_summary(persona.session_bundle_expires_at),
+        }
+    except ValueError:
+        return _empty_session_summary("unavailable")
+
+
 def _persona_payload(persona: CrawlPersona) -> dict:
     return {
         "id": persona.id,
@@ -50,6 +94,7 @@ def _persona_payload(persona: CrawlPersona) -> dict:
         "has_secrets": persona.has_secrets,
         "session_bundle_updated_at": persona.session_bundle_updated_at,
         "session_bundle_expires_at": persona.session_bundle_expires_at,
+        "session_bundle_summary": _persona_session_bundle_summary(persona),
         "secret_version": persona.secret_version,
     }
 

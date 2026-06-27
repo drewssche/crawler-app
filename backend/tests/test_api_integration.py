@@ -2,7 +2,7 @@
 import os
 import tempfile
 from collections.abc import Generator
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 from fastapi.testclient import TestClient
@@ -764,7 +764,8 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
                 "cookies": [{"name": "sid", "value": "super-secret", "domain": "persona.test", "path": "/"}],
                 "headers": {"X-Partner-Mode": "enabled"},
                 "localStorage": [],
-            }
+            },
+            "expires_at": (datetime.utcnow() + timedelta(days=3)).isoformat(),
         },
         headers=editor_headers,
     )
@@ -772,6 +773,13 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     saved = _extract_success_data(save_response)
     assert saved["has_secrets"] is True
     assert saved["session_bundle_updated_at"]
+    assert saved["session_bundle_summary"]["http_applicable"] is True
+    assert saved["session_bundle_summary"]["cookies_count"] == 1
+    assert saved["session_bundle_summary"]["headers_count"] == 1
+    assert saved["session_bundle_summary"]["local_storage_count"] == 0
+    assert saved["session_bundle_summary"]["expiry_status"] == "expiring"
+    assert saved["session_bundle_summary"]["expires_in_days"] in {3, 4}
+    assert saved["session_bundle_summary"]["values_exposed"] is False
     assert "super-secret" not in str(saved)
 
     with SessionLocal() as db:
@@ -800,6 +808,7 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     assert delete_response.status_code == 200
     deleted = _extract_success_data(delete_response)
     assert deleted["has_secrets"] is False
+    assert deleted["session_bundle_summary"]["status"] == "missing"
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
