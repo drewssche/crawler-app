@@ -31,6 +31,16 @@ type SideKey = "left" | "right";
 type PanelView = "both" | "left" | "right";
 type VisualScale = "overview" | "detail";
 type ComparePickedElement = RenderedSnapshotElement & { side: SideKey };
+type BlockFingerprint = {
+  tag: string;
+  classCount: number;
+  childCount: number;
+  linkCount: number;
+  imageCount: number;
+  headingCount: number;
+  textLength: number;
+  signature: string;
+};
 
 const PAGE_PICKER_LIMIT = 80;
 
@@ -175,6 +185,75 @@ function MetricRow({ label, left, right }: { label: string; left: string | numbe
   );
 }
 
+function countMatches(source: string, pattern: RegExp): number {
+  return source.match(pattern)?.length || 0;
+}
+
+function buildBlockFingerprint(element: ComparePickedElement | null): BlockFingerprint | null {
+  if (!element) return null;
+  const html = element.outerHTML || "";
+  const tagMatches = html.match(/<([a-zA-Z][\w:-]*)\b/g) || [];
+  const classTokens = element.className.split(/\s+/).filter(Boolean);
+  const childCount = Math.max(0, tagMatches.length - 1);
+  const linkCount = countMatches(html, /<a\b/gi);
+  const imageCount = countMatches(html, /<img\b|<picture\b|<source\b/gi);
+  const headingCount = countMatches(html, /<h[1-6]\b/gi);
+  return {
+    tag: element.tag,
+    classCount: classTokens.length,
+    childCount,
+    linkCount,
+    imageCount,
+    headingCount,
+    textLength: element.text.length,
+    signature: [
+      element.tag,
+      `classes:${classTokens.length}`,
+      `children:${childCount}`,
+      `links:${linkCount}`,
+      `images:${imageCount}`,
+      `headings:${headingCount}`,
+    ].join(" · "),
+  };
+}
+
+function scoreDelta(leftValue: number, rightValue: number, weight: number): number {
+  const maxValue = Math.max(leftValue, rightValue, 1);
+  return Math.max(0, weight - (Math.abs(leftValue - rightValue) / maxValue) * weight);
+}
+
+function blockSimilarity(left: BlockFingerprint | null, right: BlockFingerprint | null): number | null {
+  if (!left || !right) return null;
+  let score = 0;
+  score += left.tag === right.tag ? 30 : 0;
+  score += scoreDelta(left.classCount, right.classCount, 12);
+  score += scoreDelta(left.childCount, right.childCount, 18);
+  score += scoreDelta(left.linkCount, right.linkCount, 10);
+  score += scoreDelta(left.imageCount, right.imageCount, 10);
+  score += scoreDelta(left.headingCount, right.headingCount, 8);
+  score += scoreDelta(left.textLength, right.textLength, 12);
+  return Math.round(Math.max(0, Math.min(100, score)));
+}
+
+function FingerprintRow({
+  label,
+  left,
+  right,
+}: {
+  label: string;
+  left: string | number;
+  right: string | number;
+}) {
+  const different = String(left) !== String(right);
+  return (
+    <div className={`compare-fingerprint-row${different ? " is-different" : ""}`}>
+      <MetaText opacity={0.68}>{label}</MetaText>
+      <div>{left}</div>
+      <div>{right}</div>
+    </div>
+  );
+}
+
 function VisualSnapshotPanel({
   label,
   snapshot,
@@ -274,6 +353,9 @@ function SelectedBlockCompare({
   );
   const sameTag = Boolean(left && right && left.tag === right.tag);
   const sameSelector = Boolean(left && right && left.selector === right.selector);
+  const leftFingerprint = useMemo(() => buildBlockFingerprint(left), [left]);
+  const rightFingerprint = useMemo(() => buildBlockFingerprint(right), [right]);
+  const similarity = useMemo(() => blockSimilarity(leftFingerprint, rightFingerprint), [leftFingerprint, rightFingerprint]);
   const changedBlockLines = blockDiff.filter((line) => line.kind !== "same").length;
 
   return (
@@ -292,11 +374,34 @@ function SelectedBlockCompare({
       {left && right && !sameTag && (
         <StatusText tone="warning">Выбраны разные HTML-теги: &lt;{left.tag}&gt; слева и &lt;{right.tag}&gt; справа. Сравнение возможно, но структурно блоки могут быть не парой.</StatusText>
       )}
+      {similarity !== null && similarity < 55 && (
+        <StatusText tone="warning">Структурная похожесть низкая: {similarity}%. Возможно, выбраны разные по смыслу блоки.</StatusText>
+      )}
       {left && right && sameTag && !sameSelector && (
         <StatusText tone="warning">Selector отличается. Это нормально для разных сайтов, но проверьте, что выбраны смыслово одинаковые блоки.</StatusText>
       )}
       {left && right && (
         <div style={{ display: "grid", gap: 10 }}>
+          {leftFingerprint && rightFingerprint && (
+            <details className="inspector-details" open>
+              <summary>Structural fingerprint выбранных блоков</summary>
+              <MetaText opacity={0.68} style={{ marginTop: 7 }}>
+                Похожесть: {similarity}% · это техническая подсказка по структуре, а не автоматическое решение, что блоки являются парой.
+              </MetaText>
+              <div className="compare-fingerprint-table">
+                <FingerprintRow label="Tag" left={leftFingerprint.tag} right={rightFingerprint.tag} />
+                <FingerprintRow label="Classes" left={leftFingerprint.classCount} right={rightFingerprint.classCount} />
+                <FingerprintRow label="Children" left={leftFingerprint.childCount} right={rightFingerprint.childCount} />
+                <FingerprintRow label="Links" left={leftFingerprint.linkCount} right={rightFingerprint.linkCount} />
+                <FingerprintRow label="Images" left={leftFingerprint.imageCount} right={rightFingerprint.imageCount} />
+                <FingerprintRow label="Headings" left={leftFingerprint.headingCount} right={rightFingerprint.headingCount} />
+                <FingerprintRow label="Text length" left={leftFingerprint.textLength} right={rightFingerprint.textLength} />
+              </div>
+              <MetaText opacity={0.58} style={{ marginTop: 7, wordBreak: "break-word" }}>
+                Сигнатуры: Л — {leftFingerprint.signature}; П — {rightFingerprint.signature}
+              </MetaText>
+            </details>
+          )}
           <div>
             <div style={{ fontWeight: 800, marginBottom: 6 }}>HTML выбранных блоков</div>
             <div className="compare-block-diff">

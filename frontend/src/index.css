@@ -462,6 +462,34 @@ button:focus-visible {
   background: rgba(97,190,130,0.16);
 }
 
+.compare-fingerprint-table {
+  display: grid;
+  gap: 1px;
+  margin-top: 8px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.06);
+  font-size: 12px;
+}
+
+.compare-fingerprint-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.8fr) repeat(2, minmax(0, 1fr));
+  gap: 1px;
+}
+
+.compare-fingerprint-row > * {
+  min-width: 0;
+  padding: 6px 8px;
+  background: rgba(0,0,0,0.14);
+  word-break: break-word;
+}
+
+.compare-fingerprint-row.is-different > * {
+  background: rgba(231,161,90,0.10);
+}
+
 .compare-inspector-report {
   min-height: 0;
   height: clamp(520px, calc(100vh - 275px), 1120px);
