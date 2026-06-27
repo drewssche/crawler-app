@@ -218,6 +218,18 @@
     2. encrypted cookie/session bundle с masked UI, audit и запретом viewer читать secrets;
     3. browser-based login scenario для CSRF/dynamic forms;
     4. MFA/manual checkpoint только как явный управляемый workflow;
+  - согласованный UX:
+    - пользователь заранее создаёт персону в настройках сайта: `Гость`, `Авторизованный пользователь`, `Партнёр`, `Другая роль`;
+    - для негостевой персоны подключает сессию один раз: MVP — ручная вставка cookies/localStorage/session JSON; позже — friendly flow `Открыть сайт и войти`, где пользователь логинится руками/проходит 2FA и сохраняет сессию;
+    - при запуске сайта выбирает одну персону; bulk-run по нескольким персонам добавлять только после стабильного одиночного запуска;
+    - в истории, структуре, Page Inspector и Compare всегда видно, какой персоной сделан run;
+    - viewer видит только masked status: `сессия не подключена/подключена/истекает/просрочена`, но не cookies/tokens.
+  - безопасная экономия ресурсов между персонами:
+    - по умолчанию `Безопасная`: каждую персону нужно реально открыть/проверить, но тяжёлый анализ можно переиспользовать после доказанного совпадения fingerprint;
+    - доказательство совпадения: status, final URL, content-type, HTML hash и позднее rendered/snapshot hash;
+    - если совпало, page result получает `reused_from_page_id`/`reuse_reason`, а UI показывает `Контент совпадает с “Гость”; анализ переиспользован`;
+    - не пропускать проверку авторизованной персоны заранее: redirect на login, 403 или role-only блоки должны быть обнаружены;
+    - режимы позже: `Безопасная`, `Максимальная`, `Выключена`.
   - пароли, cookie values и tokens хранятся encrypted-at-rest, не попадают в crawl artifacts/logs/API responses и доступны только через server-side secret references;
   - baseline и anomaly signals всегда scoped по `project_site_id + persona_id + scope`, иначе различия ролей будут ошибочно считаться аномалиями.
 

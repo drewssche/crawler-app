@@ -1,4 +1,7 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -13,10 +16,42 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.project_site import ProjectSiteCreate, ProjectSiteOut, ProjectSiteUpdate
 from app.services.crawl_personas import ensure_guest_persona
+from app.services.persona_secrets import encrypt_session_bundle
 from app.services.project_sites import build_project_site
 from app.services.site_anomalies import evaluate_project_site_anomalies
 
 router = APIRouter(prefix="/projects/{project_id}/sites", tags=["project-sites"])
+
+
+class CrawlPersonaCreate(BaseModel):
+    key: str = Field(min_length=2, max_length=80, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    label: str = Field(min_length=1, max_length=160)
+    kind: str = Field(default="authenticated", min_length=2, max_length=40)
+    description: str = Field(default="", max_length=1000)
+    is_default: bool = False
+    is_enabled: bool = True
+
+
+class PersonaSessionBundleIn(BaseModel):
+    bundle: dict = Field(default_factory=dict)
+    expires_at: datetime | None = None
+
+
+def _persona_payload(persona: CrawlPersona) -> dict:
+    return {
+        "id": persona.id,
+        "project_site_id": persona.project_site_id,
+        "key": persona.key,
+        "label": persona.label,
+        "kind": persona.kind,
+        "description": persona.description,
+        "is_default": persona.is_default,
+        "is_enabled": persona.is_enabled,
+        "has_secrets": persona.has_secrets,
+        "session_bundle_updated_at": persona.session_bundle_updated_at,
+        "session_bundle_expires_at": persona.session_bundle_expires_at,
+        "secret_version": persona.secret_version,
+    }
 
 
 def _get_project_or_404(db: Session, project_id: int) -> Project:
@@ -186,6 +221,137 @@ def get_project_site_anomaly(
     _get_site_or_404(db, project_id, site_id)
     anomaly = evaluate_project_site_anomalies(db, [site_id])[site_id]
     return success_response_payload(request, data=anomaly)
+
+
+@router.get("/{site_id}/personas")
+def list_project_site_personas(
+    project_id: int,
+    site_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("data.view")),
+):
+    site = _get_site_or_404(db, project_id, site_id)
+    ensure_guest_persona(db, site)
+    rows = (
+        db.query(CrawlPersona)
+        .filter(CrawlPersona.project_site_id == site_id)
+        .order_by(CrawlPersona.is_default.desc(), CrawlPersona.id.asc())
+        .all()
+    )
+    return success_response_payload(request, data=[_persona_payload(row) for row in rows])
+
+
+@router.post("/{site_id}/personas")
+def create_project_site_persona(
+    project_id: int,
+    site_id: int,
+    payload: CrawlPersonaCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    if payload.key == "guest" and payload.kind != "guest":
+        raise HTTPException(status_code=422, detail="Reserved key guest must use kind guest.")
+    if payload.is_default:
+        db.query(CrawlPersona).filter(CrawlPersona.project_site_id == site_id).update(
+            {CrawlPersona.is_default: False},
+            synchronize_session=False,
+        )
+    persona = CrawlPersona(
+        project_site_id=site_id,
+        key=payload.key,
+        label=payload.label.strip(),
+        kind=payload.kind.strip(),
+        description=payload.description.strip(),
+        is_default=payload.is_default,
+        is_enabled=payload.is_enabled,
+        has_secrets=False,
+    )
+    db.add(persona)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "crawl_persona_key_conflict",
+                "message": "Персона с таким ключом уже есть у сайта.",
+            },
+        ) from exc
+    db.refresh(persona)
+    return success_response_payload(request, data=_persona_payload(persona))
+
+
+@router.put("/{site_id}/personas/{persona_id}/session-bundle")
+def update_project_site_persona_session_bundle(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    payload: PersonaSessionBundleIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    persona = (
+        db.query(CrawlPersona)
+        .filter(CrawlPersona.id == persona_id, CrawlPersona.project_site_id == site_id)
+        .first()
+    )
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Crawl persona not found")
+    if persona.kind == "guest":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "guest_persona_cannot_store_session",
+                "message": "Гостевой контекст не должен содержать cookies/session secrets.",
+            },
+        )
+    try:
+        encrypted, fingerprint = encrypt_session_bundle(payload.bundle)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    persona.encrypted_session_bundle = encrypted
+    persona.session_bundle_fingerprint = fingerprint
+    persona.session_bundle_updated_at = datetime.utcnow()
+    persona.session_bundle_expires_at = payload.expires_at
+    persona.secret_version = int(persona.secret_version or 0) + 1
+    persona.has_secrets = True
+    db.commit()
+    db.refresh(persona)
+    return success_response_payload(request, data=_persona_payload(persona))
+
+
+@router.delete("/{site_id}/personas/{persona_id}/session-bundle")
+def delete_project_site_persona_session_bundle(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    persona = (
+        db.query(CrawlPersona)
+        .filter(CrawlPersona.id == persona_id, CrawlPersona.project_site_id == site_id)
+        .first()
+    )
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Crawl persona not found")
+    persona.encrypted_session_bundle = None
+    persona.session_bundle_fingerprint = None
+    persona.session_bundle_updated_at = None
+    persona.session_bundle_expires_at = None
+    persona.has_secrets = False
+    persona.secret_version = int(persona.secret_version or 0) + 1
+    db.commit()
+    db.refresh(persona)
+    return success_response_payload(request, data=_persona_payload(persona))
 
 
 @router.post("")

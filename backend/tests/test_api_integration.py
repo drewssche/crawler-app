@@ -678,6 +678,113 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     engine.dispose()
 
 
+def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="persona-editor@test.local", role="editor", is_approved=True))
+        db.add(_make_user(email="persona-viewer@test.local", role="viewer", is_approved=True))
+        project = Project(name="Persona", start_url="https://persona.test", allowed_domains_csv="persona.test")
+        db.add(project)
+        db.flush()
+        site = _add_primary_site(db, project)
+        db.commit()
+        project_id = project.id
+        site_id = site.id
+
+    class FakeResponse:
+        url = "https://persona.test"
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = "<html><body>persona</body></html>"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            return FakeResponse()
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+
+    client = TestClient(app)
+    editor_headers = _auth_header("persona-editor@test.local", role="editor")
+    viewer_headers = _auth_header("persona-viewer@test.local", role="viewer")
+
+    personas_response = client.get(f"/projects/{project_id}/sites/{site_id}/personas", headers=viewer_headers)
+    assert personas_response.status_code == 200
+    personas = _extract_success_data(personas_response)
+    assert personas[0]["key"] == "guest"
+    assert personas[0]["has_secrets"] is False
+    assert "encrypted_session_bundle" not in personas[0]
+
+    create_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas",
+        json={"key": "partner", "label": "Партнёр", "kind": "partner"},
+        headers=editor_headers,
+    )
+    assert create_response.status_code == 200
+    partner = _extract_success_data(create_response)
+    assert partner["key"] == "partner"
+    assert partner["has_secrets"] is False
+
+    denied_response = client.put(
+        f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/session-bundle",
+        json={"bundle": {"cookies": [{"name": "sid", "value": "viewer-secret"}]}},
+        headers=viewer_headers,
+    )
+    assert denied_response.status_code == 403
+
+    save_response = client.put(
+        f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/session-bundle",
+        json={"bundle": {"cookies": [{"name": "sid", "value": "super-secret"}], "localStorage": []}},
+        headers=editor_headers,
+    )
+    assert save_response.status_code == 200
+    saved = _extract_success_data(save_response)
+    assert saved["has_secrets"] is True
+    assert saved["session_bundle_updated_at"]
+    assert "super-secret" not in str(saved)
+
+    with SessionLocal() as db:
+        stored = db.get(CrawlPersona, partner["id"])
+        assert stored is not None
+        assert stored.encrypted_session_bundle
+        assert "super-secret" not in stored.encrypted_session_bundle
+        assert stored.session_bundle_fingerprint
+
+    run_response = client.post(
+        f"/runs/start-site/{site_id}",
+        json={"crawl_persona_id": partner["id"]},
+        headers=editor_headers,
+    )
+    assert run_response.status_code == 200
+    assert run_response.json()["persona"]["key"] == "partner"
+
+    delete_response = client.delete(
+        f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/session-bundle",
+        headers=editor_headers,
+    )
+    assert delete_response.status_code == 200
+    deleted = _extract_success_data(delete_response)
+    assert deleted["has_secrets"] is False
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_section_site_run_never_queues_urls_outside_path_scope(monkeypatch):
     from app.api import runs as runs_api
 

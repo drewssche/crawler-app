@@ -51,6 +51,10 @@ class RetryPagesIn(BaseModel):
     urls: list[str] | None = Field(default=None, max_length=MAX_RETRY_PAGES)
 
 
+class StartSiteRunIn(BaseModel):
+    crawl_persona_id: int | None = None
+
+
 def _extract_html_title(html: str | None) -> str:
     if not html:
         return ""
@@ -299,9 +303,10 @@ def _execute_site_run(
     db: Session,
     site: ProjectSite,
     *,
+    persona: CrawlPersona | None = None,
     actor_user_id: int | None = None,
 ) -> Run:
-    persona = get_default_persona(db, site)
+    persona = persona or get_default_persona(db, site)
     scope = canonicalize_site_scope(
         site.start_url,
         scope_mode=site.scope_mode,
@@ -574,6 +579,7 @@ def _execute_site_run(
 @router.post("/start-site/{site_id}")
 def start_site_run(
     site_id: int,
+    payload: StartSiteRunIn | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("crawler.run")),
 ):
@@ -589,7 +595,20 @@ def start_site_run(
             },
         )
     _assert_no_active_site_run(db, site)
-    run = _execute_site_run(db, site, actor_user_id=current_user.id)
+    persona = None
+    if payload and payload.crawl_persona_id is not None:
+        persona = (
+            db.query(CrawlPersona)
+            .filter(
+                CrawlPersona.id == payload.crawl_persona_id,
+                CrawlPersona.project_site_id == site.id,
+                CrawlPersona.is_enabled.is_(True),
+            )
+            .first()
+        )
+        if persona is None:
+            raise HTTPException(status_code=404, detail="Crawl persona not found")
+    run = _execute_site_run(db, site, persona=persona, actor_user_id=current_user.id)
     persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
     return {
         "ok": True,
