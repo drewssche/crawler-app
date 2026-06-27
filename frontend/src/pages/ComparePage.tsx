@@ -41,6 +41,12 @@ type BlockFingerprint = {
   textLength: number;
   signature: string;
 };
+type BlockMatchSuggestion = {
+  side: SideKey;
+  element: ComparePickedElement;
+  score: number;
+  reason: string;
+};
 
 const PAGE_PICKER_LIMIT = 80;
 
@@ -189,7 +195,7 @@ function countMatches(source: string, pattern: RegExp): number {
   return source.match(pattern)?.length || 0;
 }
 
-function buildBlockFingerprint(element: ComparePickedElement | null): BlockFingerprint | null {
+function buildBlockFingerprint(element: RenderedSnapshotElement | null): BlockFingerprint | null {
   if (!element) return null;
   const html = element.outerHTML || "";
   const tagMatches = html.match(/<([a-zA-Z][\w:-]*)\b/g) || [];
@@ -233,6 +239,42 @@ function blockSimilarity(left: BlockFingerprint | null, right: BlockFingerprint 
   score += scoreDelta(left.headingCount, right.headingCount, 8);
   score += scoreDelta(left.textLength, right.textLength, 12);
   return Math.round(Math.max(0, Math.min(100, score)));
+}
+
+function sideLabel(side: SideKey): string {
+  return side === "left" ? "слева" : "справа";
+}
+
+function suggestMatchingBlock({
+  source,
+  candidates,
+  targetSide,
+}: {
+  source: ComparePickedElement | null;
+  candidates: RenderedSnapshotElement[];
+  targetSide: SideKey;
+}): BlockMatchSuggestion | null {
+  if (!source || candidates.length === 0) return null;
+  const sourceFingerprint = buildBlockFingerprint(source);
+  const ranked = candidates
+    .map((candidate) => {
+      const candidateFingerprint = buildBlockFingerprint(candidate);
+      const score = blockSimilarity(sourceFingerprint, candidateFingerprint) || 0;
+      const selectorBonus = source.selector && source.selector === candidate.selector ? 12 : 0;
+      const tagBonus = source.tag === candidate.tag ? 8 : 0;
+      return {
+        element: { ...candidate, side: targetSide },
+        score: Math.min(100, score + selectorBonus + tagBonus),
+      };
+    })
+    .sort((leftCandidate, rightCandidate) => rightCandidate.score - leftCandidate.score);
+  const best = ranked[0];
+  if (!best || best.score < 55) return null;
+  return {
+    ...best,
+    side: targetSide,
+    reason: `Похожесть ${best.score}% по tag/classes/children/links/images/headings/text length.`,
+  };
 }
 
 function FingerprintRow({
@@ -444,6 +486,48 @@ function SelectedBlockCompare({
             </div>
           </details>
         </div>
+      )}
+    </Card>
+  );
+}
+
+function BlockMatchSuggestionCard({
+  suggestion,
+  onApply,
+}: {
+  suggestion: BlockMatchSuggestion | null;
+  onApply: (suggestion: BlockMatchSuggestion) => void;
+}) {
+  if (!suggestion) {
+    return (
+      <Card variant="default" style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontWeight: 800 }}>Предложение похожего блока</div>
+        <MetaText opacity={0.68}>
+          Пока нет надёжного предложения. Выберите блок вручную на второй стороне или пересоздайте snapshot с картой элементов.
+        </MetaText>
+      </Card>
+    );
+  }
+  return (
+    <Card variant="hint" style={{ display: "grid", gap: 7 }}>
+      <SectionHeaderRow
+        title={<div>Предложение похожего блока</div>}
+        actions={
+          <Button size="sm" variant="primary" onClick={() => onApply(suggestion)}>
+            Применить {sideLabel(suggestion.side)}
+          </Button>
+        }
+      />
+      <StatusText tone={suggestion.score >= 75 ? "success" : "warning"}>
+        Найден кандидат {sideLabel(suggestion.side)} · похожесть {suggestion.score}%
+      </StatusText>
+      <MetaText>{suggestion.reason}</MetaText>
+      <MetaText style={{ wordBreak: "break-word" }}>Selector: {suggestion.element.selector}</MetaText>
+      <MetaText>
+        Область: {suggestion.element.rect.width}×{suggestion.element.rect.height}px · x:{suggestion.element.rect.x}, y:{suggestion.element.rect.y}
+      </MetaText>
+      {suggestion.element.text && (
+        <MetaText style={{ whiteSpace: "pre-wrap" }}>{suggestion.element.text.slice(0, 220)}</MetaText>
       )}
     </Card>
   );
@@ -672,6 +756,23 @@ export default function ComparePage() {
     left.snapshot && !left.snapshot.rendered_snapshot.element_map?.items?.length ? "слева" : "",
     right.snapshot && !right.snapshot.rendered_snapshot.element_map?.items?.length ? "справа" : "",
   ].filter(Boolean);
+  const blockMatchSuggestion = useMemo(() => {
+    if (selectedBlocks.left && !selectedBlocks.right) {
+      return suggestMatchingBlock({
+        source: selectedBlocks.left,
+        candidates: right.snapshot?.rendered_snapshot.element_map?.items || [],
+        targetSide: "right",
+      });
+    }
+    if (selectedBlocks.right && !selectedBlocks.left) {
+      return suggestMatchingBlock({
+        source: selectedBlocks.right,
+        candidates: left.snapshot?.rendered_snapshot.element_map?.items || [],
+        targetSide: "left",
+      });
+    }
+    return null;
+  }, [left.snapshot, right.snapshot, selectedBlocks.left, selectedBlocks.right]);
   const rightSuggestion = useMemo(
     () => left.url && right.pages.length ? suggestPageMatch(left.url, right.pages) : null,
     [left.url, right.pages],
@@ -930,6 +1031,15 @@ export default function ComparePage() {
                   </StatusText>
                 )}
                 {blockPickerNotice && <StatusText tone="warning">{blockPickerNotice}</StatusText>}
+                {selectedBlockCount === 1 && (
+                  <BlockMatchSuggestionCard
+                    suggestion={blockMatchSuggestion}
+                    onApply={(suggestion) => {
+                      setSelectedBlocks((current) => ({ ...current, [suggestion.side]: suggestion.element }));
+                      setBlockPickerNotice("");
+                    }}
+                  />
+                )}
                 <SelectedBlockCompare
                   left={selectedBlocks.left}
                   right={selectedBlocks.right}

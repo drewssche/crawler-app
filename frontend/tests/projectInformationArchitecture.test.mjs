@@ -221,6 +221,11 @@ test("compare visual mode uses a full focus workspace and persisted rendered sna
   assert.match(compareSource, /Теперь выберите блок справа/);
   assert.match(compareSource, /blockPickerEnabled/);
   assert.match(compareSource, /onElementSelected/);
+  assert.match(compareSource, /suggestMatchingBlock/);
+  assert.match(compareSource, /BlockMatchSuggestionCard/);
+  assert.match(compareSource, /Предложение похожего блока/);
+  assert.match(compareSource, /Применить \{sideLabel\(suggestion\.side\)\}/);
+  assert.match(compareSource, /selectedBlockCount === 1/);
   assert.match(compareSource, /Сравнение выбранных блоков/);
   assert.match(compareSource, /HTML выбранных блоков/);
   assert.match(compareSource, /Текстовый diff выбранных блоков/);
