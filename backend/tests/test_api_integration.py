@@ -859,7 +859,10 @@ def test_create_profile_rejects_duplicate_canonical_scope():
 
     with SessionLocal() as db:
         db.add(_make_user(email="projects@test.local", role="editor", is_approved=True))
-        db.add(Project(name="Existing", start_url="https://example.test/", allowed_domains_csv="example.test"))
+        existing = Project(name="Existing", start_url="https://example.test/", allowed_domains_csv="example.test")
+        db.add(existing)
+        db.flush()
+        _add_primary_site(db, existing)
         db.commit()
 
     client = TestClient(app)

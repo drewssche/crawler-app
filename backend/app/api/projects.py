@@ -34,6 +34,15 @@ def _canonical_project_scope(start_url: str, allowed_domains_csv: str) -> tuple[
     return normalized_start, domains
 
 
+def _project_out(project: Project, site: ProjectSite | None = None) -> dict:
+    return {
+        "id": project.id,
+        "name": project.name,
+        "start_url": site.start_url if site else "",
+        "allowed_domains_csv": site.allowed_domains_csv if site else "",
+    }
+
+
 @router.get("")
 def list_projects(
     page: int | None = None,
@@ -64,42 +73,51 @@ def create_project(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     requested_scope = _canonical_project_scope(primary_scope.start_url, payload.allowed_domains_csv)
-    for existing in db.query(Project).all():
-        if _canonical_project_scope(existing.start_url, existing.allowed_domains_csv) == requested_scope:
+    existing_sites = (
+        db.query(Project, ProjectSite)
+        .join(ProjectSite, ProjectSite.project_id == Project.id)
+        .all()
+    )
+    for existing_project, existing_site in existing_sites:
+        if _canonical_project_scope(existing_site.start_url, existing_site.allowed_domains_csv) == requested_scope:
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": "project_scope_conflict",
-                    "message": f'Проект для этого адреса уже существует: «{existing.name}».',
+                    "message": f'Проект для этого адреса уже существует: «{existing_project.name}».',
                     "existing_project": {
-                        "id": existing.id,
-                        "name": existing.name,
-                        "start_url": existing.start_url,
+                        "id": existing_project.id,
+                        "name": existing_project.name,
+                        "start_url": existing_site.start_url,
                     },
                 },
             )
-    project_data = payload.model_dump(
-        mode="json",
-        exclude={"site_name", "scope_mode", "path_prefix"},
-    )
-    project_data["start_url"] = primary_scope.start_url
-    obj = Project(**project_data)
+    obj = Project(name=payload.name)
     db.add(obj)
     db.flush()
     try:
-        create_primary_site_for_project(
+        site = create_primary_site_for_project(
             db,
             obj,
+            start_url=primary_scope.start_url,
             site_name=payload.site_name,
             scope_mode=payload.scope_mode,
             path_prefix=payload.path_prefix,
+            allowed_domains_csv=payload.allowed_domains_csv,
+            exclude_paths_csv=payload.exclude_paths_csv,
+            exclude_ext_csv=payload.exclude_ext_csv,
+            respect_robots=payload.respect_robots,
+            max_pages=payload.max_pages,
+            concurrency=payload.concurrency,
+            is_enabled=payload.is_enabled,
         )
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     db.commit()
     db.refresh(obj)
-    return obj
+    db.refresh(site)
+    return _project_out(obj, site)
 
 
 @router.get("/summary")
@@ -128,8 +146,8 @@ def list_projects_summary(
         db.query(
             Project.id.label("id"),
             Project.name.label("name"),
-            Project.start_url.label("start_url"),
-            Project.allowed_domains_csv.label("allowed_domains_csv"),
+            ProjectSite.start_url.label("start_url"),
+            ProjectSite.allowed_domains_csv.label("allowed_domains_csv"),
             Run.id.label("last_run_id"),
             Run.status.label("last_run_status"),
             Run.started_at.label("last_run_started_at"),
@@ -138,12 +156,14 @@ def list_projects_summary(
             Run.pages_changed.label("last_run_pages_changed"),
             func.coalesce(runs_count_sq.c.runs_total, 0).label("runs_total"),
         )
+        .outerjoin(ProjectSite, ProjectSite.project_id == Project.id)
         .outerjoin(last_run_sq, last_run_sq.c.project_id == Project.id)
         .outerjoin(Run, Run.id == last_run_sq.c.last_run_id)
         .outerjoin(runs_count_sq, runs_count_sq.c.project_id == Project.id)
-        .order_by(Project.id.desc())
+        .order_by(Project.id.desc(), ProjectSite.sort_order.asc(), ProjectSite.id.asc())
         .all()
     )
+    seen_projects: set[int] = set()
     data = [
         {
             "id": row.id,
@@ -163,6 +183,7 @@ def list_projects_summary(
             },
         }
         for row in rows
+        if row.id not in seen_projects and not seen_projects.add(row.id)
     ]
     return success_response_payload(request, data=data)
 
@@ -176,7 +197,13 @@ def get_project(
     obj = db.get(Project, project_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Project not found")
-    return obj
+    site = (
+        db.query(ProjectSite)
+        .filter(ProjectSite.project_id == project_id)
+        .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
+        .first()
+    )
+    return _project_out(obj, site)
 
 
 @router.delete("/{project_id}")

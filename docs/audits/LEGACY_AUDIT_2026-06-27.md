@@ -26,7 +26,6 @@
 
 | Legacy | Почему временно оставить | Deadline |
 | --- | --- | --- |
-| `Project.start_url`, `Project.allowed_domains_csv`, `Project.exclude_*`, `respect_robots`, `max_pages`, `concurrency`, `is_enabled` | Миграционно backfilled в primary `ProjectSite`, но часть list/summary/search ещё использует эти поля. | Удалить после перевода summary/search на `ProjectSite` aggregate. |
 | `Run.project_id` | Удобный project-container FK для aggregate/delete/events, но не должен определять crawl scope. | Оставить как denormalized aggregate FK, если project delete/events/history остаются project-level. |
 | API prefix `/profiles/{profile_id}/sites` | Семантически уже `ProjectSite`, но prefix устарел. | Заменено на `/projects/{project_id}/sites` в route/API wave. |
 | `allowed_domains_csv` on `ProjectSite` | Это уже не список сравниваемых сайтов, а технический allowlist. Само поле не legacy по смыслу, но имя формата `_csv` и UX-история сбивают. | Позже заменить на normalized array/table или `technical_allowlist` после стабилизации crawler scope. |
@@ -46,7 +45,8 @@
 2. **Remove obsolete compatibility endpoints**: `POST /runs/start/{profile_id}` удалён; `GET /runs/by-profile/{profile_id}` заменён на `/runs/by-project/{project_id}`.
 3. **Frontend terminology wave**: closed for page/component/cache names and frontend props/utils.
 4. **API route wave**: closed for `/profiles → /projects`, `/profiles/{id}/sites → /projects/{id}/sites`, permissions `profiles.edit → projects.edit`.
-5. **DB migration wave**: closed for `profiles → projects`, `profile_id → project_id`; удалить дублирующие site-поля из project container after summary/search are site-aware.
+5. **DB migration wave**: closed for `profiles → projects`, `profile_id → project_id`.
+6. **Project container cleanup**: closed for duplicate site fields; `ProjectSite` is the source for URL/scope/limits/allowlist and project summary/search aggregate.
 
 ## Immediate recommendation
 
@@ -60,3 +60,4 @@
 - Frontend terminology wave закрыта: `ProjectDashboardPage`, `ProjectNewPage`, `projectListCache`, project-oriented live update and site settings props.
 - Route/API wave закрыта: `/projects/*`, `/projects/{project_id}/sites`, `/runs/by-project/{project_id}`, `projects.edit`, `ProjectOut`.
 - DB/model wave закрыта: `Project` model, `projects` table, `project_id` FK/payload fields, Alembic rename migration.
+- Project container cleanup закрыт: duplicate crawl/site columns removed from `projects`, project summary/get derives URL/allowlist from first `ProjectSite`.

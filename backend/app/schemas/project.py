@@ -5,6 +5,9 @@ from pydantic import BaseModel, ConfigDict, HttpUrl, Field
 
 class ProjectBase(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+
+
+class ProjectSiteSeed(BaseModel):
     start_url: HttpUrl
     allowed_domains_csv: str = ""
 
@@ -17,7 +20,7 @@ class ProjectBase(BaseModel):
     is_enabled: bool = True
 
 
-class ProjectCreate(ProjectBase):
+class ProjectCreate(ProjectBase, ProjectSiteSeed):
     site_name: str | None = Field(default=None, min_length=1, max_length=200)
     scope_mode: Literal["whole_site", "path_prefix"] = "whole_site"
     path_prefix: str | None = None
@@ -25,5 +28,7 @@ class ProjectCreate(ProjectBase):
 
 class ProjectOut(ProjectBase):
     id: int
+    start_url: str = ""
+    allowed_domains_csv: str = ""
 
     model_config = ConfigDict(from_attributes=True)

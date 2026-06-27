@@ -54,24 +54,36 @@ def create_primary_site_for_project(
     db: Session,
     project: Project,
     *,
+    start_url: str | None = None,
     site_name: str | None = None,
     scope_mode: str = "whole_site",
     path_prefix: str | None = "/",
+    allowed_domains_csv: str = "",
+    exclude_paths_csv: str = "/bitrix/,/upload/,/local/",
+    exclude_ext_csv: str = ".css,.js,.png,.jpg,.jpeg,.webp,.svg,.woff,.woff2,.ttf,.eot,.map",
+    respect_robots: bool = True,
+    max_pages: int = 5000,
+    concurrency: int = 3,
+    is_enabled: bool = True,
 ) -> ProjectSite:
+    seed = getattr(project, "_primary_site_seed", {}) or {}
+    resolved_start_url = start_url or seed.get("start_url")
+    if not resolved_start_url:
+        raise ValueError("Primary site start_url is required")
     site = build_project_site(
         project_id=project.id,
         name=site_name or project.name,
-        start_url=project.start_url,
+        start_url=resolved_start_url,
         scope_mode=scope_mode,
         path_prefix=path_prefix,
         role="primary",
-        allowed_domains_csv=project.allowed_domains_csv,
-        exclude_paths_csv=project.exclude_paths_csv,
-        exclude_ext_csv=project.exclude_ext_csv,
-        respect_robots=project.respect_robots,
-        max_pages=project.max_pages,
-        concurrency=project.concurrency,
-        is_enabled=project.is_enabled,
+        allowed_domains_csv=allowed_domains_csv or seed.get("allowed_domains_csv", ""),
+        exclude_paths_csv=seed.get("exclude_paths_csv", exclude_paths_csv),
+        exclude_ext_csv=seed.get("exclude_ext_csv", exclude_ext_csv),
+        respect_robots=seed.get("respect_robots", respect_robots),
+        max_pages=seed.get("max_pages", max_pages),
+        concurrency=seed.get("concurrency", concurrency),
+        is_enabled=seed.get("is_enabled", is_enabled),
     )
     db.add(site)
     db.flush()

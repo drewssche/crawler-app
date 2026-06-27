@@ -83,7 +83,7 @@
   - DB/model/FK terminology wave закрыта: `Project/projects/project_id`;
   - route/API terminology `profiles → projects` закрыта для внешнего контракта;
   - frontend terminology wave закрыта: `ProjectDashboardPage/ProjectNewPage/projectListCache` и project-oriented props/utils без изменения backend API prefix;
-  - следующий cleanup после этого: удалить дублирующие site-поля из project container после перевода summary/search на `ProjectSite` aggregate.
+  - дублирующие site-поля из project container удалены; summary/search берут рабочий URL/allowlist из `ProjectSite` aggregate.
 
 ## Working Rules
 
@@ -264,7 +264,7 @@
   15.2 Element-level inspection: visual/DOM block picker → linked HTML fragment → code highlight; later selected-block compare and target fingerprint monitoring. DOM picker и rendered snapshot element-map MVP готовы: новые визуальные снимки сохраняют карту блоков, чтобы клик по screenshot выбирал HTML-элемент. UX-stabilization: выбранный блок показывает источник (`Визуальный снимок`/`DOM`), пустой клик получает friendly warning, подсветка кода честно объясняет mismatch, есть `Сбросить выбор`.
   15.3 Selected-block compare: ручной выбор блока слева/справа в Compare, HTML/text diff только выбранных блоков, размеры/selector, structural fingerprint и warning, если блоки структурно не похожи — MVP готов. UX-polish: статус `Блоки: 0/2–2/2`, следующий шаг, `Очистить оба блока` и пояснение, когда старый snapshot без `element_map` требует пересоздания. Auto-suggest похожего блока готов как явное предложение по fingerprint без автоприменения. Следующее расширение: сохранение target monitoring.
   16. Backend schedule contract: сохранённое расписание, timezone, duplicate-run guard, pause/resume и следующий запуск; текущий settings-блок остаётся честным manual-only состоянием до этого этапа.
-  17. После перевода UI, crawler и API удалить дублирующие site-поля из project container; compatibility endpoint `/runs/start/{profile_id}` уже удалён.
+  17. Дублирующие site-поля из project container удалены; compatibility endpoint `/runs/start/{profile_id}` уже удалён.
 
   **Verification**
   - single-site whole-domain и section-only проекты не выходят за scope;
@@ -288,7 +288,8 @@
   - 2. Backend cleanup: `POST /runs/start/{profile_id}` удалён; `GET /runs/by-profile/{profile_id}` заменён на `/runs/by-project/{project_id}`.
   - 3. Frontend terminology: `ProfileDashboardPage → ProjectDashboardPage`, `ProfileNewPage → ProjectNewPage`, `profileListCache → projectListCache` — закрыто.
   - 4. Route/API rename: `/profiles/* → /projects/*`, `/profiles/{id}/sites → /projects/{id}/sites`, `profiles.edit → projects.edit` — закрыто.
-  - 5. DB rename wave: `profiles → projects`, `profile_id → project_id` — закрыто; удалить дублирующие site-поля из project container после site-aware summary/search.
+  - 5. DB rename wave: `profiles → projects`, `profile_id → project_id` — закрыто.
+  - 6. Project container cleanup: duplicate site fields removed from `projects`; `ProjectSite` is now the source for URL/scope/limits/allowlist.
 
 - [ ] **P0 Stabilization gate** (`HIGH`, implementation mostly complete).
   Осталось ручное подтверждение project/run сценариев по отдельному запросу: два независимых запуска, immediate project visibility, FINISHED pages, duplicate conflict.
