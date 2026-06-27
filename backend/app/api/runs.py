@@ -2,7 +2,9 @@ import hashlib
 import math
 import time
 from collections import deque
+from contextlib import contextmanager
 from datetime import datetime
+from typing import Any
 from urllib.parse import urldefrag, urljoin, urlparse
 
 import httpx
@@ -32,6 +34,7 @@ from app.core.events import (
 )
 from app.services.crawl_personas import get_default_persona
 from app.services.page_context import build_page_context
+from app.services.persona_secrets import decrypt_session_bundle
 from app.crawler.renderer import (
     get_rendered_snapshot_metadata,
     render_page_snapshot,
@@ -45,6 +48,14 @@ MAX_RETRY_PAGES = 50
 MAX_RETRY_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = (0, 5, 15)
 CRAWL_PROGRESS_BATCH_SIZE = 5
+SESSION_HEADER_BLOCKLIST = {
+    "connection",
+    "content-length",
+    "cookie",
+    "host",
+    "transfer-encoding",
+    "upgrade",
+}
 
 
 class RetryPagesIn(BaseModel):
@@ -93,6 +104,99 @@ def _serialize_run(run: Run, persona: CrawlPersona | None = None) -> dict:
         "failure_code": run.failure_code,
         "failure_message": run.failure_message,
     }
+
+
+def _string_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _session_headers_from_bundle(bundle: dict[str, Any]) -> dict[str, str]:
+    raw_headers = bundle.get("headers") or bundle.get("httpHeaders") or {}
+    if not isinstance(raw_headers, dict):
+        return {}
+    headers: dict[str, str] = {}
+    for key, value in raw_headers.items():
+        name = str(key).strip()
+        if not name or name.lower() in SESSION_HEADER_BLOCKLIST:
+            continue
+        header_value = _string_value(value).strip()
+        if not header_value:
+            continue
+        headers[name] = header_value
+    return headers
+
+
+def _session_cookies_from_bundle(bundle: dict[str, Any]) -> list[dict[str, str]]:
+    raw_cookies = bundle.get("cookies") or []
+    cookies: list[dict[str, str]] = []
+    if isinstance(raw_cookies, dict):
+        for name, value in raw_cookies.items():
+            cookie_name = str(name).strip()
+            cookie_value = _string_value(value)
+            if cookie_name:
+                cookies.append({"name": cookie_name, "value": cookie_value})
+        return cookies
+    if not isinstance(raw_cookies, list):
+        return cookies
+    for item in raw_cookies:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        cookie = {
+            "name": name,
+            "value": _string_value(item.get("value")),
+        }
+        domain = str(item.get("domain") or "").strip()
+        path = str(item.get("path") or "").strip()
+        if domain:
+            cookie["domain"] = domain.lstrip(".")
+        if path:
+            cookie["path"] = path
+        cookies.append(cookie)
+    return cookies
+
+
+def _persona_http_state(persona: CrawlPersona | None) -> tuple[dict[str, str], list[dict[str, str]]]:
+    if persona is None or not persona.has_secrets or not persona.encrypted_session_bundle:
+        return {}, []
+    try:
+        bundle = decrypt_session_bundle(persona.encrypted_session_bundle)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "persona_session_unavailable",
+                "message": "Сессию выбранной персоны не удалось расшифровать. Подключите session bundle заново.",
+            },
+        ) from exc
+    return _session_headers_from_bundle(bundle), _session_cookies_from_bundle(bundle)
+
+
+def _apply_session_cookies(client: httpx.Client, cookies: list[dict[str, str]]) -> None:
+    jar = getattr(client, "cookies", None)
+    if jar is None:
+        return
+    for cookie in cookies:
+        kwargs = {}
+        if cookie.get("domain"):
+            kwargs["domain"] = cookie["domain"]
+        if cookie.get("path"):
+            kwargs["path"] = cookie["path"]
+        jar.set(cookie["name"], cookie["value"], **kwargs)
+
+
+@contextmanager
+def _persona_http_client(persona: CrawlPersona | None):
+    headers, cookies = _persona_http_state(persona)
+    with httpx.Client(follow_redirects=True, timeout=20, headers=headers) as client:
+        _apply_session_cookies(client, cookies)
+        yield client
 
 
 def _classify_fetch_failure(exc: Exception) -> tuple[str, str]:
@@ -330,7 +434,7 @@ def _execute_site_run(
     max_pages = max(1, min(int(site.max_pages or 1), 10_000))
 
     try:
-        with httpx.Client(follow_redirects=True, timeout=20) as client:
+        with _persona_http_client(persona) as client:
             queue: deque[str] = deque([site.start_url])
             queued: set[str] = set(queue)
             visited: set[str] = set()
@@ -547,12 +651,26 @@ def _execute_site_run(
             actor_user_id=actor_user_id,
         )
         db.commit()
-    except HTTPException:
+    except HTTPException as exc:
         if run.status != "FAILED":
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
             run.status = "FAILED"
-            run.failure_code = run.failure_code or "request_failed"
-            run.failure_message = run.failure_message or "Прогон не удалось завершить."
+            run.failure_code = run.failure_code or detail.get("code") or "request_failed"
+            run.failure_message = (
+                run.failure_message
+                or detail.get("message")
+                or "Прогон не удалось завершить."
+            )
             run.finished_at = datetime.utcnow()
+            run.current_url = None
+            run.progress_updated_at = run.finished_at
+            _emit_run_completion_event(
+                db,
+                run=run,
+                site=site,
+                persona=persona,
+                actor_user_id=actor_user_id,
+            )
             db.commit()
         raise
     except Exception as exc:
@@ -795,7 +913,8 @@ def retry_problem_pages(
     ):
         latest_attempts.setdefault(attempt.page_id, attempt)
     results = []
-    with httpx.Client(follow_redirects=True, timeout=20) as client:
+    retry_persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
+    with _persona_http_client(retry_persona) as client:
         for page in problem_pages:
             previous_attempts = int(attempt_counts.get(page.id, 0))
             latest_attempt = latest_attempts.get(page.id)

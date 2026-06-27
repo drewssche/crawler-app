@@ -703,9 +703,20 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
         headers = {"content-type": "text/html"}
         text = "<html><body>persona</body></html>"
 
+    client_contexts = []
+
+    class FakeCookieJar:
+        def __init__(self):
+            self.rows = []
+
+        def set(self, name: str, value: str, **kwargs):
+            self.rows.append({"name": name, "value": value, **kwargs})
+
     class FakeClient:
         def __init__(self, *args, **kwargs):
-            pass
+            self.headers = kwargs.get("headers") or {}
+            self.cookies = FakeCookieJar()
+            client_contexts.append(self)
 
         def __enter__(self):
             return self
@@ -748,7 +759,13 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
 
     save_response = client.put(
         f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/session-bundle",
-        json={"bundle": {"cookies": [{"name": "sid", "value": "super-secret"}], "localStorage": []}},
+        json={
+            "bundle": {
+                "cookies": [{"name": "sid", "value": "super-secret", "domain": "persona.test", "path": "/"}],
+                "headers": {"X-Partner-Mode": "enabled"},
+                "localStorage": [],
+            }
+        },
         headers=editor_headers,
     )
     assert save_response.status_code == 200
@@ -771,6 +788,10 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     )
     assert run_response.status_code == 200
     assert run_response.json()["persona"]["key"] == "partner"
+    assert client_contexts[-1].headers["X-Partner-Mode"] == "enabled"
+    assert client_contexts[-1].cookies.rows == [
+        {"name": "sid", "value": "super-secret", "domain": "persona.test", "path": "/"}
+    ]
 
     delete_response = client.delete(
         f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/session-bundle",

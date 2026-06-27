@@ -214,8 +214,8 @@
   - целевая модель: `ProjectSite → CrawlPersona → Run → Page`, чтобы результаты, baseline, retries и Compare не смешивали разные сессии;
   - Compare позволяет выбирать persona вместе с site/run/page: гость ↔ авторизованный, партнёр ↔ партнёр другого сайта и historical compare одной persona;
   - staged implementation:
-    1. guest context и статические безопасные headers;
-    2. encrypted cookie/session bundle с masked UI, audit и запретом viewer читать secrets;
+    1. guest context и статические безопасные headers — готово;
+    2. encrypted cookie/session bundle с masked UI, audit и запретом viewer читать secrets — backend + первый UI готовы; HTTP-crawler применяет cookies/headers из session bundle; `localStorage/sessionStorage` применяются на следующем browser-based crawler этапе;
     3. browser-based login scenario для CSRF/dynamic forms;
     4. MFA/manual checkpoint только как явный управляемый workflow;
   - согласованный UX:

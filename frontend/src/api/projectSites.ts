@@ -1,14 +1,21 @@
-import { apiDelete, apiGet, apiPatch, apiPost } from "./client";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./client";
 
 export type SiteScopeMode = "whole_site" | "path_prefix";
 export type ProjectSiteRole = "primary" | "reference" | "target" | "peer";
 
 export type CrawlPersonaSummary = {
   id: number;
+  project_site_id?: number;
   key: string;
   label: string;
   kind: "guest" | "authenticated" | "partner" | string;
+  description?: string;
+  is_default?: boolean;
+  is_enabled?: boolean;
   has_secrets?: boolean;
+  session_bundle_updated_at?: string | null;
+  session_bundle_expires_at?: string | null;
+  secret_version?: number;
 };
 
 export type ProjectSite = {
@@ -110,4 +117,46 @@ export function updateProjectSite(
 
 export function deleteProjectSite(projectId: number, siteId: number): Promise<{ deleted: boolean }> {
   return apiDelete<{ deleted: boolean }>(`/projects/${projectId}/sites/${siteId}`);
+}
+
+export type CrawlPersonaInput = {
+  key: string;
+  label: string;
+  kind: "authenticated" | "partner" | "guest" | string;
+  description?: string;
+  is_default?: boolean;
+  is_enabled?: boolean;
+};
+
+export function listProjectSitePersonas(projectId: number, siteId: number): Promise<CrawlPersonaSummary[]> {
+  return apiGet<CrawlPersonaSummary[]>(`/projects/${projectId}/sites/${siteId}/personas`);
+}
+
+export function createProjectSitePersona(
+  projectId: number,
+  siteId: number,
+  input: CrawlPersonaInput,
+): Promise<CrawlPersonaSummary> {
+  return apiPost<CrawlPersonaSummary>(`/projects/${projectId}/sites/${siteId}/personas`, input);
+}
+
+export function saveProjectSitePersonaSessionBundle(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+  bundle: Record<string, unknown>,
+  expiresAt?: string | null,
+): Promise<CrawlPersonaSummary> {
+  return apiPut<CrawlPersonaSummary>(`/projects/${projectId}/sites/${siteId}/personas/${personaId}/session-bundle`, {
+    bundle,
+    expires_at: expiresAt || null,
+  });
+}
+
+export function deleteProjectSitePersonaSessionBundle(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+): Promise<CrawlPersonaSummary> {
+  return apiDelete<CrawlPersonaSummary>(`/projects/${projectId}/sites/${siteId}/personas/${personaId}/session-bundle`);
 }

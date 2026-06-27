@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { listProjectSiteSummaries, type ProjectSiteSummary } from "../api/projectSites";
+import {
+  listProjectSitePersonas,
+  listProjectSiteSummaries,
+  type CrawlPersonaSummary,
+  type ProjectSiteSummary,
+} from "../api/projectSites";
 import {
   getPageContext,
   retryProblemPages,
@@ -210,6 +215,9 @@ export default function ProjectDashboardPage() {
   const [structureRetryNoticeTone, setStructureRetryNoticeTone] = useState<"success" | "warning">("success");
   const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
   const [runToasts, setRunToasts] = useState<ToastItem[]>([]);
+  const [sitePersonas, setSitePersonas] = useState<CrawlPersonaSummary[]>([]);
+  const [sitePersonasLoading, setSitePersonasLoading] = useState(false);
+  const [selectedRunPersonaId, setSelectedRunPersonaId] = useState<number | null>(null);
   const canRunCrawler = hasPermission(user?.role, "crawler.run");
   const canEditProject = hasPermission(user?.role, "projects.edit");
   const canViewEvents = hasPermission(user?.role, "events.view");
@@ -291,10 +299,39 @@ export default function ProjectDashboardPage() {
   useEffect(() => {
     if (selectedSiteId === null) {
       setRuns([]);
+      setSitePersonas([]);
+      setSelectedRunPersonaId(null);
       return;
     }
     void loadRuns(selectedSiteId);
   }, [selectedSiteId, loadRuns]);
+
+  useEffect(() => {
+    if (!project || selectedSiteId === null) return;
+    let cancelled = false;
+    setSitePersonasLoading(true);
+    listProjectSitePersonas(project.id, selectedSiteId)
+      .then((rows) => {
+        if (cancelled) return;
+        setSitePersonas(rows);
+        setSelectedRunPersonaId((current) => {
+          if (current && rows.some((row) => row.id === current && row.is_enabled !== false)) return current;
+          const defaultPersona = rows.find((row) => row.is_default && row.is_enabled !== false);
+          return defaultPersona?.id ?? rows.find((row) => row.is_enabled !== false)?.id ?? null;
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSitePersonas([]);
+        setSelectedRunPersonaId(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSitePersonasLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project, selectedSiteId]);
 
   useEffect(() => {
     if (selectedSiteId === null) return;
@@ -323,6 +360,10 @@ export default function ProjectDashboardPage() {
   async function handleStartRun() {
     const selectedSite = sites.find((site) => site.id === selectedSiteId);
     if (!project || !selectedSite || runPending) return;
+    const selectedPersona =
+      sitePersonas.find((persona) => persona.id === selectedRunPersonaId) ||
+      selectedSite.default_persona ||
+      { id: 0, key: "guest", label: "Гость", kind: "guest", has_secrets: false };
     setRunPending(true);
     setRunsError("");
     setRuns((prev) => {
@@ -332,8 +373,8 @@ export default function ProjectDashboardPage() {
           id: -Date.now(),
           project_id: project.id,
           project_site_id: selectedSite.id,
-          crawl_persona_id: selectedSite.default_persona?.id ?? null,
-          persona: selectedSite.default_persona ?? { id: 0, key: "guest", label: "Гость", kind: "guest", has_secrets: false },
+          crawl_persona_id: selectedPersona.id || null,
+          persona: selectedPersona,
           status: "RUNNING",
           started_at: new Date().toISOString(),
           finished_at: null,
@@ -351,7 +392,7 @@ export default function ProjectDashboardPage() {
     });
     showRunToast({
       title: `Прогон «${selectedSite.name}» запущен`,
-      body: "Crawler начал обход сайта. Результат и структура обновятся автоматически.",
+      body: `Контекст: ${selectedPersona.label}. Результат и структура обновятся автоматически.`,
       accent: "info",
     });
     publishProjectRunLive({
@@ -362,7 +403,7 @@ export default function ProjectDashboardPage() {
       pagesChanged: 0,
     });
     try {
-      await apiPost(`/runs/start-site/${selectedSite.id}`, {});
+      await apiPost(`/runs/start-site/${selectedSite.id}`, selectedPersona.id ? { crawl_persona_id: selectedPersona.id } : {});
       await Promise.all([
         loadRuns(selectedSite.id, true),
         loadSiteSummaries(project.id, true),
@@ -542,6 +583,10 @@ export default function ProjectDashboardPage() {
   }
 
   const selectedSite = sites.find((site) => site.id === selectedSiteId) || null;
+  const selectedRunPersona =
+    sitePersonas.find((persona) => persona.id === selectedRunPersonaId) ||
+    selectedSite?.default_persona ||
+    null;
   const domains = useMemo(
     () => parseDomains(selectedSite?.allowed_domains_csv || ""),
     [selectedSite?.allowed_domains_csv],
@@ -731,6 +776,38 @@ export default function ProjectDashboardPage() {
                 }
                 actions={canRunCrawler ? (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <label
+                      style={{
+                        display: "grid",
+                        gap: 3,
+                        minWidth: 220,
+                        maxWidth: 320,
+                        flex: "1 1 220px",
+                      }}
+                      title="Контекст определяет, как crawler открывает выбранный сайт: гостем или с подключённой сессией роли."
+                    >
+                      <MetaText opacity={0.72}>Контекст запуска</MetaText>
+                      <UiSelect
+                        value={selectedRunPersonaId ?? ""}
+                        disabled={sitePersonasLoading || runPending || projectRunPending || hasRunning || !selectedSite?.is_enabled}
+                        onChange={(event) => setSelectedRunPersonaId(Number(event.target.value) || null)}
+                      >
+                        {sitePersonasLoading && <option value="">Загрузка...</option>}
+                        {!sitePersonasLoading && sitePersonas.length === 0 && (
+                          <option value={selectedSite?.default_persona?.id ?? ""}>
+                            {selectedSite?.default_persona?.label || "Гость"}
+                          </option>
+                        )}
+                        {!sitePersonasLoading && sitePersonas
+                          .filter((persona) => persona.is_enabled !== false)
+                          .map((persona) => (
+                            <option key={persona.id} value={persona.id}>
+                              {persona.label}
+                              {persona.kind !== "guest" && !persona.has_secrets ? " · без сессии" : ""}
+                            </option>
+                          ))}
+                      </UiSelect>
+                    </label>
                     <CardActionButton
                       variant="ghost"
                       onClick={() => navigate(`/projects/${project.id}/compare`, { state: { projectName: project.name } })}
@@ -766,6 +843,14 @@ export default function ProjectDashboardPage() {
                 <MetaText opacity={0.86}>
                   Выберите сайт карточкой: показатели, структура, история и ручной запуск ниже относятся только к нему.
                 </MetaText>
+                {selectedRunPersona && (
+                  <MetaText opacity={0.72}>
+                    Текущий запуск: {selectedRunPersona.label}
+                    {selectedRunPersona.kind !== "guest" && !selectedRunPersona.has_secrets
+                      ? " · сессия не подключена"
+                      : ""}
+                  </MetaText>
+                )}
               </div>
               {hasRunning && (
                 <MetaText opacity={0.72}>
