@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -113,7 +114,24 @@ def _click_consent_button(browser_page) -> dict:
     return {"clicked": False, "label": "", "explanation": "Типовая кнопка согласия не найдена или не нажалась автоматически."}
 
 
-def run_consent_audit(page: Page) -> dict:
+def _session_storage_init_script(session_storage: dict[str, list[dict[str, str]]]) -> str:
+    if not session_storage:
+        return ""
+    serialized = json.dumps(session_storage, ensure_ascii=False)
+    return """
+    (() => {
+      const state = __SESSION_STORAGE_STATE__;
+      const rows = state[window.location.origin] || [];
+      for (const item of rows) {
+        try {
+          window.sessionStorage.setItem(String(item.name), String(item.value));
+        } catch (_error) {}
+      }
+    })();
+    """.replace("__SESSION_STORAGE_STATE__", serialized)
+
+
+def run_consent_audit(page: Page, persona_browser_state: dict | None = None) -> dict:
     if not page.html:
         raise ValueError("Для страницы не сохранён HTML.")
 
@@ -125,12 +143,18 @@ def run_consent_audit(page: Page) -> dict:
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
+        state = persona_browser_state or {}
         context = browser.new_context(
             viewport={"width": 1440, "height": 1000},
             java_script_enabled=True,
             ignore_https_errors=True,
+            storage_state=state.get("storage_state"),
+            extra_http_headers=state.get("extra_http_headers") or None,
         )
         browser_page = context.new_page()
+        session_script = _session_storage_init_script(state.get("session_storage") or {})
+        if session_script:
+            browser_page.add_init_script(session_script)
 
         def route_request(route):
             request = route.request
@@ -202,6 +226,11 @@ def run_consent_audit(page: Page) -> dict:
         },
         "consent_action": consent_action,
         "values_exposed": False,
+        "persona_state": {
+            **(state.get("summary") or {}),
+            "applied": bool(state),
+            "values_exposed": False,
+        },
         "explanation": (
             "Browser-аудит выполнен по сохранённому HTML страницы с live scripts. "
             "Показаны только имена cookies, типы запросов и распознанные providers; значения cookies/tokens не возвращаются. "

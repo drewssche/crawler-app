@@ -35,6 +35,7 @@ from app.core.events import (
 from app.services.crawl_personas import get_default_persona
 from app.services.page_context import build_page_context
 from app.services.persona_secrets import decrypt_session_bundle
+from app.services.persona_browser_state import build_browser_persona_state
 from app.crawler.renderer import (
     get_rendered_snapshot_metadata,
     render_page_snapshot,
@@ -1213,8 +1214,24 @@ def create_page_consent_audit(
     page = db.query(Page).filter(Page.run_id == run_id, Page.url == url).first()
     if not page:
         raise HTTPException(status_code=404, detail="Page not found in this run")
+    persona_browser_state = None
+    persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
+    if persona and persona.has_secrets and persona.encrypted_session_bundle:
+        try:
+            persona_browser_state = build_browser_persona_state(
+                decrypt_session_bundle(persona.encrypted_session_bundle),
+                document_url=page.final_url or page.url,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "persona_session_unavailable",
+                    "message": "Сессию выбранной персоны не удалось расшифровать. Подключите session bundle заново.",
+                },
+            ) from exc
     try:
-        return run_consent_audit(page)
+        return run_consent_audit(page, persona_browser_state=persona_browser_state)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
