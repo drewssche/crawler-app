@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  cancelProjectSitePersonaLoginCapture,
+  completeProjectSitePersonaLoginCapture,
   createProjectSitePersona,
+  createProjectSitePersonaLoginCapture,
   createProjectSite,
   deleteProjectSitePersonaSessionBundle,
   deleteProjectSite,
@@ -9,6 +12,7 @@ import {
   listProjectSites,
   updateProjectSite,
   type CrawlPersonaSummary,
+  type PersonaLoginCapture,
   type ProjectSite,
   type SiteScopeMode,
 } from "../../api/projectSites";
@@ -200,6 +204,9 @@ function ProjectSitePersonasPanel({
   const [sessionPersonaId, setSessionPersonaId] = useState<number | null>(null);
   const [sessionJson, setSessionJson] = useState("{\n  \"cookies\": [],\n  \"localStorage\": [],\n  \"sessionStorage\": []\n}");
   const [sessionExpiresAt, setSessionExpiresAt] = useState("");
+  const [captureByPersonaId, setCaptureByPersonaId] = useState<Record<number, PersonaLoginCapture>>({});
+  const [captureJsonByPersonaId, setCaptureJsonByPersonaId] = useState<Record<number, string>>({});
+  const [captureExpiresAtByPersonaId, setCaptureExpiresAtByPersonaId] = useState<Record<number, string>>({});
   const [pending, setPending] = useState<number | "new" | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -291,6 +298,85 @@ function ProjectSitePersonasPanel({
       setMessage("Session bundle удалён. Персона осталась, но теперь без подключённой сессии.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось сбросить session bundle.");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleStartLoginCapture(persona: CrawlPersonaSummary) {
+    setPending(persona.id);
+    setError("");
+    setMessage("");
+    try {
+      const capture = await createProjectSitePersonaLoginCapture(projectId, site.id, persona.id, {
+        login_url: site.start_url,
+        ttl_minutes: 30,
+      });
+      setCaptureByPersonaId((current) => ({ ...current, [persona.id]: capture }));
+      setCaptureJsonByPersonaId((current) => ({
+        ...current,
+        [persona.id]: "{\n  \"cookies\": [],\n  \"origins\": []\n}",
+      }));
+      setCaptureExpiresAtByPersonaId((current) => ({ ...current, [persona.id]: "" }));
+      setMessage("Сеанс подключения создан. Откройте сайт, войдите нужной ролью и вставьте storageState JSON.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось начать подключение через браузер.");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleCompleteLoginCapture(persona: CrawlPersonaSummary, capture: PersonaLoginCapture) {
+    let storageState: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(captureJsonByPersonaId[persona.id] || "{}") as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("storageState должен быть JSON-объектом.");
+      }
+      storageState = parsed as Record<string, unknown>;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "storageState JSON не похож на корректный JSON.");
+      return;
+    }
+    setPending(persona.id);
+    setError("");
+    setMessage("");
+    try {
+      const expiresAt = captureExpiresAtByPersonaId[persona.id]
+        ? new Date(captureExpiresAtByPersonaId[persona.id]).toISOString()
+        : null;
+      const result = await completeProjectSitePersonaLoginCapture(projectId, site.id, persona.id, capture.id, {
+        storage_state: storageState,
+        expires_at: expiresAt,
+      });
+      setPersonas((current) => current.map((row) => row.id === result.persona.id ? result.persona : row));
+      setCaptureByPersonaId((current) => {
+        const next = { ...current };
+        delete next[persona.id];
+        return next;
+      });
+      setMessage("Browser-сессия сохранена encrypted-at-rest. Значения cookies/tokens скрыты.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось сохранить browser-сессию.");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleCancelLoginCapture(persona: CrawlPersonaSummary, capture: PersonaLoginCapture) {
+    setPending(persona.id);
+    setError("");
+    setMessage("");
+    try {
+      await cancelProjectSitePersonaLoginCapture(projectId, site.id, persona.id, capture.id);
+      setCaptureByPersonaId((current) => {
+        const next = { ...current };
+        delete next[persona.id];
+        return next;
+      });
+      setMessage("Сеанс подключения отменён.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось отменить сеанс подключения.");
     } finally {
       setPending(null);
     }
@@ -393,6 +479,7 @@ function ProjectSitePersonasPanel({
       {!loading && personas.map((persona) => {
         const secret = personaSecretLabel(persona);
         const editingSession = sessionPersonaId === persona.id;
+        const capture = captureByPersonaId[persona.id];
         return (
           <Card key={persona.id} style={{ display: "grid", gap: 8 }}>
             <SectionHeaderRow
@@ -457,22 +544,98 @@ function ProjectSitePersonasPanel({
                     </CardFooterActions>
                   </div>
                 ) : (
-                  <CardFooterActions>
-                    <CardActionButton
-                      variant="secondary"
-                      compact
-                      disabled={pending === persona.id}
-                      onClick={() => {
-                        setSessionPersonaId(persona.id);
-                        setSessionJson("{\n  \"cookies\": [],\n  \"localStorage\": [],\n  \"sessionStorage\": []\n}");
-                        setSessionExpiresAt(toDateTimeLocalValue(persona.session_bundle_expires_at));
-                        setError("");
-                        setMessage("");
-                      }}
-                    >
-                      {persona.has_secrets ? "Обновить сессию" : "Подключить сессию"}
-                    </CardActionButton>
-                    {persona.has_secrets && (
+                  <>
+                    {capture && (
+                      <Card variant="warning" style={{ display: "grid", gap: 8 }}>
+                        <SectionHeaderRow
+                          title={
+                            <div>
+                              <div style={{ fontWeight: 700 }}>Подключение через браузер</div>
+                              <MetaText opacity={0.72}>
+                                Сеанс активен до {formatOperationalDateTime(capture.expires_at)}. Значения cookies/tokens не показываются после сохранения.
+                              </MetaText>
+                            </div>
+                          }
+                          actions={<AccentPill tone="warning">{capture.status}</AccentPill>}
+                        />
+                        <MetaText opacity={0.74}>{capture.instructions}</MetaText>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <CardActionButton
+                            variant="secondary"
+                            compact
+                            onClick={() => window.open(capture.login_url, "_blank", "noopener,noreferrer")}
+                          >
+                            Открыть сайт и войти
+                          </CardActionButton>
+                          <MetaText opacity={0.7} style={{ wordBreak: "break-word" }}>
+                            {capture.login_url}
+                          </MetaText>
+                        </div>
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span>Browser storageState JSON</span>
+                          <textarea
+                            value={captureJsonByPersonaId[persona.id] || ""}
+                            onChange={(event) => setCaptureJsonByPersonaId((current) => ({ ...current, [persona.id]: event.target.value }))}
+                            disabled={pending === persona.id}
+                            style={textAreaStyle}
+                          />
+                        </label>
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span>Срок действия browser-сессии</span>
+                          <input
+                            type="datetime-local"
+                            value={captureExpiresAtByPersonaId[persona.id] || ""}
+                            onChange={(event) => setCaptureExpiresAtByPersonaId((current) => ({ ...current, [persona.id]: event.target.value }))}
+                            disabled={pending === persona.id}
+                            style={inputStyle}
+                          />
+                        </label>
+                        <MetaText opacity={0.68}>
+                          MVP: после входа вставьте Playwright storageState. Полностью автоматический захват из встроенного браузера будет следующим расширением.
+                        </MetaText>
+                        <CardFooterActions>
+                          <CardActionButton
+                            variant="primary"
+                            disabled={pending === persona.id}
+                            onClick={() => void handleCompleteLoginCapture(persona, capture)}
+                          >
+                            {pending === persona.id ? "Сохранение..." : "Сохранить browser-сессию"}
+                          </CardActionButton>
+                          <CardActionButton
+                            variant="ghost"
+                            disabled={pending === persona.id}
+                            onClick={() => void handleCancelLoginCapture(persona, capture)}
+                          >
+                            Отменить подключение
+                          </CardActionButton>
+                        </CardFooterActions>
+                      </Card>
+                    )}
+                    <CardFooterActions>
+                      <CardActionButton
+                        variant="secondary"
+                        compact
+                        disabled={pending === persona.id}
+                        onClick={() => {
+                          setSessionPersonaId(persona.id);
+                          setSessionJson("{\n  \"cookies\": [],\n  \"localStorage\": [],\n  \"sessionStorage\": []\n}");
+                          setSessionExpiresAt(toDateTimeLocalValue(persona.session_bundle_expires_at));
+                          setError("");
+                          setMessage("");
+                        }}
+                      >
+                        {persona.has_secrets ? "Обновить JSON" : "Подключить JSON"}
+                      </CardActionButton>
+                      <CardActionButton
+                        variant="primary"
+                        compact
+                        disabled={pending === persona.id || Boolean(capture)}
+                        onClick={() => void handleStartLoginCapture(persona)}
+                        title={capture ? "Сначала завершите или отмените текущий сеанс подключения." : undefined}
+                      >
+                        Открыть сайт и войти
+                      </CardActionButton>
+                      {persona.has_secrets && (
                       <CardActionButton
                         variant="ghost"
                         compact
@@ -481,8 +644,9 @@ function ProjectSitePersonasPanel({
                       >
                         Сбросить сессию
                       </CardActionButton>
-                    )}
-                  </CardFooterActions>
+                      )}
+                    </CardFooterActions>
+                  </>
                 )}
               </>
             )}
