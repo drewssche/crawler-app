@@ -174,3 +174,66 @@ export function deleteProjectSitePersonaSessionBundle(
 ): Promise<CrawlPersonaSummary> {
   return apiDelete<CrawlPersonaSummary>(`/projects/${projectId}/sites/${siteId}/personas/${personaId}/session-bundle`);
 }
+
+export type PersonaLoginCapture = {
+  id: number;
+  crawl_persona_id: number;
+  project_site_id: number;
+  status: "PENDING" | "COMPLETED" | "CANCELLED" | "EXPIRED" | string;
+  login_url: string;
+  expires_at: string;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  instructions: string;
+};
+
+export type PersonaLoginCaptureCompleteResult = {
+  capture: PersonaLoginCapture;
+  persona: CrawlPersonaSummary;
+};
+
+export function createProjectSitePersonaLoginCapture(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+  input: { login_url?: string | null; ttl_minutes?: number },
+): Promise<PersonaLoginCapture> {
+  return apiPost<PersonaLoginCapture>(`/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures`, input);
+}
+
+export function getProjectSitePersonaLoginCapture(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+  captureId: number,
+): Promise<PersonaLoginCapture> {
+  return apiGet<PersonaLoginCapture>(`/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures/${captureId}`);
+}
+
+export function completeProjectSitePersonaLoginCapture(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+  captureId: number,
+  input: {
+    storage_state: Record<string, unknown>;
+    session_storage?: Record<string, unknown> | null;
+    extra_http_headers?: Record<string, unknown> | null;
+    expires_at?: string | null;
+  },
+): Promise<PersonaLoginCaptureCompleteResult> {
+  return apiPost<PersonaLoginCaptureCompleteResult>(
+    `/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures/${captureId}/complete`,
+    input,
+  );
+}
+
+export function cancelProjectSitePersonaLoginCapture(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+  captureId: number,
+): Promise<PersonaLoginCapture> {
+  return apiPost<PersonaLoginCapture>(`/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures/${captureId}/cancel`, {});
+}

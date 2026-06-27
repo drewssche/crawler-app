@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -10,6 +11,7 @@ from app.core.api_response import success_response_payload
 from app.core.security import require_permission
 from app.db.models.project import Project
 from app.db.models.crawl_persona import CrawlPersona
+from app.db.models.crawl_persona_login_capture import CrawlPersonaLoginCapture
 from app.db.models.project_site import ProjectSite
 from app.db.models.run import Run
 from app.db.models.user import User
@@ -35,6 +37,74 @@ class CrawlPersonaCreate(BaseModel):
 class PersonaSessionBundleIn(BaseModel):
     bundle: dict = Field(default_factory=dict)
     expires_at: datetime | None = None
+
+
+class PersonaLoginCaptureCreate(BaseModel):
+    login_url: str | None = Field(default=None, max_length=2048)
+    ttl_minutes: int = Field(default=30, ge=5, le=180)
+
+
+class PersonaLoginCaptureComplete(BaseModel):
+    storage_state: dict = Field(default_factory=dict)
+    session_storage: dict | None = None
+    extra_http_headers: dict | None = None
+    expires_at: datetime | None = None
+
+
+def _capture_payload(capture: CrawlPersonaLoginCapture) -> dict:
+    return {
+        "id": capture.id,
+        "crawl_persona_id": capture.crawl_persona_id,
+        "project_site_id": capture.project_site_id,
+        "status": capture.status,
+        "login_url": capture.login_url,
+        "expires_at": capture.expires_at,
+        "completed_at": capture.completed_at,
+        "cancelled_at": capture.cancelled_at,
+        "created_at": capture.created_at,
+        "instructions": (
+            "Откройте login_url, войдите как нужная роль, затем сохраните browser storage state. "
+            "Значения cookies/tokens не возвращаются в UI и после complete хранятся encrypted-at-rest."
+        ),
+    }
+
+
+def _safe_login_url(site: ProjectSite, raw_url: str | None) -> str:
+    login_url = (raw_url or site.start_url or "").strip()
+    parsed = urlparse(login_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=422, detail="Login URL must be an absolute http(s) URL.")
+    allowed = {x.strip().lower() for x in (site.allowed_domains_csv or "").split(",") if x.strip()}
+    if not allowed:
+        host = (urlparse(site.start_url).hostname or "").lower()
+        allowed = {host} if host else set()
+    host = (parsed.hostname or "").lower()
+    if allowed and not any(host == domain or host.endswith(f".{domain}") for domain in allowed):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "login_url_outside_site_scope",
+                "message": "Login URL должен находиться в домене выбранного сайта.",
+            },
+        )
+    return login_url
+
+
+def _browser_capture_bundle(payload: PersonaLoginCaptureComplete) -> dict:
+    state = payload.storage_state or {}
+    cookies = state.get("cookies") if isinstance(state, dict) else []
+    origins = state.get("origins") if isinstance(state, dict) else []
+    bundle = {
+        "source": "browser_login_capture",
+        "captured_at": datetime.utcnow().isoformat(),
+        "cookies": cookies if isinstance(cookies, list) else [],
+        "origins": origins if isinstance(origins, list) else [],
+    }
+    if payload.session_storage:
+        bundle["sessionStorage"] = payload.session_storage
+    if payload.extra_http_headers:
+        bundle["headers"] = payload.extra_http_headers
+    return bundle
 
 
 def _empty_session_summary(status: str) -> dict:
@@ -397,6 +467,174 @@ def delete_project_site_persona_session_bundle(
     db.commit()
     db.refresh(persona)
     return success_response_payload(request, data=_persona_payload(persona))
+
+
+@router.post("/{site_id}/personas/{persona_id}/login-captures")
+def create_project_site_persona_login_capture(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    payload: PersonaLoginCaptureCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    site = _get_site_or_404(db, project_id, site_id)
+    persona = (
+        db.query(CrawlPersona)
+        .filter(CrawlPersona.id == persona_id, CrawlPersona.project_site_id == site_id)
+        .first()
+    )
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Crawl persona not found")
+    if persona.kind == "guest":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "guest_persona_cannot_capture_login",
+                "message": "Гостевой контекст не должен содержать login/session state.",
+            },
+        )
+    capture = CrawlPersonaLoginCapture(
+        crawl_persona_id=persona.id,
+        project_site_id=site.id,
+        created_by_user_id=current_user.id,
+        status="PENDING",
+        login_url=_safe_login_url(site, payload.login_url),
+        expires_at=datetime.utcnow() + timedelta(minutes=payload.ttl_minutes),
+        created_at=datetime.utcnow(),
+    )
+    db.add(capture)
+    db.commit()
+    db.refresh(capture)
+    return success_response_payload(request, data=_capture_payload(capture))
+
+
+@router.get("/{site_id}/personas/{persona_id}/login-captures/{capture_id}")
+def get_project_site_persona_login_capture(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    capture_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    capture = (
+        db.query(CrawlPersonaLoginCapture)
+        .filter(
+            CrawlPersonaLoginCapture.id == capture_id,
+            CrawlPersonaLoginCapture.project_site_id == site_id,
+            CrawlPersonaLoginCapture.crawl_persona_id == persona_id,
+        )
+        .first()
+    )
+    if capture is None:
+        raise HTTPException(status_code=404, detail="Login capture not found")
+    if capture.status == "PENDING" and capture.expires_at <= datetime.utcnow():
+        capture.status = "EXPIRED"
+        db.commit()
+        db.refresh(capture)
+    return success_response_payload(request, data=_capture_payload(capture))
+
+
+@router.post("/{site_id}/personas/{persona_id}/login-captures/{capture_id}/complete")
+def complete_project_site_persona_login_capture(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    capture_id: int,
+    payload: PersonaLoginCaptureComplete,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    capture = (
+        db.query(CrawlPersonaLoginCapture)
+        .filter(
+            CrawlPersonaLoginCapture.id == capture_id,
+            CrawlPersonaLoginCapture.project_site_id == site_id,
+            CrawlPersonaLoginCapture.crawl_persona_id == persona_id,
+        )
+        .first()
+    )
+    if capture is None:
+        raise HTTPException(status_code=404, detail="Login capture not found")
+    if capture.status != "PENDING":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "login_capture_not_pending",
+                "message": "Этот сеанс подключения уже завершён, отменён или истёк.",
+            },
+        )
+    if capture.expires_at <= datetime.utcnow():
+        capture.status = "EXPIRED"
+        db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "login_capture_expired",
+                "message": "Сеанс подключения истёк. Запустите подключение сессии заново.",
+            },
+        )
+    persona = db.get(CrawlPersona, persona_id)
+    if persona is None or persona.project_site_id != site_id:
+        raise HTTPException(status_code=404, detail="Crawl persona not found")
+    try:
+        encrypted, fingerprint = encrypt_session_bundle(_browser_capture_bundle(payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    persona.encrypted_session_bundle = encrypted
+    persona.session_bundle_fingerprint = fingerprint
+    persona.session_bundle_updated_at = datetime.utcnow()
+    persona.session_bundle_expires_at = payload.expires_at
+    persona.secret_version = int(persona.secret_version or 0) + 1
+    persona.has_secrets = True
+    capture.status = "COMPLETED"
+    capture.completed_at = datetime.utcnow()
+    db.commit()
+    db.refresh(persona)
+    db.refresh(capture)
+    return success_response_payload(
+        request,
+        data={
+            "capture": _capture_payload(capture),
+            "persona": _persona_payload(persona),
+        },
+    )
+
+
+@router.post("/{site_id}/personas/{persona_id}/login-captures/{capture_id}/cancel")
+def cancel_project_site_persona_login_capture(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    capture_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    capture = (
+        db.query(CrawlPersonaLoginCapture)
+        .filter(
+            CrawlPersonaLoginCapture.id == capture_id,
+            CrawlPersonaLoginCapture.project_site_id == site_id,
+            CrawlPersonaLoginCapture.crawl_persona_id == persona_id,
+        )
+        .first()
+    )
+    if capture is None:
+        raise HTTPException(status_code=404, detail="Login capture not found")
+    if capture.status == "PENDING":
+        capture.status = "CANCELLED"
+        capture.cancelled_at = datetime.utcnow()
+        db.commit()
+        db.refresh(capture)
+    return success_response_payload(request, data=_capture_payload(capture))
 
 
 @router.post("")

@@ -216,7 +216,7 @@
   - staged implementation:
     1. guest context и статические безопасные headers — готово;
     2. encrypted cookie/session bundle с masked UI, expiry-status и запретом viewer читать secrets — backend + первый UI готовы; HTTP-crawler применяет cookies/headers из session bundle; `localStorage/sessionStorage` применяются на следующем browser-based crawler этапе;
-    3. browser-based login scenario для CSRF/dynamic forms — foundation готов: Playwright runtime умеет применять persona browser state (`cookies/localStorage/sessionStorage/headers`) в runtime consent audit; следующий шаг — friendly login capture `Открыть сайт и войти`;
+    3. browser-based login scenario для CSRF/dynamic forms — foundation готов: Playwright runtime умеет применять persona browser state (`cookies/localStorage/sessionStorage/headers`) в runtime consent audit; login capture API contract готов (`start/status/complete/cancel`, без хранения secrets в capture-row); следующий шаг — UI wizard `Открыть сайт и войти`;
     4. MFA/manual checkpoint только как явный управляемый workflow;
   - согласованный UX:
     - пользователь заранее создаёт персону в настройках сайта: `Гость`, `Авторизованный пользователь`, `Партнёр`, `Другая роль`;

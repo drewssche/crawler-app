@@ -15,6 +15,7 @@ from app.db import models  # noqa: F401
 from app.db.base import Base
 from app.db.models.admin_audit_log import AdminAuditLog
 from app.db.models.crawl_persona import CrawlPersona
+from app.db.models.crawl_persona_login_capture import CrawlPersonaLoginCapture
 from app.db.models.event_feed import EventFeed
 from app.db.models.login_history import LoginHistory
 from app.db.models.project import Project
@@ -800,6 +801,59 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     assert client_contexts[-1].cookies.rows == [
         {"name": "sid", "value": "super-secret", "domain": "persona.test", "path": "/"}
     ]
+
+    denied_capture = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/login-captures",
+        json={"login_url": "https://persona.test/login"},
+        headers=viewer_headers,
+    )
+    assert denied_capture.status_code == 403
+
+    capture_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/login-captures",
+        json={"login_url": "https://persona.test/login", "ttl_minutes": 10},
+        headers=editor_headers,
+    )
+    assert capture_response.status_code == 200
+    capture = _extract_success_data(capture_response)
+    assert capture["status"] == "PENDING"
+    assert capture["login_url"] == "https://persona.test/login"
+    assert "secret" not in str(capture).lower()
+
+    complete_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/login-captures/{capture['id']}/complete",
+        json={
+            "storage_state": {
+                "cookies": [{"name": "browser_sid", "value": "browser-secret", "domain": "persona.test", "path": "/"}],
+                "origins": [
+                    {
+                        "origin": "https://persona.test",
+                        "localStorage": [{"name": "role", "value": "partner-secret"}],
+                    }
+                ],
+            },
+            "session_storage": {"https://persona.test": [{"name": "tab", "value": "tab-secret"}]},
+        },
+        headers=editor_headers,
+    )
+    assert complete_response.status_code == 200
+    completed = _extract_success_data(complete_response)
+    assert completed["capture"]["status"] == "COMPLETED"
+    assert completed["persona"]["has_secrets"] is True
+    assert completed["persona"]["session_bundle_summary"]["cookies_count"] == 1
+    assert completed["persona"]["session_bundle_summary"]["local_storage_count"] == 1
+    assert completed["persona"]["session_bundle_summary"]["session_storage_count"] == 1
+    assert "browser-secret" not in str(completed)
+    assert "partner-secret" not in str(completed)
+
+    with SessionLocal() as db:
+        stored = db.get(CrawlPersona, partner["id"])
+        assert stored is not None
+        assert stored.encrypted_session_bundle
+        assert "browser-secret" not in stored.encrypted_session_bundle
+        capture_row = db.get(CrawlPersonaLoginCapture, capture["id"])
+        assert capture_row is not None
+        assert capture_row.status == "COMPLETED"
 
     delete_response = client.delete(
         f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/session-bundle",
