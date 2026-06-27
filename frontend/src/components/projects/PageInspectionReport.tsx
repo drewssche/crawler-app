@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { PageContext } from "../../api/pageContext";
+import { createConsentAudit, type ConsentAuditResult, type PageContext } from "../../api/pageContext";
+import { useAuth } from "../../hooks/auth";
+import { hasPermission } from "../../utils/permissions";
 import AccentPill from "../ui/AccentPill";
+import Button from "../ui/Button";
 import Card from "../ui/Card";
 import ClearableInput from "../ui/ClearableInput";
 import SegmentedControl from "../ui/SegmentedControl";
@@ -250,6 +253,119 @@ function PageTrackingInventory({ context }: { context: PageContext }) {
   );
 }
 
+function RequestSummary({
+  title,
+  cookies,
+  requests,
+}: {
+  title: string;
+  cookies: string[];
+  requests: ConsentAuditResult["before_consent"]["requests"];
+}) {
+  return (
+    <Card style={{ padding: 9, display: "grid", gap: 6 }}>
+      <div style={{ fontWeight: 700 }}>{title}</div>
+      <MetaText>Cookies: {cookies.join(", ") || "не обнаружены"}</MetaText>
+      <MetaText>Requests: всего {requests.total} · scripts {requests.script} · xhr/fetch {requests.xhr_fetch}</MetaText>
+      <MetaText>Providers: {requests.tracking_providers.join(", ") || "не распознаны"}</MetaText>
+      {requests.sample.length > 0 && (
+        <details className="inspector-details">
+          <summary>Примеры запросов · {requests.sample.length}</summary>
+          <div style={{ display: "grid", gap: 4, marginTop: 7 }}>
+            {requests.sample.map((url) => (
+              <div key={url} className="inspector-resource-url">{url}</div>
+            ))}
+          </div>
+        </details>
+      )}
+    </Card>
+  );
+}
+
+function ConsentRuntimeAudit({ context }: { context: PageContext }) {
+  const { user } = useAuth();
+  const canRunAudit = hasPermission(user?.role, "crawler.run");
+  const [audit, setAudit] = useState<ConsentAuditResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function runAudit() {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await createConsentAudit(context.page.run_id, context.page.url);
+      setAudit(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось выполнить browser-аудит.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 9 }}>
+      <Card variant="hint" style={{ display: "grid", gap: 7 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontWeight: 700 }}>Browser-аудит до/после согласия</div>
+            <MetaText opacity={0.72}>
+              Запускается только по кнопке. Проверяет наблюдаемое поведение, а не юридическую корректность баннера.
+            </MetaText>
+          </div>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!canRunAudit || loading}
+            onClick={() => void runAudit()}
+          >
+            {loading ? "Проверяем..." : "Проверить до/после"}
+          </Button>
+        </div>
+        {!canRunAudit && (
+          <MetaText opacity={0.68}>
+            У вашей роли есть доступ к результатам, но запуск browser-аудита доступен только ролям с правом запуска crawler.
+          </MetaText>
+        )}
+        <MetaText opacity={0.68}>
+          Во время аудита scripts могут загрузиться с сайта. Значения cookies/tokens не показываются — только имена и типы запросов.
+        </MetaText>
+      </Card>
+
+      {error && <StatusText tone="danger">{error}</StatusText>}
+
+      {audit && (
+        <div style={{ display: "grid", gap: 9 }}>
+          <Card variant={audit.after_consent.attempted ? "hint" : "warning"} style={{ display: "grid", gap: 5 }}>
+            <div style={{ fontWeight: 700 }}>
+              {audit.after_consent.attempted ? "Кнопка согласия нажата" : "Кнопка согласия не найдена"}
+            </div>
+            <MetaText>{audit.consent_action.explanation}</MetaText>
+            {audit.after_consent.action_label && <MetaText>Кнопка: {audit.after_consent.action_label}</MetaText>}
+            <MetaText opacity={0.68}>{audit.explanation}</MetaText>
+          </Card>
+          <RequestSummary
+            title="До согласия"
+            cookies={audit.before_consent.cookies}
+            requests={audit.before_consent.requests}
+          />
+          <RequestSummary
+            title="После согласия"
+            cookies={audit.after_consent.cookies}
+            requests={audit.after_consent.requests}
+          />
+          <Card style={{ padding: 9, display: "grid", gap: 5 }}>
+            <div style={{ fontWeight: 700 }}>Что изменилось после согласия</div>
+            <MetaText>Новые cookies: {audit.after_consent.new_cookies.join(", ") || "не появились"}</MetaText>
+            <MetaText>
+              Новые tracking providers: {audit.after_consent.new_tracking_providers.join(", ") || "не появились или не распознаны"}
+            </MetaText>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PageInspectionReport({ context }: { context: PageContext }) {
   const [activeSection, setActiveSection] = useState("summary");
 
@@ -346,10 +462,11 @@ export default function PageInspectionReport({ context }: { context: PageContext
             <MetaText opacity={0.68}>{context.tracking.cookies.explanation}</MetaText>
           </Card>
           <Card variant="warning" style={{ display: "grid", gap: 5 }}>
-            <div style={{ fontWeight: 700 }}>Поведение согласия не проверено</div>
+            <div style={{ fontWeight: 700 }}>Статический анализ не подтверждает запуск</div>
             <MetaText>CMP: {context.tracking.consent.frameworks.join(", ") || "не распознан"}</MetaText>
             <MetaText opacity={0.72}>{context.tracking.consent.explanation}</MetaText>
           </Card>
+          <ConsentRuntimeAudit context={context} />
         </Section>
 
         <Section id="retries" title="Повторные проверки">

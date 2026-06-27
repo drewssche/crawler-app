@@ -69,14 +69,14 @@
   - `301/302/307/308` отображаются отдельным жёлтым page-result с friendly-пояснением и адресом назначения;
   - timeout/connect/TLS/redirect failures сохраняются как красный page-level result и не валят run при наличии других успешных HTML-страниц;
   - полный run остаётся `FAILED`, если не получено ни одной пригодной HTML-страницы.
-- Последние проверки: backend `62 passed, 2 skipped`; PostgreSQL migration `c7e4a2b9d130` verified; RBAC parity passed; frontend tests `33 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; `git diff --check` passed.
+- Последние проверки: backend `64 passed, 2 skipped`; PostgreSQL migration `c7e4a2b9d130` verified; RBAC parity passed; frontend tests `34 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; runtime consent audit smoke passed; `git diff --check` passed.
 - Общий frontend lint имеет ранее существовавшие ошибки вне текущих изменений; не считать их регрессией этой волны.
 - UX-аудит 2026-06-26 подтвердил четыре приоритетные волны:
   1. исправить потерю Structure при повторном выборе site card и открывать контекст раздела дерева вместо внешнего сайта;
   2. превратить Page Inspector из сводки счётчиков в понятное исследование links/assets/tracking с легендами и progressive disclosure;
   3. заменить обрезанный sanitized DOM на достоверный сохранённый rendered snapshot, сохранив безопасный DOM/code-режим отдельно;
   4. сделать Compare пригодным для тысяч страниц: searchable picker, progressive controls и полноразмерные/изменяемые панели без фиксированной высоты документа.
-- Следующий рекомендуемый пункт: **runtime consent audit `до/после`**, затем Crawl Personas. Searchable Compare picker закрыт без Browser-smoke.
+- Следующий рекомендуемый пункт: **Crawl Personas foundation** (`guest` как явная persona без session secrets), затем encrypted session bundle. Runtime consent audit закрыт как on-demand MVP без Browser-smoke.
 
 ## Working Rules
 
@@ -241,13 +241,13 @@
   8. Visual mode/focus workspace и auto page matching — готовы; sync scroll/resize, subscriptions/outbox остаются.
   9. Persisted redirect chain + page-level network failures и friendly diagnostics — готово.
   10. Bounded bulk/single-page retry attempts внутри исходного run — готово.
-  11. Rich snapshot: response timing, cookies/scripts/GTM inventory и consent behavior `до/после` — static inventory готов; runtime consent audit остаётся.
+  11. Rich snapshot: response timing, cookies/scripts/GTM inventory и consent behavior `до/после` — static inventory и on-demand runtime consent audit MVP готовы; persisted audit history/queued audits остаются.
   12. Full-width single-page Inspector и общий Inspector в Compare — каркас MVP готов; UX-аудит требует следующей волны:
       - 12.1 site-card persistence, directory context, human run/status labels и anomaly explanation — готово;
       - 12.2 полные searchable links/assets inventories, grouped tracking и section legend/chips — готово;
       - 12.3 persisted rendered full-page snapshot + отдельные безопасные `DOM/Код` режимы — on-demand reconstruction готова; нативный screenshot в момент crawl остаётся для browser-persona этапа;
       - 12.4 searchable Compare picker, progressive controls, dynamic height и resizable panels — готово; server-side search/true virtualization остаются только при подтверждённой просадке на больших runs.
-  13. Runtime consent audit `до/после`, затем отображение наблюдаемого поведения cookies/scripts.
+  13. Runtime consent audit `до/после`, затем отображение наблюдаемого поведения cookies/scripts — on-demand MVP готов.
   14. `CrawlPersona`: guest → encrypted session bundle → browser login scenarios.
   15. Расширить anomaly/Compare на redirect, resources, consent и persona-scoped signals.
   16. Backend schedule contract: сохранённое расписание, timezone, duplicate-run guard, pause/resume и следующий запуск; текущий settings-блок остаётся честным manual-only состоянием до этого этапа.
@@ -295,6 +295,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P1 On-demand runtime consent audit for page Inspector**.
+  - Что было: Inspector честно показывал, что статический HTML не доказывает фактический запуск scripts/cookies до или после согласия.
+  - Что стало: editor/admin может явно запустить browser-аудит выбранной страницы; backend открывает сохранённый HTML на origin страницы, разрешает scripts/xhr/fetch, пробует нажать типовую кнопку consent и сравнивает cookies/requests до и после. UI показывает cookies names, request counts, распознанные tracking providers, новые cookies/providers и предупреждает, что это наблюдаемое поведение, а не юридическая оценка. Значения cookies/tokens не возвращаются.
+  - Как проверить: `Полный анализ → Cookies и consent → Проверить до/после`; после выполнения сравнить блоки `До согласия`, `После согласия` и `Что изменилось`.
+  - Вклад в цели: пользователь видит не только факт наличия GTM/scripts, но и наблюдаемое runtime-поведение относительно consent (`high` product value); аудит запускается только по запросу и не создаёт скрытой нагрузки на массовые runs (`high` operations/security).
 
 - [x] **P1 Compare workspace searchable picker and progressive controls**.
   - Что было: выбор страницы был native select без поиска; режимы `Визуально/Код/Структура` отображались до выбора страниц; рабочие панели имели слишком короткую высоту для длинных snapshots.

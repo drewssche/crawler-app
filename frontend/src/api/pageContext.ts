@@ -126,6 +126,47 @@ export function getPageContext(runId: number, url: string): Promise<PageContext>
   return apiGet<PageContext>(`/runs/${runId}/page-context?url=${encodeURIComponent(url)}`);
 }
 
+export type ConsentAuditResult = {
+  runtime_audit: "completed";
+  audited_at: string;
+  source: "stored_html_live_scripts";
+  before_consent: {
+    cookies: string[];
+    requests: {
+      total: number;
+      script: number;
+      xhr_fetch: number;
+      tracking_providers: string[];
+      sample: string[];
+    };
+  };
+  after_consent: {
+    attempted: boolean;
+    action_label: string;
+    cookies: string[];
+    new_cookies: string[];
+    requests: {
+      total: number;
+      script: number;
+      xhr_fetch: number;
+      tracking_providers: string[];
+      sample: string[];
+    };
+    new_tracking_providers: string[];
+  };
+  consent_action: {
+    clicked: boolean;
+    label: string;
+    explanation: string;
+  };
+  values_exposed: false;
+  explanation: string;
+};
+
+export function createConsentAudit(runId: number, url: string): Promise<ConsentAuditResult> {
+  return apiPost<ConsentAuditResult>(`/runs/${runId}/consent-audit?url=${encodeURIComponent(url)}`, {});
+}
+
 export type RetryPagesResult = {
   ok: boolean;
   run_id: number;

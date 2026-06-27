@@ -213,6 +213,16 @@ test("compare page selection is searchable and mode controls are progressive", (
   assert.match(cssSource, /resize: horizontal/);
 });
 
+test("page inspector exposes on-demand runtime consent audit", () => {
+  assert.match(reportSource, /createConsentAudit/);
+  assert.match(reportSource, /Browser-аудит до\/после согласия/);
+  assert.match(reportSource, /Проверить до\/после/);
+  assert.match(reportSource, /До согласия/);
+  assert.match(reportSource, /После согласия/);
+  assert.match(reportSource, /Новые cookies/);
+  assert.match(reportSource, /values cookies\/tokens не показываются|Значения cookies\/tokens не показываются/);
+});
+
 test("compare auto-match suggests but does not force a relative-path pair", () => {
   assert.match(compareSource, /suggestPageMatch/);
   assert.match(compareSource, /Предложение пары/);

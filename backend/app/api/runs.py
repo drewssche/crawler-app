@@ -36,6 +36,7 @@ from app.crawler.renderer import (
     render_page_snapshot,
     rendered_snapshot_file,
 )
+from app.crawler.consent_audit import run_consent_audit
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -1047,3 +1048,30 @@ def get_rendered_page_snapshot(
     if image_path is None:
         raise HTTPException(status_code=404, detail="Rendered snapshot not found")
     return FileResponse(image_path, media_type="image/jpeg", filename=f"page-{page.id}.jpg")
+
+
+@router.post("/{run_id}/consent-audit")
+def create_page_consent_audit(
+    run_id: int,
+    url: str = Query(min_length=1),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("crawler.run")),
+):
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    page = db.query(Page).filter(Page.run_id == run_id, Page.url == url).first()
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found in this run")
+    try:
+        return run_consent_audit(page)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Не удалось выполнить browser-аудит consent. Проверьте Chromium в backend-контейнере "
+                "и повторите попытку."
+            ),
+        ) from exc
