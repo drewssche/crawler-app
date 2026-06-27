@@ -24,7 +24,7 @@
   - новый и существующий проект гарантированно получает один primary site;
   - canonical `whole_site/path_prefix` scope защищает границы раздела и выход через `..`;
   - каждый `Run` теперь обязательно принадлежит `ProjectSite`, а `Page` наследует site scope через `run_id`;
-  - legacy `/runs/start/{profile_id}` сохранён как compatibility endpoint и запускает primary site;
+  - legacy `/runs/start/{profile_id}` compatibility endpoint удалён; запуск выполняется через `/runs/start-site/{site_id}` или `/runs/start-project/{profile_id}`;
   - явные site endpoints: запуск `/runs/start-site/{site_id}` и история `/runs/by-site/{site_id}`;
   - crawler использует настройки `ProjectSite`, проверяет section scope до запроса и после redirect.
 - friendly Create/Settings UX:
@@ -69,7 +69,7 @@
   - `301/302/307/308` отображаются отдельным жёлтым page-result с friendly-пояснением и адресом назначения;
   - timeout/connect/TLS/redirect failures сохраняются как красный page-level result и не валят run при наличии других успешных HTML-страниц;
   - полный run остаётся `FAILED`, если не получено ни одной пригодной HTML-страницы.
-- Последние проверки: backend `65 passed, 2 skipped`; PostgreSQL migration `b2f8d9e4c6a1` verified; RBAC parity passed; frontend tests `36 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; runtime consent audit smoke passed; DOM/rendered element picker targeted checks passed; `git diff --check` passed.
+- Последние проверки: backend `65 passed, 2 skipped`; backend integration `37 passed`; frontend project UI `18 passed`; PostgreSQL migration `b2f8d9e4c6a1` verified; RBAC parity passed; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; runtime consent audit smoke passed; DOM/rendered element picker targeted checks passed; `git diff --check` passed.
 - Общий frontend lint имеет ранее существовавшие ошибки вне текущих изменений; не считать их регрессией этой волны.
 - UX-аудит 2026-06-26 подтвердил четыре приоритетные волны:
   1. исправить потерю Structure при повторном выборе site card и открывать контекст раздела дерева вместо внешнего сайта;
@@ -77,6 +77,12 @@
   3. заменить обрезанный sanitized DOM на достоверный сохранённый rendered snapshot, сохранив безопасный DOM/code-режим отдельно;
   4. сделать Compare пригодным для тысяч страниц: searchable picker, progressive controls и полноразмерные/изменяемые панели без фиксированной высоты документа.
 - Следующий рекомендуемый пункт: **encrypted session bundle для Crawl Personas** с masked UI и запретом viewer читать secrets. Guest-persona foundation закрыт без Browser-smoke.
+- Legacy audit 2026-06-27:
+  - проект находится в dev-stage, поэтому breaking cleanup допустим, если упрощает целевую модель;
+  - audit зафиксирован в [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md);
+  - главный долг: продуктово это `Project`, но DB/API/routes/permissions всё ещё во многом называются `Profile/profiles`;
+  - ближайший cleanup после удаления `POST /runs/start/{profile_id}`: пересмотреть `GET /runs/by-profile/{profile_id}` и route/API terminology `profiles → projects`;
+  - крупные волны после этого: `profiles → projects` route/API rename, `profiles.edit → projects.edit`, `ProfileDashboardPage/ProfileNewPage/profileListCache` terminology cleanup, затем DB rename `profiles → projects` и `profile_id → project_id`.
 
 ## Working Rules
 
@@ -257,7 +263,7 @@
   15.2 Element-level inspection: visual/DOM block picker → linked HTML fragment → code highlight; later selected-block compare and target fingerprint monitoring. DOM picker и rendered snapshot element-map MVP готовы: новые визуальные снимки сохраняют карту блоков, чтобы клик по screenshot выбирал HTML-элемент. UX-stabilization: выбранный блок показывает источник (`Визуальный снимок`/`DOM`), пустой клик получает friendly warning, подсветка кода честно объясняет mismatch, есть `Сбросить выбор`.
   15.3 Selected-block compare: ручной выбор блока слева/справа в Compare, HTML/text diff только выбранных блоков, размеры/selector, structural fingerprint и warning, если блоки структурно не похожи — MVP готов. UX-polish: статус `Блоки: 0/2–2/2`, следующий шаг, `Очистить оба блока` и пояснение, когда старый snapshot без `element_map` требует пересоздания. Auto-suggest похожего блока готов как явное предложение по fingerprint без автоприменения. Следующее расширение: сохранение target monitoring.
   16. Backend schedule contract: сохранённое расписание, timezone, duplicate-run guard, pause/resume и следующий запуск; текущий settings-блок остаётся честным manual-only состоянием до этого этапа.
-  17. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile` и compatibility endpoint `/runs/start/{profile_id}`.
+  17. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile`; compatibility endpoint `/runs/start/{profile_id}` уже удалён.
 
   **Verification**
   - single-site whole-domain и section-only проекты не выходят за scope;
@@ -273,6 +279,15 @@
   `HighlightedText` уже используется в Structure и project search; расширять на Users/RootAdmins/Activity только по подтверждённой пользе.
 
 ## Reliability and Foundations
+
+- [ ] **P1 Legacy cleanup — Project terminology and compatibility removal** (`HIGH`, staged).
+  Цель: не строить target monitoring поверх старой `Profile`-модели. Стадия разработки позволяет делать breaking cleanup, если оно снижает сложность.
+  - Audit: [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md).
+  - 1. Safe cleanup: README/user-facing wording and obsolete compatibility endpoints.
+  - 2. Backend cleanup: `POST /runs/start/{profile_id}` удалён; следующий кандидат — `GET /runs/by-profile/{profile_id}` или явный `/projects/{id}/runs` aggregate.
+  - 3. Frontend terminology: `ProfileDashboardPage → ProjectDashboardPage`, `ProfileNewPage → ProjectNewPage`, `profileListCache → projectListCache`.
+  - 4. Route/API rename: `/profiles/* → /projects/*`, `/profiles/{id}/sites → /projects/{id}/sites`, `profiles.edit → projects.edit`.
+  - 5. DB rename wave: `profiles → projects`, `profile_id → project_id`; удалить дублирующие site-поля из project container после site-aware summary/search.
 
 - [ ] **P0 Stabilization gate** (`HIGH`, implementation mostly complete).
   Осталось ручное подтверждение project/run сценариев по отдельному запросу: два независимых запуска, immediate project visibility, FINISHED pages, duplicate conflict.

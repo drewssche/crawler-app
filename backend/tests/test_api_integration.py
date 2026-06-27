@@ -180,6 +180,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
         db.add(page)
         db.commit()
         profile_id = profile.id
+        site_id = site.id
         run_id = run.id
 
     client = TestClient(app)
@@ -193,7 +194,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
         f"/runs/{run_id}/page-context",
         params={"url": "https://protected.test/"},
     ).status_code == 401
-    assert client.post(f"/runs/start/{profile_id}").status_code == 401
+    assert client.post(f"/runs/start-site/{site_id}").status_code == 401
     assert client.post(f"/runs/{run_id}/retry-pages", json={}).status_code == 401
 
     assert client.get(f"/profiles/{profile_id}", headers=viewer_headers).status_code == 200
@@ -217,7 +218,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     catalog = client.get(f"/runs/{run_id}/page-catalog", headers=viewer_headers)
     assert catalog.status_code == 200
     assert catalog.json()[0]["title"] == "Protected title"
-    assert client.post(f"/runs/start/{profile_id}", headers=viewer_headers).status_code == 403
+    assert client.post(f"/runs/start-site/{site_id}", headers=viewer_headers).status_code == 403
     assert client.post(
         f"/runs/{run_id}/retry-pages",
         json={},
@@ -230,7 +231,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     ).status_code == 403
     assert client.delete(f"/profiles/{profile_id}", headers=viewer_headers).status_code == 403
 
-    assert client.post(f"/runs/start/{profile_id}", headers=editor_headers).status_code == 409
+    assert client.post(f"/runs/start-site/{site_id}", headers=editor_headers).status_code == 409
     created = client.post(
         "/profiles",
         json={"name": "Allowed", "start_url": "https://allowed.test", "allowed_domains_csv": "allowed.test"},
@@ -613,7 +614,7 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
 
     client = TestClient(app)
     editor_headers = _auth_header("runs-multi@test.local", role="editor")
-    response = client.post(f"/runs/start/{profile_id}", headers=editor_headers)
+    response = client.post(f"/runs/start-site/{primary_id}", headers=editor_headers)
     assert response.status_code == 200
     primary_run_id = response.json()["run_id"]
     assert response.json()["project_site_id"] == primary_id
@@ -910,7 +911,7 @@ def test_run_lock_is_scoped_to_project(monkeypatch):
         db.refresh(first)
         db.refresh(second)
         first_site = _add_primary_site(db, first)
-        _add_primary_site(db, second)
+        second_site = _add_primary_site(db, second)
         db.add(
             Run(
                 profile_id=first.id,
@@ -920,8 +921,8 @@ def test_run_lock_is_scoped_to_project(monkeypatch):
             )
         )
         db.commit()
-        first_id = first.id
-        second_id = second.id
+        first_site_id = first_site.id
+        second_site_id = second_site.id
 
     class FakeResponse:
         def __init__(self, url: str):
@@ -947,10 +948,10 @@ def test_run_lock_is_scoped_to_project(monkeypatch):
     client = TestClient(app)
 
     editor_headers = _auth_header("runs-lock@test.local", role="editor")
-    blocked = client.post(f"/runs/start/{first_id}", headers=editor_headers)
+    blocked = client.post(f"/runs/start-site/{first_site_id}", headers=editor_headers)
     assert blocked.status_code == 409
-    assert _extract_error_payload(blocked)["error"]["code"] == "run_already_active"
-    allowed = client.post(f"/runs/start/{second_id}", headers=editor_headers)
+    assert _extract_error_payload(blocked)["error"]["code"] == "site_run_already_active"
+    allowed = client.post(f"/runs/start-site/{second_site_id}", headers=editor_headers)
     assert allowed.status_code == 200
 
     app.dependency_overrides.clear()
@@ -972,7 +973,10 @@ def test_empty_crawl_marks_run_failed(monkeypatch):
         db.add(profile)
         db.commit()
         db.refresh(profile)
+        site = _add_primary_site(db, profile)
+        db.commit()
         profile_id = profile.id
+        site_id = site.id
 
     class FailingClient:
         def __init__(self, *args, **kwargs):
@@ -990,7 +994,7 @@ def test_empty_crawl_marks_run_failed(monkeypatch):
     monkeypatch.setattr(runs_api.httpx, "Client", FailingClient)
     client = TestClient(app)
     response = client.post(
-        f"/runs/start/{profile_id}",
+        f"/runs/start-site/{site_id}",
         headers=_auth_header("runs-empty@test.local", role="editor"),
     )
     assert response.status_code == 502
@@ -1032,7 +1036,10 @@ def test_redirect_chain_is_saved_as_friendly_page_result(monkeypatch):
         db.add(profile)
         db.commit()
         db.refresh(profile)
+        site = _add_primary_site(db, profile)
+        db.commit()
         profile_id = profile.id
+        site_id = site.id
 
     class Hop:
         url = "https://redirect.test/old"
@@ -1062,7 +1069,7 @@ def test_redirect_chain_is_saved_as_friendly_page_result(monkeypatch):
     monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
     client = TestClient(app)
     response = client.post(
-        f"/runs/start/{profile_id}",
+        f"/runs/start-site/{site_id}",
         headers=_auth_header("redirect@test.local", role="editor"),
     )
     assert response.status_code == 200
@@ -1107,7 +1114,10 @@ def test_page_network_failure_does_not_fail_run_with_successful_html(monkeypatch
         db.add(profile)
         db.commit()
         db.refresh(profile)
+        site = _add_primary_site(db, profile)
+        db.commit()
         profile_id = profile.id
+        site_id = site.id
 
     class SuccessResponse:
         def __init__(self, url: str):
@@ -1146,7 +1156,7 @@ def test_page_network_failure_does_not_fail_run_with_successful_html(monkeypatch
     monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
     client = TestClient(app)
     response = client.post(
-        f"/runs/start/{profile_id}",
+        f"/runs/start-site/{site_id}",
         headers=_auth_header("partial-failure@test.local", role="editor"),
     )
     assert response.status_code == 200
@@ -1313,6 +1323,7 @@ def test_pages_changed_counts_deleted_urls(monkeypatch):
         )
         db.commit()
         profile_id = profile.id
+        site_id = site.id
 
     class FakeResponse:
         url = "https://diff.test/"
@@ -1336,7 +1347,7 @@ def test_pages_changed_counts_deleted_urls(monkeypatch):
     monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
     client = TestClient(app)
     response = client.post(
-        f"/runs/start/{profile_id}",
+        f"/runs/start-site/{site_id}",
         headers=_auth_header("runs-diff@test.local", role="editor"),
     )
     assert response.status_code == 200

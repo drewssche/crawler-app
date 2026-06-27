@@ -30,7 +30,6 @@ from app.core.events import (
     EVENT_SEVERITY_INFO,
     emit_event,
 )
-from app.services.project_sites import create_primary_site_for_profile
 from app.services.crawl_personas import get_default_persona
 from app.services.page_context import build_page_context
 from app.crawler.renderer import (
@@ -272,34 +271,6 @@ def _assert_no_active_site_run(db: Session, site: ProjectSite) -> None:
                 "project_site_id": site.id,
             },
         )
-
-
-def _get_primary_site(db: Session, profile: Profile) -> ProjectSite:
-    site = (
-        db.query(ProjectSite)
-        .filter(ProjectSite.profile_id == profile.id, ProjectSite.is_enabled.is_(True))
-        .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
-        .first()
-    )
-    if site is not None:
-        return site
-    existing_site = (
-        db.query(ProjectSite)
-        .filter(ProjectSite.profile_id == profile.id)
-        .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
-        .first()
-    )
-    if existing_site is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "project_has_no_enabled_sites",
-                "message": "В проекте нет включённых сайтов для запуска.",
-            },
-        )
-    site = create_primary_site_for_profile(db, profile)
-    db.flush()
-    return site
 
 
 def _emit_run_completion_event(
@@ -616,28 +587,6 @@ def _execute_site_run(
         raise
 
     return run
-
-
-@router.post("/start/{profile_id}")
-def start_run(
-    profile_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("crawler.run")),
-):
-    profile = db.get(Profile, profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    _assert_no_active_project_run(db, profile_id)
-    site = _get_primary_site(db, profile)
-    run = _execute_site_run(db, site, actor_user_id=current_user.id)
-    persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
-    return {
-        "ok": True,
-        "run_id": run.id,
-        "project_site_id": site.id,
-        "crawl_persona_id": run.crawl_persona_id,
-        "persona": None if persona is None else {"id": persona.id, "key": persona.key, "label": persona.label, "kind": persona.kind},
-    }
 
 
 @router.post("/start-site/{site_id}")
