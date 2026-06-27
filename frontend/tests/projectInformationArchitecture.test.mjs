@@ -115,10 +115,17 @@ test("full page inspector keeps the snapshot and a scrollable section report vis
   assert.match(inspectorSource, /Сохранённый HTML/);
   assert.match(inspectorSource, /sandbox="allow-scripts"/);
   assert.match(inspectorSource, /RenderedSnapshotView/);
+  assert.match(inspectorSource, /elementPicker=\{elementPickerEnabled\}/);
+  assert.match(inspectorSource, /source: "snapshot"/);
+  assert.match(inspectorSource, /source: "dom"/);
   assert.match(inspectorSource, /PageInspectionReport/);
   assert.match(inspectorSource, /Выбрать блок/);
   assert.match(inspectorSource, /Выбранный блок/);
   assert.match(inspectorSource, /Показать в коде/);
+  assert.match(inspectorSource, /Сбросить выбор/);
+  assert.match(inspectorSource, /Источник:/);
+  assert.match(inspectorSource, /Точный HTML-фрагмент не найден/);
+  assert.match(inspectorSource, /не найден HTML-блок/);
   assert.match(inspectorSource, /page-code-selected-fragment/);
   assert.match(safeSnapshotSource, /crawler:element-selected/);
   assert.match(safeSnapshotSource, /startsWith\("on"\)/);
@@ -198,6 +205,9 @@ test("compare visual mode uses a full focus workspace and persisted rendered sna
   assert.match(renderedSnapshotSource, /Создать визуальный снимок/);
   assert.match(renderedSnapshotSource, /downloadRenderedSnapshot/);
   assert.match(renderedSnapshotSource, /metadata\.explanation/);
+  assert.match(renderedSnapshotSource, /element_map/);
+  assert.match(renderedSnapshotSource, /rendered-snapshot-element-highlight/);
+  assert.match(renderedSnapshotSource, /handleImageClick/);
   assert.match(safeSnapshotSource, /Content-Security-Policy/);
   assert.match(compareSource, /Визуально/);
   assert.match(compareSource, /Обзор/);

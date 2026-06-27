@@ -299,6 +299,11 @@ button:focus-visible {
   color: #ffd8ad;
 }
 
+.element-picker-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .element-picker-dom-shell {
   position: relative;
   min-height: 0;
@@ -511,6 +516,16 @@ button:focus-visible {
   background-position: 0 0, 0 10px, 10px -10px, -10px 0;
 }
 
+.rendered-snapshot-image-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.rendered-snapshot-fit .rendered-snapshot-image-wrap {
+  display: block;
+}
+
 .rendered-snapshot-fit img {
   display: block;
   width: 100%;
@@ -523,6 +538,20 @@ button:focus-visible {
   max-width: none;
   height: auto;
   background: #fff;
+}
+
+.rendered-snapshot-picker-enabled img {
+  cursor: crosshair;
+}
+
+.rendered-snapshot-element-highlight {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid rgba(231, 161, 90, 0.94);
+  border-radius: 6px;
+  background: rgba(231, 161, 90, 0.14);
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.45);
 }
 
 @media (max-width: 980px) {

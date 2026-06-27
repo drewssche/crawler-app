@@ -69,7 +69,7 @@
   - `301/302/307/308` отображаются отдельным жёлтым page-result с friendly-пояснением и адресом назначения;
   - timeout/connect/TLS/redirect failures сохраняются как красный page-level result и не валят run при наличии других успешных HTML-страниц;
   - полный run остаётся `FAILED`, если не получено ни одной пригодной HTML-страницы.
-- Последние проверки: backend `64 passed, 2 skipped`; PostgreSQL migration `b2f8d9e4c6a1` verified; RBAC parity passed; frontend tests `36 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; runtime consent audit smoke passed; DOM element picker smoke passed; `git diff --check` passed.
+- Последние проверки: backend `65 passed, 2 skipped`; PostgreSQL migration `b2f8d9e4c6a1` verified; RBAC parity passed; frontend tests `36 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; runtime consent audit smoke passed; DOM/rendered element picker targeted checks passed; `git diff --check` passed.
 - Общий frontend lint имеет ранее существовавшие ошибки вне текущих изменений; не считать их регрессией этой волны.
 - UX-аудит 2026-06-26 подтвердил четыре приоритетные волны:
   1. исправить потерю Structure при повторном выборе site card и открывать контекст раздела дерева вместо внешнего сайта;
@@ -227,7 +227,7 @@
   - широкий экран: две полноценные панели; средний/узкий: переключение `Обе | Левая | Правая`, без двух нечитаемых миниатюр;
   - next compare layout idea: на широком экране использовать рабочую схему `левая info-панель | левая страница | правая страница | правая info-панель`, где каждая info-панель относится только к своей странице; центральная область остаётся главным местом сравнения. На средних/узких экранах не держать четыре колонки: info-панели сворачиваются в drawer/нижнюю панель или переключатель `Инфо: Левая | Правая | Различия`, чтобы snapshot не становился нечитаемым;
   - отдельный режим `Различия` остаётся нужен поверх двух page-info панелей: он показывает только расхождения между страницами, а не полный отчёт каждой стороны;
-  - element-level inspection после стабилизации layout: пользователь включает `Выбрать блок`, кликает визуальный/DOM-блок, видит связанный HTML-фрагмент и при переходе в `Код` получает подсветку соответствующих строк. Первый этап делать через DOM/sandbox, затем расширить rendered snapshot element-map (`selector`, bounding box, outerHTML, text fingerprint) для клика по визуальному снимку; позже — сравнение выбранных блоков слева/справа.
+  - element-level inspection после стабилизации layout: пользователь включает `Выбрать блок`, кликает визуальный/DOM-блок, видит связанный HTML-фрагмент и при переходе в `Код` получает подсветку соответствующих строк. DOM/sandbox и rendered snapshot element-map (`selector`, bounding box, outerHTML, text fingerprint) являются базой для клика по визуальному снимку; позже — сравнение выбранных блоков слева/справа.
   - visual mode использует сохранённый rendered snapshot; sandboxed DOM доступен отдельно для исследования структуры без scripts/forms/network navigation;
   - высота документа не задаётся константой: full-page capture либо измеренный DOM не должен обрезаться после 1600 px или создавать ложную пустую область;
   - режимы масштаба: `Вписать по ширине | 100% | Вся страница`; обе snapshot-панели и Inspector используют высоту viewport, независимый scroll и не уменьшаются до коротких окон;
@@ -254,7 +254,8 @@
   14. `CrawlPersona`: guest → encrypted session bundle → browser login scenarios. Guest foundation готов: каждый site получает default `Гость`, API runs/snapshots/context возвращают persona metadata, anomaly baseline scoped по default persona.
   15. Расширить anomaly/Compare на redirect, resources, consent и persona-scoped signals.
   15.1 Compare layout refinement: split page info into left/right contextual panels around the central two-page comparison; keep adaptive fallback for medium/narrow screens and preserve a separate differences-only report — готово.
-  15.2 Element-level inspection: visual/DOM block picker → linked HTML fragment → code highlight; later selected-block compare and target fingerprint monitoring. DOM picker MVP готов; rendered snapshot element-map остаётся следующим расширением.
+  15.2 Element-level inspection: visual/DOM block picker → linked HTML fragment → code highlight; later selected-block compare and target fingerprint monitoring. DOM picker и rendered snapshot element-map MVP готовы: новые визуальные снимки сохраняют карту блоков, чтобы клик по screenshot выбирал HTML-элемент. UX-stabilization: выбранный блок показывает источник (`Визуальный снимок`/`DOM`), пустой клик получает friendly warning, подсветка кода честно объясняет mismatch, есть `Сбросить выбор`.
+  15.3 Selected-block compare: после стабилизации picker добавить выбор блока слева/справа в Compare, HTML/text diff только выбранных блоков, размеры/selector/fingerprint и warning, если блоки структурно не похожи.
   16. Backend schedule contract: сохранённое расписание, timezone, duplicate-run guard, pause/resume и следующий запуск; текущий settings-блок остаётся честным manual-only состоянием до этого этапа.
   17. После перевода UI, crawler и API удалить дублирующие site-поля из legacy `Profile` и compatibility endpoint `/runs/start/{profile_id}`.
 

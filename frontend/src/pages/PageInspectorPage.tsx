@@ -15,6 +15,7 @@ import { hasPermission } from "../utils/permissions";
 type InspectorMode = "snapshot" | "dom" | "code";
 
 type PickedElement = {
+  source: "snapshot" | "dom";
   tag: string;
   id: string;
   className: string;
@@ -24,11 +25,14 @@ type PickedElement = {
   rect: { x: number; y: number; width: number; height: number };
 };
 
-function highlightedHtml(html: string, selected?: PickedElement | null): string {
-  if (!selected?.outerHTML) return html || "HTML отсутствует.";
+function highlightedHtml(html: string, selected?: PickedElement | null): { value: string; found: boolean } {
+  if (!selected?.outerHTML) return { value: html || "HTML отсутствует.", found: false };
   const index = html.indexOf(selected.outerHTML);
-  if (index === -1) return html || "HTML отсутствует.";
-  return `${html.slice(0, index)}__CRAWLER_PICK_START__${html.slice(index, index + selected.outerHTML.length)}__CRAWLER_PICK_END__${html.slice(index + selected.outerHTML.length)}`;
+  if (index === -1) return { value: html || "HTML отсутствует.", found: false };
+  return {
+    value: `${html.slice(0, index)}__CRAWLER_PICK_START__${html.slice(index, index + selected.outerHTML.length)}__CRAWLER_PICK_END__${html.slice(index + selected.outerHTML.length)}`,
+    found: true,
+  };
 }
 
 export default function PageInspectorPage() {
@@ -44,9 +48,11 @@ export default function PageInspectorPage() {
   const [error, setError] = useState("");
   const [elementPickerEnabled, setElementPickerEnabled] = useState(false);
   const [pickedElement, setPickedElement] = useState<PickedElement | null>(null);
+  const [pickerNotice, setPickerNotice] = useState("");
   const invalidSelection = !Number.isFinite(runId) || runId <= 0 || !url;
   const visibleError = invalidSelection ? "Не выбран прогон или URL страницы." : error;
   const canGenerateSnapshot = hasPermission(user?.role, "crawler.run");
+  const highlighted = highlightedHtml(snapshot?.html || "", pickedElement);
 
   useEffect(() => {
     if (invalidSelection) return;
@@ -78,9 +84,10 @@ export default function PageInspectorPage() {
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
       if (event.data?.type !== "crawler:element-selected") return;
-      const payload = event.data.payload as PickedElement;
+      const payload = event.data.payload as Omit<PickedElement, "source">;
       if (!payload?.outerHTML || !payload?.selector) return;
-      setPickedElement(payload);
+      setPickedElement({ ...payload, source: "dom" });
+      setPickerNotice("");
     }
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
@@ -129,10 +136,16 @@ export default function PageInspectorPage() {
               }
               actions={
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  {mode === "dom" && (
+                  {(mode === "dom" || mode === "snapshot") && (
                     <button
                       type="button"
                       className={`element-picker-toggle${elementPickerEnabled ? " is-active" : ""}`}
+                      disabled={mode === "snapshot" && !snapshot.rendered_snapshot.element_map?.items?.length}
+                      title={
+                        mode === "snapshot" && !snapshot.rendered_snapshot.element_map?.items?.length
+                          ? "Создайте или обновите визуальный снимок: новая версия сохраняет карту HTML-блоков."
+                          : undefined
+                      }
                       onClick={() => setElementPickerEnabled((current) => !current)}
                     >
                       {elementPickerEnabled ? "Выбор блока включён" : "Выбрать блок"}
@@ -150,6 +163,13 @@ export default function PageInspectorPage() {
                 metadata={snapshot.rendered_snapshot}
                 canGenerate={canGenerateSnapshot}
                 onCreated={(metadata) => setSnapshot((current) => current ? { ...current, rendered_snapshot: metadata } : current)}
+                elementPicker={elementPickerEnabled}
+                selectedElement={pickedElement}
+                onElementSelected={(element) => {
+                  setPickedElement({ ...element, source: "snapshot" });
+                  setPickerNotice("");
+                }}
+                onElementMiss={() => setPickerNotice("В этой точке снимка не найден HTML-блок. Попробуйте кликнуть по тексту, изображению или видимой карточке.")}
               />
             ) : mode === "dom" ? (
               <div className="element-picker-dom-shell">
@@ -180,7 +200,7 @@ export default function PageInspectorPage() {
                   fontSize: 12,
                 }}
               >
-                {highlightedHtml(snapshot.html || "", pickedElement).split(/(__CRAWLER_PICK_START__|__CRAWLER_PICK_END__)/).map((part, index, parts) => {
+                {highlighted.value.split(/(__CRAWLER_PICK_START__|__CRAWLER_PICK_END__)/).map((part, index, parts) => {
                   if (part === "__CRAWLER_PICK_START__" || part === "__CRAWLER_PICK_END__") return null;
                   const selected = parts[index - 1] === "__CRAWLER_PICK_START__";
                   return selected
@@ -192,20 +212,41 @@ export default function PageInspectorPage() {
           </Card>
 
           <Card className="page-inspector-report" style={{ minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+            {pickerNotice && <StatusText tone="warning">{pickerNotice}</StatusText>}
             {pickedElement && (
               <Card className="element-picker-card" variant="hint">
                 <SectionHeaderRow
                   title={<div>Выбранный блок</div>}
                   actions={
-                    <button
-                      type="button"
-                      className="element-picker-toggle"
-                      onClick={() => setMode("code")}
-                    >
-                      Показать в коде
-                    </button>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="element-picker-toggle"
+                        onClick={() => setMode("code")}
+                      >
+                        Показать в коде
+                      </button>
+                      <button
+                        type="button"
+                        className="element-picker-toggle"
+                        onClick={() => {
+                          setPickedElement(null);
+                          setPickerNotice("");
+                        }}
+                      >
+                        Сбросить выбор
+                      </button>
+                    </div>
                   }
                 />
+                <MetaText>
+                  Источник: {pickedElement.source === "snapshot" ? "визуальный снимок" : "безопасный DOM"}
+                </MetaText>
+                {!highlighted.found && (
+                  <StatusText tone="warning">
+                    Точный HTML-фрагмент не найден в сохранённом коде. Это возможно, если браузер нормализовал DOM или снимок создан из очищенной версии страницы.
+                  </StatusText>
+                )}
                 <MetaText>Элемент: &lt;{pickedElement.tag}&gt;</MetaText>
                 <MetaText style={{ wordBreak: "break-word" }}>Selector: {pickedElement.selector}</MetaText>
                 {pickedElement.id && <MetaText>ID: {pickedElement.id}</MetaText>}

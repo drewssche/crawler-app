@@ -9,7 +9,24 @@ export type RenderedSnapshotMetadata = {
   full_height?: number;
   clipped?: boolean;
   mime_type?: string;
+  element_map?: {
+    version: number;
+    items_total: number;
+    items_truncated: boolean;
+    coordinate_space: "rendered_snapshot_pixels";
+    items: RenderedSnapshotElement[];
+  };
   explanation: string;
+};
+
+export type RenderedSnapshotElement = {
+  tag: string;
+  id: string;
+  className: string;
+  selector: string;
+  text: string;
+  outerHTML: string;
+  rect: { x: number; y: number; width: number; height: number };
 };
 
 export type CompareRun = {

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.crawler.renderer import _safe_render_document, get_rendered_snapshot_metadata
+from app.crawler.renderer import _element_map_script, _safe_render_document, get_rendered_snapshot_metadata
 from app.db.models.page import Page
 
 
@@ -50,3 +50,13 @@ def test_missing_rendered_snapshot_metadata_is_explainable(monkeypatch, tmp_path
     assert metadata["available"] is False
     assert metadata["capture_source"] == "stored_html_live_assets"
     assert "CSS" in metadata["explanation"]
+
+
+def test_rendered_snapshot_element_map_script_keeps_user_friendly_fields():
+    script = _element_map_script(max_items=25, max_height=900)
+
+    assert "selectorFor" in script
+    assert "outerHTML" in script
+    assert "coordinate_space" in script
+    assert "rendered_snapshot_pixels" in script
+    assert "items_truncated" in script

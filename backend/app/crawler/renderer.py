@@ -12,8 +12,9 @@ from app.db.models.page import Page
 
 
 SNAPSHOT_FORMAT = "jpeg"
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
 MAX_RENDER_HEIGHT = 30_000
+MAX_ELEMENT_MAP_ITEMS = 1_500
 
 
 def snapshot_root() -> Path:
@@ -49,6 +50,82 @@ def _safe_render_document(page: Page) -> str:
     base = soup.new_tag("base", href=page.final_url or page.url)
     soup.head.insert(0, base)
     return f"<!doctype html>{soup}"
+
+
+def _element_map_script(max_items: int, max_height: int) -> str:
+    return f"""() => {{
+        const maxItems = {max_items};
+        const maxHeight = {max_height};
+        const textLimit = 500;
+        const htmlLimit = 5000;
+
+        function cssEscape(value) {{
+            if (window.CSS && typeof window.CSS.escape === "function") {{
+                return window.CSS.escape(value);
+            }}
+            return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\\\$&");
+        }}
+
+        function selectorFor(element) {{
+            if (!element || element.nodeType !== Node.ELEMENT_NODE) return "";
+            if (element.id) return `${{element.tagName.toLowerCase()}}#${{cssEscape(element.id)}}`;
+            const parts = [];
+            let current = element;
+            while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.body) {{
+                let part = current.tagName.toLowerCase();
+                const className = typeof current.className === "string" ? current.className.trim() : "";
+                const firstClass = className.split(/\\s+/).filter(Boolean)[0];
+                if (firstClass) part += `.${{cssEscape(firstClass)}}`;
+                const parent = current.parentElement;
+                if (parent) {{
+                    const siblings = Array.from(parent.children).filter((node) => node.tagName === current.tagName);
+                    if (siblings.length > 1) part += `:nth-of-type(${{siblings.indexOf(current) + 1}})`;
+                }}
+                parts.unshift(part);
+                current = parent;
+                if (parts.length >= 5) break;
+            }}
+            return parts.join(" > ");
+        }}
+
+        const candidates = Array.from(document.body?.querySelectorAll("*") || []);
+        const items = [];
+        let eligibleTotal = 0;
+        for (const element of candidates) {{
+            const rect = element.getBoundingClientRect();
+            const width = Math.round(rect.width);
+            const height = Math.round(rect.height);
+            const x = Math.round(rect.left + window.scrollX);
+            const y = Math.round(rect.top + window.scrollY);
+            if (width < 4 || height < 4 || x < 0 || y < 0 || y > maxHeight) continue;
+            const style = window.getComputedStyle(element);
+            if (
+                style.display === "none" ||
+                style.visibility === "hidden" ||
+                Number(style.opacity || 1) === 0
+            ) continue;
+            eligibleTotal += 1;
+            if (items.length >= maxItems) continue;
+            const outerHTML = element.outerHTML || "";
+            const text = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
+            items.push({{
+                tag: element.tagName.toLowerCase(),
+                id: element.id || "",
+                className: typeof element.className === "string" ? element.className.trim() : "",
+                selector: selectorFor(element),
+                text: text.slice(0, textLimit),
+                outerHTML: outerHTML.length > htmlLimit ? `${{outerHTML.slice(0, htmlLimit)}}…` : outerHTML,
+                rect: {{ x, y, width, height }},
+            }});
+        }}
+        return {{
+            version: 1,
+            items_total: eligibleTotal,
+            items_truncated: eligibleTotal > maxItems,
+            coordinate_space: "rendered_snapshot_pixels",
+            items,
+        }};
+    }}"""
 
 
 def get_rendered_snapshot_metadata(page: Page) -> dict:
@@ -126,6 +203,7 @@ def render_page_snapshot(page: Page) -> dict:
         full_height = max(200, int(dimensions.get("height") or 1000))
         captured_height = min(full_height, MAX_RENDER_HEIGHT)
         clipped = full_height > captured_height
+        element_map = browser_page.evaluate(_element_map_script(MAX_ELEMENT_MAP_ITEMS, captured_height))
         browser_page.screenshot(
             path=str(image_path),
             type="jpeg",
@@ -144,6 +222,7 @@ def render_page_snapshot(page: Page) -> dict:
         "full_height": full_height,
         "clipped": clipped,
         "mime_type": "image/jpeg",
+        "element_map": element_map,
         "explanation": (
             "Снимок построен из HTML этого прогона. Scripts и формы отключены; CSS, изображения "
             "и шрифты загружены с сайта в момент создания и могли измениться после прогона."
