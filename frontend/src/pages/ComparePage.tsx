@@ -31,11 +31,14 @@ type PanelView = "both" | "left" | "right";
 type VisualScale = "overview" | "detail";
 type InspectorSide = "left" | "right" | "differences";
 
+const PAGE_PICKER_LIMIT = 80;
+
 type SideState = {
   siteId: number | null;
   runs: CompareRun[];
   runId: number | null;
   pages: ComparePageItem[];
+  pageQuery: string;
   url: string;
   snapshot: CompareSnapshot | null;
   context: PageContext | null;
@@ -48,6 +51,7 @@ const EMPTY_SIDE: SideState = {
   runs: [],
   runId: null,
   pages: [],
+  pageQuery: "",
   url: "",
   snapshot: null,
   context: null,
@@ -61,6 +65,7 @@ function SnapshotSelector({
   side,
   onSiteChange,
   onRunChange,
+  onPageQueryChange,
   onPageChange,
 }: {
   label: string;
@@ -68,11 +73,25 @@ function SnapshotSelector({
   side: SideState;
   onSiteChange: (siteId: number) => void;
   onRunChange: (runId: number) => void;
+  onPageQueryChange: (query: string) => void;
   onPageChange: (url: string) => void;
 }) {
+  const normalizedQuery = side.pageQuery.trim().toLowerCase();
+  const filteredPages = normalizedQuery
+    ? side.pages.filter((page) => {
+        const haystack = `${page.url} ${page.title || ""} ${page.status_code}`.toLowerCase();
+        return haystack.includes(normalizedQuery);
+      })
+    : side.pages;
+  const visiblePages = filteredPages.slice(0, PAGE_PICKER_LIMIT);
+  const selectedPage = side.pages.find((page) => page.url === side.url);
+
   return (
-    <Card style={{ display: "grid", gap: 8, minWidth: 0 }}>
-      <div style={{ fontWeight: 700 }}>{label}</div>
+    <Card className="compare-selector-card">
+      <SectionHeaderRow
+        title={<div style={{ fontWeight: 800 }}>{label}</div>}
+        actions={side.snapshot ? <StatusText tone="success">Страница выбрана</StatusText> : <MetaText>Шаг 1</MetaText>}
+      />
       <UiSelect
         value={side.siteId ?? ""}
         onChange={(event) => onSiteChange(Number(event.target.value))}
@@ -94,17 +113,50 @@ function SnapshotSelector({
           </option>
         ))}
       </UiSelect>
-      <UiSelect
-        value={side.url}
-        onChange={(event) => onPageChange(event.target.value)}
-        disabled={side.pages.length === 0}
-        style={{ width: "100%" }}
-      >
-        <option value="" disabled>Выберите страницу</option>
-        {side.pages.map((page) => (
-          <option key={page.id} value={page.url}>{page.status_code} · {page.url}</option>
-        ))}
-      </UiSelect>
+
+      <div className="compare-page-picker" aria-label={`${label}: выбор страницы`}>
+        <input
+          value={side.pageQuery}
+          onChange={(event) => onPageQueryChange(event.target.value)}
+          disabled={side.pages.length === 0}
+          placeholder={side.pages.length ? "Поиск страницы по URL, title или HTTP..." : "Сначала выберите версию"}
+          className="compare-page-search"
+        />
+        <div className="compare-page-picker-meta">
+          <MetaText opacity={0.68}>
+            {side.pages.length
+              ? `Найдено: ${filteredPages.length} из ${side.pages.length}`
+              : "Страницы появятся после выбора успешного прогона."}
+          </MetaText>
+          {filteredPages.length > PAGE_PICKER_LIMIT && (
+            <MetaText opacity={0.62}>Показаны первые {PAGE_PICKER_LIMIT}. Уточните поиск.</MetaText>
+          )}
+        </div>
+        {selectedPage && (
+          <div className="compare-selected-page">
+            <MetaText opacity={0.68}>Выбрано</MetaText>
+            <div>{selectedPage.title || selectedPage.url}</div>
+            {selectedPage.title && <MetaText opacity={0.62}>{selectedPage.url}</MetaText>}
+          </div>
+        )}
+        <div className="compare-page-results" role="listbox" aria-label="Найденные страницы">
+          {visiblePages.map((page) => (
+            <button
+              key={page.id}
+              type="button"
+              className={`compare-page-result${page.url === side.url ? " is-selected" : ""}`}
+              onClick={() => onPageChange(page.url)}
+            >
+              <span className="compare-page-result-main">{page.title || page.url}</span>
+              {page.title && <span className="compare-page-result-url">{page.url}</span>}
+              <span className="compare-page-result-meta">HTTP {page.status_code}</span>
+            </button>
+          ))}
+          {side.pages.length > 0 && visiblePages.length === 0 && (
+            <MetaText>По этому запросу страниц не найдено.</MetaText>
+          )}
+        </div>
+      </div>
       {side.loading && <MetaText>Загрузка snapshot...</MetaText>}
       {side.error && <StatusText tone="danger">{side.error}</StatusText>}
     </Card>
@@ -136,7 +188,7 @@ function VisualSnapshotPanel({
   onRenderedSnapshotCreated: (metadata: CompareSnapshot["rendered_snapshot"]) => void;
 }) {
   return (
-    <Card style={{ display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: 8, minHeight: "calc(100vh - 260px)", overflow: "hidden" }}>
+    <Card className="compare-visual-panel">
       <SectionHeaderRow
         title={<div>{label}</div>}
         actions={<MetaText opacity={0.68}>{snapshot.status_code} · SEO {snapshot.seo.score}%</MetaText>}
@@ -287,6 +339,7 @@ export default function ComparePage() {
       ...current,
       runId,
       pages: [],
+      pageQuery: "",
       url: "",
       snapshot: null,
       context: null,
@@ -316,6 +369,10 @@ export default function ComparePage() {
     }
   }
 
+  function updatePageQuery(key: SideKey, query: string) {
+    updateSide(key, (current) => ({ ...current, pageQuery: query }));
+  }
+
   useEffect(() => {
     if (!Number.isFinite(profileId)) return;
     listProjectSites(profileId)
@@ -336,6 +393,7 @@ export default function ComparePage() {
   const changedLines = diff.filter((line) => line.kind !== "same").length;
   const ready = Boolean(left.snapshot && right.snapshot);
   const inspectorReady = Boolean(left.context && right.context);
+  const selectionProgress = (left.snapshot ? 1 : 0) + (right.snapshot ? 1 : 0);
   const rightSuggestion = useMemo(
     () => left.url && right.pages.length ? suggestPageMatch(left.url, right.pages) : null,
     [left.url, right.pages],
@@ -351,19 +409,25 @@ export default function ComparePage() {
         title={
           <div>
             <h2 style={{ margin: 0 }}>Сравнение страниц</h2>
-            <MetaText opacity={0.68}>Выберите любые два snapshots внутри проекта.</MetaText>
+            <MetaText opacity={0.68}>
+              Шаг 1: выберите две страницы. Шаг 2: выберите режим сравнения. Шаг 3: исследуйте различия.
+            </MetaText>
           </div>
         }
         actions={
-          <SegmentedControl
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: "visual", label: "Визуально" },
-              { value: "code", label: "Код" },
-              { value: "structure", label: "Структура" },
-            ]}
-          />
+          ready
+            ? (
+              <SegmentedControl
+                value={mode}
+                onChange={setMode}
+                options={[
+                  { value: "visual", label: "Визуально" },
+                  { value: "code", label: "Код" },
+                  { value: "structure", label: "Структура" },
+                ]}
+              />
+            )
+            : <StatusText tone="muted">Выбрано {selectionProgress}/2</StatusText>
         }
       />
       {error && <StatusText tone="danger">{error}</StatusText>}
@@ -375,6 +439,7 @@ export default function ComparePage() {
           side={left}
           onSiteChange={(siteId) => void selectSite("left", siteId)}
           onRunChange={(runId) => void selectRun("left", runId)}
+          onPageQueryChange={(query) => updatePageQuery("left", query)}
           onPageChange={(url) => void selectPage("left", url)}
         />
         <SnapshotSelector
@@ -383,6 +448,7 @@ export default function ComparePage() {
           side={right}
           onSiteChange={(siteId) => void selectSite("right", siteId)}
           onRunChange={(runId) => void selectRun("right", runId)}
+          onPageQueryChange={(query) => updatePageQuery("right", query)}
           onPageChange={(url) => void selectPage("right", url)}
         />
       </div>
@@ -415,7 +481,14 @@ export default function ComparePage() {
         </Card>
       )}
 
-      {!ready && <Card variant="hint"><MetaText>Выберите страницу с обеих сторон, чтобы начать сравнение.</MetaText></Card>}
+      {!ready && (
+        <Card variant="hint">
+          <MetaText>
+            Режимы сравнения появятся после выбора двух страниц. Так интерфейс не показывает переключатели,
+            которые ещё ни на что не влияют.
+          </MetaText>
+        </Card>
+      )}
 
       {ready && (
         <Card style={{ padding: 8 }}>
@@ -444,7 +517,7 @@ export default function ComparePage() {
       )}
 
       {ready && left.snapshot && right.snapshot && (
-        <div className="compare-inspector-grid">
+        <div className="compare-inspector-grid compare-work-area">
           <div style={{ minWidth: 0 }}>
             {mode === "visual" && (
               <div
@@ -527,7 +600,7 @@ export default function ComparePage() {
             )}
           </div>
 
-          <Card className="compare-inspector-report" style={{ minHeight: 0, maxHeight: "calc(100vh - 245px)", overflowY: "auto" }}>
+          <Card className="compare-inspector-report">
             <div style={{ display: "grid", gap: 9 }}>
               <div style={{ fontWeight: 800 }}>Информация о страницах</div>
               <SegmentedControl

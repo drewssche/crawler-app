@@ -26,6 +26,7 @@ export type ComparePageItem = {
   url: string;
   status_code: number;
   html_hash: string;
+  title?: string;
 };
 
 export type CompareSnapshot = {

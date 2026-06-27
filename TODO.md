@@ -69,14 +69,14 @@
   - `301/302/307/308` отображаются отдельным жёлтым page-result с friendly-пояснением и адресом назначения;
   - timeout/connect/TLS/redirect failures сохраняются как красный page-level result и не валят run при наличии других успешных HTML-страниц;
   - полный run остаётся `FAILED`, если не получено ни одной пригодной HTML-страницы.
-- Последние проверки: backend `62 passed, 2 skipped`; PostgreSQL migration `c7e4a2b9d130` verified; RBAC parity passed; frontend tests `32 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; `git diff --check` passed.
+- Последние проверки: backend `62 passed, 2 skipped`; PostgreSQL migration `c7e4a2b9d130` verified; RBAC parity passed; frontend tests `33 passed`; frontend production build passed; targeted ESLint passed; rendered snapshot Chromium smoke passed; `git diff --check` passed.
 - Общий frontend lint имеет ранее существовавшие ошибки вне текущих изменений; не считать их регрессией этой волны.
 - UX-аудит 2026-06-26 подтвердил четыре приоритетные волны:
   1. исправить потерю Structure при повторном выборе site card и открывать контекст раздела дерева вместо внешнего сайта;
   2. превратить Page Inspector из сводки счётчиков в понятное исследование links/assets/tracking с легендами и progressive disclosure;
   3. заменить обрезанный sanitized DOM на достоверный сохранённый rendered snapshot, сохранив безопасный DOM/code-режим отдельно;
   4. сделать Compare пригодным для тысяч страниц: searchable picker, progressive controls и полноразмерные/изменяемые панели без фиксированной высоты документа.
-- Следующий рекомендуемый пункт: **UX correctness wave — site context persistence + directory context + human run/status labels**, затем rendered snapshot и searchable Compare picker.
+- Следующий рекомендуемый пункт: **runtime consent audit `до/после`**, затем Crawl Personas. Searchable Compare picker закрыт без Browser-smoke.
 
 ## Working Rules
 
@@ -246,7 +246,7 @@
       - 12.1 site-card persistence, directory context, human run/status labels и anomaly explanation — готово;
       - 12.2 полные searchable links/assets inventories, grouped tracking и section legend/chips — готово;
       - 12.3 persisted rendered full-page snapshot + отдельные безопасные `DOM/Код` режимы — on-demand reconstruction готова; нативный screenshot в момент crawl остаётся для browser-persona этапа;
-      - 12.4 searchable/virtualized Compare picker, progressive controls, dynamic height и resizable panels.
+      - 12.4 searchable Compare picker, progressive controls, dynamic height и resizable panels — готово; server-side search/true virtualization остаются только при подтверждённой просадке на больших runs.
   13. Runtime consent audit `до/после`, затем отображение наблюдаемого поведения cookies/scripts.
   14. `CrawlPersona`: guest → encrypted session bundle → browser login scenarios.
   15. Расширить anomaly/Compare на redirect, resources, consent и persona-scoped signals.
@@ -295,6 +295,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P1 Compare workspace searchable picker and progressive controls**.
+  - Что было: выбор страницы был native select без поиска; режимы `Визуально/Код/Структура` отображались до выбора страниц; рабочие панели имели слишком короткую высоту для длинных snapshots.
+  - Что стало: каждая сторона получила searchable picker по URL/title/HTTP с ограничением видимых результатов и подсказкой уточнить поиск; catalog endpoint отдаёт title страницы; режимы сравнения появляются только после выбора двух страниц; snapshot и report панели используют высоту viewport и допускают горизонтальный resize info-панели.
+  - Как проверить: `Проект → Сравнить страницы`, выбрать сайт/run, найти страницу через поиск, выбрать обе стороны; после этого появляются режимы и панель `Обе/Левая/Правая`; длинный snapshot скроллится внутри высокой рабочей области.
+  - Вклад в цели: Compare стал пригоднее для runs с сотнями/тысячами страниц (`high` UX); интерфейс больше не показывает controls без эффекта (`high` friendly UX).
 
 - [x] **P1 Persisted rendered page reconstruction for Inspector and Compare**.
   - Что было: `Визуально` показывал sanitized HTML без styles/images, поэтому выглядел как сломанная страница; фиксированная iframe-высота обрезала длинный контент.

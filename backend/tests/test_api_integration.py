@@ -173,7 +173,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
             url="https://protected.test/",
             status_code=200,
             content_type="text/html",
-            html="<html></html>",
+            html="<html><head><title>Protected title</title></head><body></body></html>",
             html_hash="hash",
         )
         db.add(page)
@@ -211,8 +211,11 @@ def test_project_and_run_endpoints_enforce_role_permissions():
         headers=viewer_headers,
     )
     assert snapshot.status_code == 200
-    assert snapshot.json()["html"] == "<html></html>"
+    assert snapshot.json()["html"] == "<html><head><title>Protected title</title></head><body></body></html>"
     assert snapshot.json()["rendered_snapshot"]["available"] is False
+    catalog = client.get(f"/runs/{run_id}/page-catalog", headers=viewer_headers)
+    assert catalog.status_code == 200
+    assert catalog.json()[0]["title"] == "Protected title"
     assert client.post(f"/runs/start/{profile_id}", headers=viewer_headers).status_code == 403
     assert client.post(
         f"/runs/{run_id}/retry-pages",

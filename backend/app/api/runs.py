@@ -49,6 +49,15 @@ class RetryPagesIn(BaseModel):
     urls: list[str] | None = Field(default=None, max_length=MAX_RETRY_PAGES)
 
 
+def _extract_html_title(html: str | None) -> str:
+    if not html:
+        return ""
+    title = BeautifulSoup(html, "html.parser").title
+    if not title or not title.string:
+        return ""
+    return title.string.strip()
+
+
 def _classify_fetch_failure(exc: Exception) -> tuple[str, str]:
     message = str(exc).lower()
     if isinstance(exc, httpx.TimeoutException):
@@ -913,7 +922,7 @@ def list_page_catalog(
     if not db.get(Run, run_id):
         raise HTTPException(status_code=404, detail="Run not found")
     rows = (
-        db.query(Page.id, Page.url, Page.status_code, Page.html_hash)
+        db.query(Page.id, Page.url, Page.status_code, Page.html_hash, Page.html)
         .filter(Page.run_id == run_id)
         .order_by(Page.url.asc())
         .all()
@@ -924,6 +933,7 @@ def list_page_catalog(
             "url": row.url,
             "status_code": row.status_code,
             "html_hash": row.html_hash,
+            "title": _extract_html_title(row.html),
         }
         for row in rows
     ]
