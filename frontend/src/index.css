@@ -288,6 +288,57 @@ button:focus-visible {
   align-items: start;
 }
 
+.compare-workspace-grid {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  align-items: start;
+}
+
+.compare-workspace-grid.is-both {
+  grid-template-columns: minmax(240px, 0.42fr) minmax(0, 1fr) minmax(0, 1fr) minmax(240px, 0.42fr);
+}
+
+.compare-workspace-grid.is-both .compare-central-stage {
+  grid-column: 2 / 4;
+}
+
+.compare-workspace-grid.is-single {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.42fr);
+}
+
+.compare-workspace-grid.is-single.is-left {
+  grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1fr);
+}
+
+.compare-workspace-grid.is-single.is-right {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.42fr);
+}
+
+.compare-workspace-grid.is-single .compare-central-stage {
+  min-width: 0;
+}
+
+.compare-central-stage {
+  min-width: 0;
+}
+
+.compare-side-report,
+.compare-differences-report {
+  min-height: 0;
+  height: clamp(520px, calc(100vh - 275px), 1120px);
+  overflow-y: auto;
+}
+
+.compare-side-report {
+  resize: horizontal;
+}
+
+.compare-differences-report {
+  height: auto;
+  max-height: clamp(420px, calc(100vh - 300px), 900px);
+}
+
 .compare-work-area {
   min-height: clamp(520px, calc(100vh - 255px), 1120px);
 }
@@ -419,6 +470,25 @@ button:focus-visible {
 
   .compare-inspector-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .compare-workspace-grid.is-both,
+  .compare-workspace-grid.is-single {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .compare-workspace-grid.is-both .compare-central-stage {
+    grid-column: auto;
+  }
+
+  .compare-side-report {
+    resize: none;
+  }
+
+  .compare-side-report,
+  .compare-differences-report {
+    height: auto;
+    max-height: none;
   }
 
   .compare-inspector-report {

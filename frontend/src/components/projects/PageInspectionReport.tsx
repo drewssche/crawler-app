@@ -24,15 +24,17 @@ type AssetFilter = "images" | "scripts" | "styles";
 
 function Section({
   id,
+  idPrefix,
   title,
   children,
 }: {
   id: string;
+  idPrefix: string;
   title: string;
   children: ReactNode;
 }) {
   return (
-    <section id={`inspector-${id}`} style={{ scrollMarginTop: 64, display: "grid", gap: 8 }}>
+    <section id={`${idPrefix}-${id}`} style={{ scrollMarginTop: 64, display: "grid", gap: 8 }}>
       <div style={{ fontWeight: 800, fontSize: 15, paddingTop: 4 }}>{title}</div>
       {children}
     </section>
@@ -366,12 +368,18 @@ function ConsentRuntimeAudit({ context }: { context: PageContext }) {
   );
 }
 
-export default function PageInspectionReport({ context }: { context: PageContext }) {
+export default function PageInspectionReport({
+  context,
+  idPrefix = "inspector",
+}: {
+  context: PageContext;
+  idPrefix?: string;
+}) {
   const [activeSection, setActiveSection] = useState("summary");
 
   useEffect(() => {
     const nodes = SECTIONS
-      .map(([id]) => document.getElementById(`inspector-${id}`))
+      .map(([id]) => document.getElementById(`${idPrefix}-${id}`))
       .filter(Boolean) as HTMLElement[];
     if (nodes.length === 0) return;
     const observer = new IntersectionObserver(
@@ -379,13 +387,13 @@ export default function PageInspectionReport({ context }: { context: PageContext
         const visible = entries
           .filter((entry) => entry.isIntersecting)
           .sort((left, right) => left.boundingClientRect.top - right.boundingClientRect.top)[0];
-        if (visible?.target.id) setActiveSection(visible.target.id.replace("inspector-", ""));
+        if (visible?.target.id) setActiveSection(visible.target.id.replace(`${idPrefix}-`, ""));
       },
       { rootMargin: "-70px 0px -60% 0px", threshold: [0, 0.1, 0.5] },
     );
     nodes.forEach((node) => observer.observe(node));
     return () => observer.disconnect();
-  }, [context.page.id]);
+  }, [context.page.id, idPrefix]);
 
   return (
     <div style={{ display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", minHeight: 0 }}>
@@ -395,7 +403,7 @@ export default function PageInspectionReport({ context }: { context: PageContext
             key={id}
             type="button"
             className={activeSection === id ? "active" : ""}
-            onClick={() => document.getElementById(`inspector-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            onClick={() => document.getElementById(`${idPrefix}-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
           >
             {label}
           </button>
@@ -403,7 +411,7 @@ export default function PageInspectionReport({ context }: { context: PageContext
       </nav>
 
       <div style={{ display: "grid", gap: 16, padding: "10px 2px 30px" }}>
-        <Section id="summary" title="Сводка и HTTP">
+        <Section id="summary" idPrefix={idPrefix} title="Сводка и HTTP">
           <Card style={{ display: "grid", gap: 5 }}>
             <MetaText>HTTP: {context.page.status_code} → {context.page.final_status_code}</MetaText>
             <MetaText>Контекст просмотра: {context.page.persona?.label || "Гость"}</MetaText>
@@ -429,7 +437,7 @@ export default function PageInspectionReport({ context }: { context: PageContext
           {context.page.fetch_error_message && <StatusText tone="danger">{context.page.fetch_error_message}</StatusText>}
         </Section>
 
-        <Section id="seo" title="SEO">
+        <Section id="seo" idPrefix={idPrefix} title="SEO">
           <Card variant={context.seo.grade === "good" ? "hint" : "warning"} style={{ display: "grid", gap: 7 }}>
             <div style={{ fontSize: 26, fontWeight: 800 }}>{context.seo.score}%</div>
             <MetaText>{context.seo.disclaimer}</MetaText>
@@ -444,19 +452,19 @@ export default function PageInspectionReport({ context }: { context: PageContext
           </Card>
         </Section>
 
-        <Section id="links" title="Ссылки">
+        <Section id="links" idPrefix={idPrefix} title="Ссылки">
           <PageLinksInventory context={context} />
         </Section>
 
-        <Section id="assets" title="Ассеты">
+        <Section id="assets" idPrefix={idPrefix} title="Ассеты">
           <PageAssetsInventory context={context} />
         </Section>
 
-        <Section id="tracking" title="Аналитика и scripts">
+        <Section id="tracking" idPrefix={idPrefix} title="Аналитика и scripts">
           <PageTrackingInventory context={context} />
         </Section>
 
-        <Section id="consent" title="Cookies и consent">
+        <Section id="consent" idPrefix={idPrefix} title="Cookies и consent">
           <Card variant="hint" style={{ display: "grid", gap: 5 }}>
             <div style={{ fontWeight: 700 }}>Cookies, найденные в коде</div>
             <MetaText>Имена: {context.tracking.cookies.names.join(", ") || "не обнаружены"}</MetaText>
@@ -470,7 +478,7 @@ export default function PageInspectionReport({ context }: { context: PageContext
           <ConsentRuntimeAudit context={context} />
         </Section>
 
-        <Section id="retries" title="Повторные проверки">
+        <Section id="retries" idPrefix={idPrefix} title="Повторные проверки">
           {context.page.retry_attempts.length === 0 && <MetaText>Повторных проверок не было.</MetaText>}
           {context.page.retry_attempts.map((attempt) => (
             <Card key={attempt.id}>

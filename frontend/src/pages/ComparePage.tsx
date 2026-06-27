@@ -29,7 +29,6 @@ type CompareMode = "visual" | "code" | "structure";
 type SideKey = "left" | "right";
 type PanelView = "both" | "left" | "right";
 type VisualScale = "overview" | "detail";
-type InspectorSide = "left" | "right" | "differences";
 
 const PAGE_PICKER_LIMIT = 80;
 
@@ -206,6 +205,31 @@ function VisualSnapshotPanel({
   );
 }
 
+function PageInfoPanel({
+  label,
+  context,
+  side,
+}: {
+  label: string;
+  context: PageContext | null;
+  side: SideKey;
+}) {
+  return (
+    <Card className={`compare-side-report compare-side-report-${side}`}>
+      <div style={{ display: "grid", gap: 9 }}>
+        <div>
+          <div style={{ fontWeight: 800 }}>{label}</div>
+          <MetaText opacity={0.68}>
+            Относится только к {side === "left" ? "левой" : "правой"} выбранной странице.
+          </MetaText>
+        </div>
+        {!context && <MetaText>Загружаем диагностику страницы...</MetaText>}
+        {context && <PageInspectionReport context={context} idPrefix={`compare-${side}-inspector`} />}
+      </div>
+    </Card>
+  );
+}
+
 function DifferenceRow({
   label,
   left,
@@ -305,7 +329,6 @@ export default function ComparePage() {
   const [mode, setMode] = useState<CompareMode>("visual");
   const [panelView, setPanelView] = useState<PanelView>("both");
   const [visualScale, setVisualScale] = useState<VisualScale>("overview");
-  const [inspectorSide, setInspectorSide] = useState<InspectorSide>("differences");
   const [error, setError] = useState("");
   const canGenerateSnapshot = hasPermission(user?.role, "crawler.run");
 
@@ -517,8 +540,13 @@ export default function ComparePage() {
       )}
 
       {ready && left.snapshot && right.snapshot && (
-        <div className="compare-inspector-grid compare-work-area">
-          <div style={{ minWidth: 0 }}>
+        <>
+        <div className={`compare-workspace-grid compare-work-area ${panelView === "both" ? "is-both" : `is-single is-${panelView}`}`}>
+          {panelView !== "right" && (
+            <PageInfoPanel label="Инфо левой страницы" context={left.context} side="left" />
+          )}
+
+          <div className="compare-central-stage">
             {mode === "visual" && (
               <div
                 className={panelView === "both" ? "compare-two-column-grid" : undefined}
@@ -600,31 +628,25 @@ export default function ComparePage() {
             )}
           </div>
 
-          <Card className="compare-inspector-report">
-            <div style={{ display: "grid", gap: 9 }}>
-              <div style={{ fontWeight: 800 }}>Информация о страницах</div>
-              <SegmentedControl
-                value={inspectorSide}
-                onChange={setInspectorSide}
-                options={[
-                  { value: "left", label: "Левая" },
-                  { value: "right", label: "Правая" },
-                  { value: "differences", label: "Различия" },
-                ]}
-              />
-              {!inspectorReady && <MetaText>Загружаем диагностику обеих страниц...</MetaText>}
-              {inspectorReady && left.context && right.context && inspectorSide === "left" && (
-                <PageInspectionReport context={left.context} />
-              )}
-              {inspectorReady && left.context && right.context && inspectorSide === "right" && (
-                <PageInspectionReport context={right.context} />
-              )}
-              {inspectorReady && left.context && right.context && inspectorSide === "differences" && (
-                <PageInspectionDifferences left={left.context} right={right.context} />
-              )}
-            </div>
-          </Card>
+          {panelView !== "left" && (
+            <PageInfoPanel label="Инфо правой страницы" context={right.context} side="right" />
+          )}
         </div>
+        <Card className="compare-differences-report">
+          <div style={{ display: "grid", gap: 9 }}>
+            <div>
+              <div style={{ fontWeight: 800 }}>Только различия</div>
+              <MetaText opacity={0.68}>
+                Здесь не повторяется полный отчёт сторон — только значимые расхождения между выбранными страницами.
+              </MetaText>
+            </div>
+            {!inspectorReady && <MetaText>Загружаем диагностику обеих страниц...</MetaText>}
+            {inspectorReady && left.context && right.context && (
+              <PageInspectionDifferences left={left.context} right={right.context} />
+            )}
+          </div>
+        </Card>
+        </>
       )}
     </div>
   );

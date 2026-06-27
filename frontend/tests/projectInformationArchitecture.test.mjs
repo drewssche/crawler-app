@@ -176,8 +176,9 @@ test("manual compare supports arbitrary site run and page selection", () => {
   assert.match(compareSource, /HTML diff/);
   assert.match(compareSource, /Структурное сравнение/);
   assert.match(compareSource, /PageInspectionReport/);
-  assert.match(compareSource, /Информация о страницах/);
-  assert.match(compareSource, /value: "differences", label: "Различия"/);
+  assert.match(compareSource, /Инфо левой страницы/);
+  assert.match(compareSource, /Инфо правой страницы/);
+  assert.match(compareSource, /Только различия/);
   assert.match(compareSource, /PageInspectionDifferences/);
   assert.match(compareSource, /Только слева ID/);
   assert.match(compareSource, /Только справа cookies/);
@@ -211,6 +212,17 @@ test("compare page selection is searchable and mode controls are progressive", (
   assert.match(cssSource, /compare-page-results/);
   assert.match(cssSource, /compare-visual-panel/);
   assert.match(cssSource, /resize: horizontal/);
+});
+
+test("compare layout keeps page info next to its own side and preserves central comparison", () => {
+  assert.match(compareSource, /compare-workspace-grid/);
+  assert.match(compareSource, /compare-central-stage/);
+  assert.match(compareSource, /compare-side-report/);
+  assert.match(compareSource, /compare-differences-report/);
+  assert.match(compareSource, /idPrefix=\{`compare-\$\{side\}-inspector`\}/);
+  assert.match(reportSource, /idPrefix = "inspector"/);
+  assert.match(cssSource, /grid-template-columns: minmax\(240px, 0\.42fr\) minmax\(0, 1fr\) minmax\(0, 1fr\) minmax\(240px, 0\.42fr\)/);
+  assert.match(cssSource, /compare-workspace-grid\.is-both \.compare-central-stage/);
 });
 
 test("page inspector exposes on-demand runtime consent audit", () => {
