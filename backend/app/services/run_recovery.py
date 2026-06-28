@@ -40,7 +40,7 @@ def mark_stale_running_runs_failed(
     current_time = now or datetime.utcnow()
     cutoff = current_time - timedelta(seconds=stale_running_run_seconds())
 
-    query = db.query(Run).filter(Run.status == "RUNNING")
+    query = db.query(Run).filter(Run.status.in_(["RUNNING", "CANCEL_REQUESTED"]))
     if project_id is not None:
         query = query.filter(Run.project_id == project_id)
     if project_site_id is not None:
@@ -55,13 +55,16 @@ def mark_stale_running_runs_failed(
         return 0
 
     for run in stale_runs:
-        run.status = "FAILED"
+        cancel_requested = run.status == "CANCEL_REQUESTED"
+        run.status = "CANCELLED" if cancel_requested else "FAILED"
         run.finished_at = current_time
         run.current_url = None
         run.progress_updated_at = current_time
-        run.failure_code = run.failure_code or "stale_run_recovered"
+        run.failure_code = "cancelled_by_user" if cancel_requested else run.failure_code or "stale_run_recovered"
         run.failure_message = (
-            run.failure_message
+            "Прогон был остановлен по запросу пользователя после таймаута ожидания crawler."
+            if cancel_requested
+            else run.failure_message
             or "Прогон долго не обновлял состояние и был автоматически остановлен. Можно запустить сайт повторно."
         )
 

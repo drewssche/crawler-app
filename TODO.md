@@ -328,7 +328,8 @@
 - [ ] **P0/P1 Operations reliability + unattended recovery** (`HIGH`, epic).
   Celery boundary, lease/heartbeat, bounded retries/backoff, timeout/cancel, health/readiness; Telegram digest только после достоверных signals.
   - 1. Stale recovery MVP готов: `RUNNING` run без progress heartbeat дольше `CRAWL_STALE_RUNNING_SECONDS` автоматически помечается `FAILED/stale_run_recovered` при чтении истории или перед новым запуском сайта/проекта; это снимает вечную блокировку site-run после падения процесса.
-  - Следующее: durable worker/lease boundary, явный cancel API и health/readiness для очереди.
+  - 2. Cancel API MVP готов: `POST /runs/{run_id}/cancel` переводит активный run в `CANCEL_REQUESTED`; crawler проверяет флаг между страницами и завершает run как `CANCELLED`. До финального `CANCELLED` сайт считается занятым, retry недоступен.
+  - Следующее: durable worker/lease boundary, более быстрый interrupt текущего fetch, health/readiness для очереди.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -348,6 +349,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P0/P1 Operations reliability — cancel active run API MVP**.
+  - Что было: пользователь/оператор не мог явно остановить активный crawler run; приходилось ждать завершения или stale recovery.
+  - Что стало: добавлен `POST /runs/{run_id}/cancel` с permission `crawler.run`. Активный run получает статус `CANCEL_REQUESTED`, retry и новый запуск сайта остаются заблокированы; crawler между страницами переводит run в `CANCELLED`, сохраняет уже собранные страницы и пишет friendly-пояснение. Повторный cancel идемпотентен, terminal run возвращает понятный `409 run_not_active`.
+  - Как проверить: создать активный run, вызвать `POST /runs/{run_id}/cancel`; в истории увидеть `CANCEL_REQUESTED`, затем `CANCELLED` после следующего шага crawler.
+  - Вклад в цели: добавляет управляемость долгих прогонов без ложного обещания мгновенно оборвать текущий HTTP-запрос (`high` friendly operations UX).
 
 - [x] **P0/P1 Operations reliability — stale RUNNING recovery MVP**.
   - Что было: если backend-процесс падал во время crawler run, запись могла остаться `RUNNING` навсегда и блокировать следующий запуск сайта.

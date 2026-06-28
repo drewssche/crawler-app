@@ -465,7 +465,7 @@ def _assert_no_active_site_run(db: Session, site: ProjectSite) -> None:
     mark_stale_running_runs_failed(db, project_site_id=site.id)
     active_run = (
         db.query(Run)
-        .filter(Run.project_site_id == site.id, Run.status == "RUNNING")
+        .filter(Run.project_site_id == site.id, Run.status.in_(["RUNNING", "CANCEL_REQUESTED"]))
         .order_by(Run.id.desc())
         .first()
     )
@@ -474,11 +474,15 @@ def _assert_no_active_site_run(db: Session, site: ProjectSite) -> None:
             status_code=409,
             detail={
                 "code": "site_run_already_active",
-                "message": f"Для сайта «{site.name}» уже выполняется прогон.",
+                "message": f"Для сайта «{site.name}» уже выполняется или останавливается прогон.",
                 "run_id": active_run.id,
                 "project_site_id": site.id,
             },
         )
+
+
+class RunCancelled(Exception):
+    pass
 
 
 def _emit_run_completion_event(
@@ -490,15 +494,24 @@ def _emit_run_completion_event(
     actor_user_id: int | None,
 ) -> None:
     succeeded = run.status == "FINISHED"
+    cancelled = run.status == "CANCELLED"
     emit_event(
         db,
-        event_type="crawler.run.finished" if succeeded else "crawler.run.failed",
+        event_type="crawler.run.finished" if succeeded else "crawler.run.cancelled" if cancelled else "crawler.run.failed",
         channel=EVENT_CHANNEL_NOTIFICATION,
-        severity=EVENT_SEVERITY_INFO if succeeded else EVENT_SEVERITY_DANGER,
-        title=f"Прогон сайта «{site.name}» {'завершён' if succeeded else 'завершился ошибкой'}",
+        severity=EVENT_SEVERITY_INFO if succeeded or cancelled else EVENT_SEVERITY_DANGER,
+        title=(
+            f"Прогон сайта «{site.name}» завершён"
+            if succeeded
+            else f"Прогон сайта «{site.name}» остановлен"
+            if cancelled
+            else f"Прогон сайта «{site.name}» завершился ошибкой"
+        ),
         body=(
             f"Найдено страниц: {run.pages_total}. Изменений: {run.pages_changed}."
             if succeeded
+            else run.failure_message or "Crawler остановил прогон по запросу пользователя."
+            if cancelled
             else run.failure_message or "Crawler не смог завершить прогон."
         ),
         target_path=f"/projects/{site.project_id}",
@@ -520,6 +533,30 @@ def _emit_run_completion_event(
             "suppress_toast": True,
         },
     )
+
+
+def _finalize_cancelled_run(
+    db: Session,
+    *,
+    run: Run,
+    site: ProjectSite,
+    persona: CrawlPersona | None,
+    actor_user_id: int | None,
+) -> None:
+    run.status = "CANCELLED"
+    run.failure_code = "cancelled_by_user"
+    run.failure_message = "Прогон остановлен по запросу пользователя. Уже сохранённые страницы остаются доступными в истории."
+    run.finished_at = datetime.utcnow()
+    run.current_url = None
+    run.progress_updated_at = run.finished_at
+    _emit_run_completion_event(
+        db,
+        run=run,
+        site=site,
+        persona=persona,
+        actor_user_id=actor_user_id,
+    )
+    db.commit()
 
 
 def _execute_site_run(
@@ -577,6 +614,16 @@ def _execute_site_run(
             first_failure: tuple[str, str] | None = None
 
             while queue and len(pages) < max_pages:
+                db.refresh(run)
+                if run.status == "CANCEL_REQUESTED":
+                    _finalize_cancelled_run(
+                        db,
+                        run=run,
+                        site=site,
+                        persona=persona,
+                        actor_user_id=actor_user_id,
+                    )
+                    raise RunCancelled()
                 if run_deadline is not None and time.monotonic() >= run_deadline:
                     if first_failure is None:
                         first_failure = (
@@ -706,6 +753,8 @@ def _execute_site_run(
                     queue.append(candidate)
                     queued.add(candidate)
                 run.pages_discovered = len(queued)
+                run.progress_updated_at = datetime.utcnow()
+                db.commit()
 
         run.pages_total = len(pages)
         run.pages_discovered = max(len(queued), len(pages))
@@ -839,6 +888,8 @@ def _execute_site_run(
                 "run_id": run.id,
             },
         ) from exc
+    except RunCancelled:
+        pass
     except Exception as exc:
         failure_code, failure_message = _classify_fetch_failure(exc)
         run.status = "FAILED"
@@ -1029,7 +1080,7 @@ def retry_problem_pages(
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    if run.status == "RUNNING":
+    if run.status in {"RUNNING", "CANCEL_REQUESTED"}:
         raise HTTPException(
             status_code=409,
             detail={
@@ -1198,6 +1249,75 @@ def retry_problem_pages(
         "session_message": retry_session["message"],
         "results": results,
         "message": "Исходные результаты прогона сохранены без изменений.",
+    }
+
+
+@router.post("/{run_id}/cancel")
+def cancel_run(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("crawler.run")),
+):
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    mark_stale_running_runs_failed(db, project_site_id=run.project_site_id)
+    db.refresh(run)
+    persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
+
+    if run.status == "CANCEL_REQUESTED":
+        return {
+            "ok": True,
+            "run": _serialize_run(run, persona),
+            "message": "Остановка уже запрошена. Crawler завершит текущую страницу и остановит прогон.",
+        }
+    if run.status != "RUNNING":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "run_not_active",
+                "message": "Этот прогон уже не выполняется, отмена не требуется.",
+                "run_id": run.id,
+                "status": run.status,
+            },
+        )
+
+    run.status = "CANCEL_REQUESTED"
+    run.failure_code = "cancel_requested"
+    run.failure_message = (
+        "Остановка запрошена. Crawler завершит текущую страницу и остановит прогон перед следующим шагом."
+    )
+    run.progress_updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(run)
+
+    emit_event(
+        db,
+        event_type="crawler.run.cancel_requested",
+        channel=EVENT_CHANNEL_NOTIFICATION,
+        severity=EVENT_SEVERITY_INFO,
+        title="Остановка прогона запрошена",
+        body="Crawler завершит текущую страницу и остановит прогон перед следующим шагом.",
+        target_path=f"/projects/{run.project_id}",
+        target_ref=f"run:{run.id}",
+        actor_user_id=current_user.id,
+        target_user_id=None,
+        meta_json={
+            "run_id": run.id,
+            "project_id": run.project_id,
+            "project_site_id": run.project_site_id,
+            "crawl_persona_id": run.crawl_persona_id,
+            "status": run.status,
+            "failure_code": run.failure_code,
+            "suppress_toast": True,
+        },
+    )
+    db.commit()
+
+    return {
+        "ok": True,
+        "run": _serialize_run(run, persona),
+        "message": "Остановка запрошена. Crawler завершит текущую страницу и остановит прогон перед следующим шагом.",
     }
 
 

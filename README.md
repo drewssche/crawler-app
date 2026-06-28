@@ -74,6 +74,8 @@ docker compose up -d --build backend
 
 `CRAWL_STALE_RUNNING_SECONDS` задаёт, через сколько секунд без обновления прогресса `RUNNING`-прогон считается зависшим. При следующем чтении истории или запуске сайта backend пометит такой прогон как `FAILED/stale_run_recovered`, чтобы он не блокировал новый запуск.
 
+Активный прогон можно остановить через `POST /runs/{run_id}/cancel`. В текущей синхронной архитектуре это не прерывает уже начатый HTTP-запрос мгновенно: backend ставит `CANCEL_REQUESTED`, а crawler завершает текущую страницу и переводит run в `CANCELLED` перед следующим шагом.
+
 ## Метрики
 
 - JSON метрики backend: `GET /metrics`

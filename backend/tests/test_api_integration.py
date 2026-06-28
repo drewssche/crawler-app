@@ -198,6 +198,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
     ).status_code == 401
     assert client.post(f"/runs/start-site/{site_id}").status_code == 401
     assert client.post(f"/runs/{run_id}/retry-pages", json={}).status_code == 401
+    assert client.post(f"/runs/{run_id}/cancel").status_code == 401
 
     assert client.get(f"/projects/{project_id}", headers=viewer_headers).status_code == 200
     assert client.get(f"/runs/by-project/{project_id}", headers=viewer_headers).status_code == 200
@@ -226,6 +227,7 @@ def test_project_and_run_endpoints_enforce_role_permissions():
         json={},
         headers=viewer_headers,
     ).status_code == 403
+    assert client.post(f"/runs/{run_id}/cancel", headers=viewer_headers).status_code == 403
     assert client.post(
         "/projects",
         json={"name": "Denied", "start_url": "https://denied.test", "allowed_domains_csv": "denied.test"},
@@ -1779,6 +1781,129 @@ def test_stale_running_run_is_recovered_before_new_start(monkeypatch):
         latest = db.query(Run).filter(Run.project_site_id == site_id).order_by(Run.id.desc()).first()
         assert latest.id != stale_run_id
         assert latest.status == "FINISHED"
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_cancel_run_marks_active_run_cancel_requested():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="runs-cancel@test.local", role="editor", is_approved=True))
+        project = Project(name="Cancel", start_url="https://cancel.test", allowed_domains_csv="cancel.test", max_pages=1)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        site = _add_primary_site(db, project)
+        run = Run(
+            project_id=project.id,
+            project_site_id=site.id,
+            status="RUNNING",
+            started_at=datetime.utcnow(),
+            progress_updated_at=datetime.utcnow(),
+            current_url="https://cancel.test/slow",
+        )
+        db.add(run)
+        db.commit()
+        site_id = site.id
+        run_id = run.id
+
+    client = TestClient(app)
+    headers = _auth_header("runs-cancel@test.local", role="editor")
+
+    cancelled = client.post(f"/runs/{run_id}/cancel", headers=headers)
+    assert cancelled.status_code == 200
+    payload = cancelled.json()
+    assert payload["ok"] is True
+    assert payload["run"]["status"] == "CANCEL_REQUESTED"
+    assert payload["run"]["failure_code"] == "cancel_requested"
+    assert "завершит текущую страницу" in payload["message"]
+
+    repeated = client.post(f"/runs/{run_id}/cancel", headers=headers)
+    assert repeated.status_code == 200
+    assert repeated.json()["run"]["status"] == "CANCEL_REQUESTED"
+
+    retry = client.post(f"/runs/{run_id}/retry-pages", json={}, headers=headers)
+    assert retry.status_code == 409
+    assert _extract_error_payload(retry)["error"]["code"] == "run_still_active"
+
+    blocked_start = client.post(f"/runs/start-site/{site_id}", headers=headers)
+    assert blocked_start.status_code == 409
+    assert _extract_error_payload(blocked_start)["error"]["code"] == "site_run_already_active"
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_site_run_honors_cancel_requested_between_pages(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="runs-cancel-loop@test.local", role="editor", is_approved=True))
+        project = Project(name="Cancel loop", start_url="https://cancel-loop.test", allowed_domains_csv="cancel-loop.test", max_pages=5)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        site = _add_primary_site(db, project)
+        db.commit()
+        site_id = site.id
+
+    class FakeResponse:
+        def __init__(self, url: str):
+            self.url = url
+            self.status_code = 200
+            self.headers = {"content-type": "text/html"}
+            self.text = '<html><body><a href="/next">next</a></body></html>'
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            self.calls += 1
+            if self.calls == 1:
+                with SessionLocal() as db:
+                    run = db.query(Run).filter(Run.project_site_id == site_id, Run.status == "RUNNING").one()
+                    run.status = "CANCEL_REQUESTED"
+                    run.failure_code = "cancel_requested"
+                    run.failure_message = "Остановка запрошена."
+                    run.progress_updated_at = datetime.utcnow()
+                    db.commit()
+            return FakeResponse(url)
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    response = client.post(
+        f"/runs/start-site/{site_id}",
+        headers=_auth_header("runs-cancel-loop@test.local", role="editor"),
+    )
+    assert response.status_code == 200
+    run_id = response.json()["run_id"]
+
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run.status == "CANCELLED"
+        assert run.failure_code == "cancelled_by_user"
+        assert run.finished_at is not None
+        assert run.current_url is None
+        assert db.query(Page).filter(Page.run_id == run_id).count() == 1
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
