@@ -300,8 +300,8 @@
   - anomaly UI не срабатывает без baseline;
   - compare позволяет выбрать две произвольные страницы и не теряет контекст проекта.
 
-- [ ] **MEDIUM Reuse: collapse-reset windowed lazy loader audit**.
-  Выносить только после второго подтверждённого call-site; сохранить текущий UX дерева.
+- [x] **MEDIUM Reuse: collapse-reset windowed lazy loader audit**.
+  Audit 2026-06-28: второго подтверждённого call-site нет. Collapse-reset/windowed children остаются локально в `ProjectStructureTree`; `useIncrementalPager` и section-nav observers имеют другой контракт. Shared abstraction не выносить до появления второго дерева/иерархии с тем же UX.
 
 - [ ] **MEDIUM Reuse: search highlighting rollout audit**.
   `HighlightedText` уже используется в Structure и project search; расширять на Users/RootAdmins/Activity только по подтверждённой пользе.
@@ -346,6 +346,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **MEDIUM Reuse audit — collapse-reset windowed lazy loader**.
+  - Что было: в TODO висел риск преждевременного reuse для Structure tree.
+  - Что стало: проверены frontend call-sites; общий компонент/хук не выносится, потому что подтверждён только один подходящий сценарий — `ProjectStructureTree`. Это сохраняет текущий UX дерева и не добавляет абстракцию без второго потребителя.
+  - Как проверить: `rg -n "collapse|expanded|windowed|IntersectionObserver|useIncrementalPager" frontend/src -g '*.{ts,tsx}'`.
+  - Вклад в цели: снижает technical debt decision-risk без изменения пользовательского поведения (`medium` architecture hygiene).
 
 - [x] **P1 Element picker MVP for Page Inspector DOM mode**.
   - Что было: можно было смотреть snapshot, DOM и HTML отдельно, но не было связи `визуально выбранный блок → HTML фрагмент`.
