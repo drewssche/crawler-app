@@ -283,6 +283,9 @@ test("guest crawl persona is visible in site, compare and page context UX", () =
   assert.match(reportSource, /Контекст просмотра:/);
   assert.match(pageDrawerSource, /Контекст просмотра:/);
   assert.match(compareSource, /snapshot\.persona\?\.label \|\| "Гость"/);
+  assert.match(compareSource, /Все контексты доступа/);
+  assert.match(compareSource, /Сравнение разных контекстов доступа/);
+  assert.match(compareSource, /Различия могут означать разные права доступа/);
 });
 
 test("compare auto-match suggests but does not force a relative-path pair", () => {

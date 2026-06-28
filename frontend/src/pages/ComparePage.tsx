@@ -53,6 +53,7 @@ const PAGE_PICKER_LIMIT = 80;
 type SideState = {
   siteId: number | null;
   runs: CompareRun[];
+  personaFilterId: number | "all";
   runId: number | null;
   pages: ComparePageItem[];
   pageQuery: string;
@@ -66,6 +67,7 @@ type SideState = {
 const EMPTY_SIDE: SideState = {
   siteId: null,
   runs: [],
+  personaFilterId: "all",
   runId: null,
   pages: [],
   pageQuery: "",
@@ -81,6 +83,7 @@ function SnapshotSelector({
   sites,
   side,
   onSiteChange,
+  onPersonaFilterChange,
   onRunChange,
   onPageQueryChange,
   onPageChange,
@@ -89,6 +92,7 @@ function SnapshotSelector({
   sites: ProjectSite[];
   side: SideState;
   onSiteChange: (siteId: number) => void;
+  onPersonaFilterChange: (personaId: number | "all") => void;
   onRunChange: (runId: number) => void;
   onPageQueryChange: (query: string) => void;
   onPageChange: (url: string) => void;
@@ -102,6 +106,17 @@ function SnapshotSelector({
     : side.pages;
   const visiblePages = filteredPages.slice(0, PAGE_PICKER_LIMIT);
   const selectedPage = side.pages.find((page) => page.url === side.url);
+  const personaOptions = Array.from(
+    new Map(
+      side.runs.map((run) => {
+        const persona = run.persona || { id: 0, key: "guest", label: "Гость", kind: "guest" };
+        return [persona.id, persona] as const;
+      }),
+    ).values(),
+  );
+  const visibleRuns = side.personaFilterId === "all"
+    ? side.runs
+    : side.runs.filter((run) => (run.persona?.id || 0) === side.personaFilterId);
 
   return (
     <Card className="compare-selector-card">
@@ -118,18 +133,37 @@ function SnapshotSelector({
         {sites.map((site) => <option key={site.id} value={site.id}>{site.name} · {site.start_url}</option>)}
       </UiSelect>
       <UiSelect
-        value={side.runId ?? ""}
-        onChange={(event) => onRunChange(Number(event.target.value))}
+        value={side.personaFilterId}
+        onChange={(event) => {
+          const value = event.target.value;
+          onPersonaFilterChange(value === "all" ? "all" : Number(value));
+        }}
         disabled={side.runs.length === 0}
         style={{ width: "100%" }}
       >
+        <option value="all">Все контексты доступа</option>
+        {personaOptions.map((persona) => (
+          <option key={persona.id} value={persona.id}>
+            {persona.label}
+          </option>
+        ))}
+      </UiSelect>
+      <UiSelect
+        value={side.runId ?? ""}
+        onChange={(event) => onRunChange(Number(event.target.value))}
+        disabled={visibleRuns.length === 0}
+        style={{ width: "100%" }}
+      >
         <option value="" disabled>Выберите версию</option>
-        {side.runs.map((run) => (
+        {visibleRuns.map((run) => (
           <option key={run.id} value={run.id}>
             {formatRunTitle(run.started_at)} · {run.persona?.label || "Гость"} · {getProjectRunBadgeMeta(run.status).label} · {formatOperationalDateTime(run.finished_at || run.started_at)}
           </option>
         ))}
       </UiSelect>
+      {side.personaFilterId !== "all" && visibleRuns.length === 0 && (
+        <MetaText opacity={0.68}>У выбранного контекста пока нет успешных версий для сравнения.</MetaText>
+      )}
 
       <div className="compare-page-picker" aria-label={`${label}: выбор страницы`}>
         <input
@@ -709,6 +743,34 @@ export default function ComparePage() {
     }
   }
 
+  async function selectPersonaFilter(key: SideKey, personaId: number | "all") {
+    const side = key === "left" ? left : right;
+    const visibleRuns = personaId === "all"
+      ? side.runs
+      : side.runs.filter((run) => (run.persona?.id || 0) === personaId);
+    const runId = visibleRuns[0]?.id ?? null;
+    setSelectedBlocks((current) => ({ ...current, [key]: null }));
+    updateSide(key, (current) => ({
+      ...current,
+      personaFilterId: personaId,
+      runId,
+      pages: [],
+      pageQuery: "",
+      url: "",
+      snapshot: null,
+      context: null,
+      loading: Boolean(runId),
+      error: runId ? "" : "У выбранного контекста пока нет успешных прогонов.",
+    }));
+    if (!runId) return;
+    try {
+      const pages = await listComparePages(runId);
+      updateSide(key, (current) => ({ ...current, pages, loading: false, error: "" }));
+    } catch (err) {
+      updateSide(key, (current) => ({ ...current, loading: false, error: err instanceof Error ? err.message : "Ошибка загрузки." }));
+    }
+  }
+
   async function selectPage(key: SideKey, url: string) {
     const side = key === "left" ? left : right;
     if (!side.runId) return;
@@ -751,6 +813,11 @@ export default function ComparePage() {
   const ready = Boolean(left.snapshot && right.snapshot);
   const inspectorReady = Boolean(left.context && right.context);
   const selectionProgress = (left.snapshot ? 1 : 0) + (right.snapshot ? 1 : 0);
+  const leftPersona = left.snapshot?.persona || left.runs.find((run) => run.id === left.runId)?.persona || null;
+  const rightPersona = right.snapshot?.persona || right.runs.find((run) => run.id === right.runId)?.persona || null;
+  const leftPersonaKey = leftPersona?.key || "guest";
+  const rightPersonaKey = rightPersona?.key || "guest";
+  const differentAccessContexts = ready && leftPersonaKey !== rightPersonaKey;
   const selectedBlockCount = (selectedBlocks.left ? 1 : 0) + (selectedBlocks.right ? 1 : 0);
   const missingElementMapSides = [
     left.snapshot && !left.snapshot.rendered_snapshot.element_map?.items?.length ? "слева" : "",
@@ -817,6 +884,7 @@ export default function ComparePage() {
           sites={sites}
           side={left}
           onSiteChange={(siteId) => void selectSite("left", siteId)}
+          onPersonaFilterChange={(personaId) => void selectPersonaFilter("left", personaId)}
           onRunChange={(runId) => void selectRun("left", runId)}
           onPageQueryChange={(query) => updatePageQuery("left", query)}
           onPageChange={(url) => void selectPage("left", url)}
@@ -826,6 +894,7 @@ export default function ComparePage() {
           sites={sites}
           side={right}
           onSiteChange={(siteId) => void selectSite("right", siteId)}
+          onPersonaFilterChange={(personaId) => void selectPersonaFilter("right", personaId)}
           onRunChange={(runId) => void selectRun("right", runId)}
           onPageQueryChange={(query) => updatePageQuery("right", query)}
           onPageChange={(url) => void selectPage("right", url)}
@@ -857,6 +926,16 @@ export default function ComparePage() {
               </Button>
             </div>
           )}
+        </Card>
+      )}
+
+      {differentAccessContexts && (
+        <Card variant="warning" style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontWeight: 700 }}>Сравнение разных контекстов доступа</div>
+          <MetaText opacity={0.78}>
+            Слева: {leftPersona?.label || "Гость"} · справа: {rightPersona?.label || "Гость"}.
+            Различия могут означать разные права доступа, авторизацию или персонализацию, а не обычное изменение страницы.
+          </MetaText>
         </Card>
       )}
 
