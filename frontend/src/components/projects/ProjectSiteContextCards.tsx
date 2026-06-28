@@ -12,7 +12,7 @@ function scopeLabel(site: ProjectSiteSummary): string {
 function anomalyLabel(site: ProjectSiteSummary): { text: string; tone: "success" | "warning" | "danger" | "muted" } {
   if (site.anomaly.status === "insufficient_data") {
     const required = site.anomaly.baseline_runs_required + 1;
-    return { text: `Мониторинг: ${Math.min(site.anomaly.successful_runs, required)} из ${required} прогонов`, tone: "muted" };
+    return { text: `Мониторинг: ${site.anomaly.persona_label || "Гость"} · ${Math.min(site.anomaly.successful_runs, required)} из ${required} прогонов`, tone: "muted" };
   }
   if (site.anomaly.status === "anomaly") {
     return {

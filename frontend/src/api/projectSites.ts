@@ -75,6 +75,9 @@ export type ProjectSiteAnomaly = {
   }>;
   successful_runs: number;
   baseline_runs_required: number;
+  crawl_persona_id?: number | null;
+  persona_key?: string | null;
+  persona_label?: string | null;
   baseline: {
     runs: number;
     pages_average: number;

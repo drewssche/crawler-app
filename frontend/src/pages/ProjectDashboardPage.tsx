@@ -1049,6 +1049,9 @@ export default function ProjectDashboardPage() {
                       }
                     />
                     <MetaText>{selectedSite.anomaly.message}</MetaText>
+                    <MetaText opacity={0.68}>
+                      Baseline считается только для контекста: {selectedSite.anomaly.persona_label || selectedSite.default_persona?.label || "Гость"}. Прогоны других ролей не смешиваются с этим мониторингом.
+                    </MetaText>
                     {selectedSite.anomaly.status === "insufficient_data" && (
                       <>
                         <StatusText tone="muted">
@@ -1070,7 +1073,7 @@ export default function ProjectDashboardPage() {
                     ))}
                     {selectedSite.anomaly.baseline && selectedSite.anomaly.latest && (
                       <MetaText opacity={0.65}>
-                        Обычный уровень: в среднем {selectedSite.anomaly.baseline.pages_average} страниц · последний прогон: {selectedSite.anomaly.latest.pages_total}.
+                        Обычный уровень для {selectedSite.anomaly.persona_label || "Гость"}: в среднем {selectedSite.anomaly.baseline.pages_average} страниц · последний прогон: {selectedSite.anomaly.latest.pages_total}.
                       </MetaText>
                     )}
                   </div>

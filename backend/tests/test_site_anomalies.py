@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.db.models.page import Page
 from app.db.models.project import Project
 from app.db.models.project_site import ProjectSite
+from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.run import Run
 from app.services.crawl_personas import ensure_guest_persona
 from app.services.project_sites import create_primary_site_for_project
@@ -31,8 +32,9 @@ def _finished_run(
     pages_total: int,
     pages_changed: int,
     error_pages: int = 0,
+    persona: CrawlPersona | None = None,
 ) -> Run:
-    persona = ensure_guest_persona(db, site)
+    persona = persona or ensure_guest_persona(db, site)
     run = Run(
         project_id=site.project_id,
         project_site_id=site.id,
@@ -98,3 +100,31 @@ def test_anomaly_explains_coverage_drop_and_http_error_growth(db_session: Sessio
     assert result["status"] == "anomaly"
     assert result["severity"] == "danger"
     assert reason_codes == {"coverage_drop", "http_errors_growth"}
+
+
+def test_anomaly_baseline_is_scoped_to_default_persona(db_session: Session):
+    site = _site(db_session)
+    guest = ensure_guest_persona(db_session, site)
+    partner = CrawlPersona(
+        project_site_id=site.id,
+        key="partner",
+        label="Партнёр",
+        kind="partner",
+        is_default=False,
+        is_enabled=True,
+        has_secrets=False,
+    )
+    db_session.add(partner)
+    db_session.flush()
+    for _ in range(3):
+        _finished_run(db_session, site, pages_total=100, pages_changed=5, persona=guest)
+    latest = _finished_run(db_session, site, pages_total=95, pages_changed=5, persona=guest)
+    _finished_run(db_session, site, pages_total=5, pages_changed=5, error_pages=5, persona=partner)
+
+    result = evaluate_project_site_anomalies(db_session, [site.id])[site.id]
+
+    assert result["status"] == "normal"
+    assert result["crawl_persona_id"] == guest.id
+    assert result["persona_label"] == "Гость"
+    assert result["successful_runs"] == 4
+    assert result["latest"]["run_id"] == latest.id

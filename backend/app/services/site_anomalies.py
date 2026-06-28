@@ -28,7 +28,7 @@ class RunMetrics:
         return self.error_pages / self.pages_total if self.pages_total else 0.0
 
 
-def _empty_result(successful_runs: int) -> dict:
+def _empty_result(successful_runs: int, persona: CrawlPersona | None = None) -> dict:
     return {
         "status": "insufficient_data",
         "severity": "info",
@@ -36,6 +36,9 @@ def _empty_result(successful_runs: int) -> dict:
         "reasons": [],
         "successful_runs": successful_runs,
         "baseline_runs_required": BASELINE_RUNS_REQUIRED,
+        "crawl_persona_id": persona.id if persona else None,
+        "persona_key": persona.key if persona else None,
+        "persona_label": persona.label if persona else None,
         "baseline": None,
         "latest": None,
     }
@@ -45,8 +48,8 @@ def evaluate_project_site_anomalies(db: Session, site_ids: list[int]) -> dict[in
     if not site_ids:
         return {}
 
-    default_persona_ids = {
-        persona.project_site_id: persona.id
+    default_personas = {
+        persona.project_site_id: persona
         for persona in (
             db.query(CrawlPersona)
             .filter(
@@ -68,7 +71,8 @@ def evaluate_project_site_anomalies(db: Session, site_ids: list[int]) -> dict[in
     selected_runs: dict[int, list[Run]] = defaultdict(list)
     successful_run_counts: dict[int, int] = defaultdict(int)
     for run in runs:
-        default_persona_id = default_persona_ids.get(run.project_site_id)
+        default_persona = default_personas.get(run.project_site_id)
+        default_persona_id = default_persona.id if default_persona else None
         if default_persona_id is not None and run.crawl_persona_id != default_persona_id:
             continue
         successful_run_counts[run.project_site_id] += 1
@@ -104,9 +108,10 @@ def evaluate_project_site_anomalies(db: Session, site_ids: list[int]) -> dict[in
 
     results: dict[int, dict] = {}
     for site_id in site_ids:
+        default_persona = default_personas.get(site_id)
         site_runs = selected_runs.get(site_id, [])
         if len(site_runs) < BASELINE_RUNS_REQUIRED + 1:
-            results[site_id] = _empty_result(successful_run_counts[site_id])
+            results[site_id] = _empty_result(successful_run_counts[site_id], default_persona)
             continue
 
         metrics = [
@@ -167,6 +172,9 @@ def evaluate_project_site_anomalies(db: Session, site_ids: list[int]) -> dict[in
             "reasons": reasons,
             "successful_runs": successful_run_counts[site_id],
             "baseline_runs_required": BASELINE_RUNS_REQUIRED,
+            "crawl_persona_id": default_persona.id if default_persona else None,
+            "persona_key": default_persona.key if default_persona else None,
+            "persona_label": default_persona.label if default_persona else None,
             "baseline": {
                 "runs": BASELINE_RUNS_REQUIRED,
                 "pages_average": round(baseline_pages, 1),

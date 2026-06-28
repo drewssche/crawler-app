@@ -157,7 +157,7 @@
   - completed-run UX: итоговая карточка показывает страницы/new/changed/errors/duration; быстрые фильтры `Все / Новые / Ошибки` меняют дерево без потери URL-иерархии. Live updates не выполняют автопрокрутку.
 
   **Single-site anomaly monitoring**
-  - baseline строится по нескольким успешным прогонам конкретного сайта/scope;
+  - baseline строится по нескольким успешным прогонам конкретного сайта/scope и default persona; API возвращает `crawl_persona_id/persona_label`, UI показывает, для какого контекста считается мониторинг;
   - сигналы: рост `4xx/5xx`, падение coverage/pages, массовое исчезновение URL, необычный объём изменений, изменение title/canonical/robots, broken links/resources и время ответа;
   - до накопления baseline показывать `Недостаточно данных`, а не ложную аномалию;
   - severity и причина рассчитываются backend и видны отдельно по сайту.
@@ -240,7 +240,7 @@
     - не пропускать проверку авторизованной персоны заранее: redirect на login, 403 или role-only блоки должны быть обнаружены;
     - режимы позже: `Безопасная`, `Максимальная`, `Выключена`.
   - пароли, cookie values и tokens хранятся encrypted-at-rest, не попадают в crawl artifacts/logs/API responses и доступны только через server-side secret references;
-  - baseline и anomaly signals всегда scoped по `project_site_id + persona_id + scope`, иначе различия ролей будут ошибочно считаться аномалиями.
+  - baseline и anomaly signals всегда scoped по `project_site_id + persona_id + scope`, иначе различия ролей будут ошибочно считаться аномалиями; default-persona baseline зафиксирован тестом, runs других personas не влияют на сигнал.
 
   **Compare workspace**
   - отдельный полноширинный маршрут внутри проекта: `/projects/:id/compare`;
