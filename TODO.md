@@ -330,7 +330,8 @@
   - 1. Stale recovery MVP готов: `RUNNING` run без progress heartbeat дольше `CRAWL_STALE_RUNNING_SECONDS` автоматически помечается `FAILED/stale_run_recovered` при чтении истории или перед новым запуском сайта/проекта; это снимает вечную блокировку site-run после падения процесса.
   - 2. Cancel API MVP готов: `POST /runs/{run_id}/cancel` переводит активный run в `CANCEL_REQUESTED`; crawler проверяет флаг между страницами и завершает run как `CANCELLED`. До финального `CANCELLED` сайт считается занятым, retry недоступен.
   - 3. Crawler readiness MVP готов: `GET /crawler/readiness` показывает sync-mode, worker disabled, active/cancel-requested runs, stale recovery threshold/recovered count и sample активных runs для admin/root-admin.
-  - Следующее: durable worker/lease boundary, более быстрый interrupt текущего fetch, readiness для очереди/worker после появления worker.
+  - 4. Durable job/lease boundary foundation готов: `crawler_run_jobs` фиксирует site-run jobs, sync runner берёт lease `sync-backend`, пишет heartbeat и закрывает job как `SUCCEEDED/FAILED/CANCELLED`; readiness показывает job counters/sample. Execution пока остаётся synchronous.
+  - Следующее: worker execution loop за feature flag, более быстрый interrupt текущего fetch, readiness для реального worker/lease expiry.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -350,6 +351,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P0/P1 Operations reliability — durable crawler job boundary foundation**.
+  - Что было: crawler run жил только как строка `runs`; без отдельной job/lease сущности нельзя безопасно вынести execution из request lifecycle.
+  - Что стало: добавлена таблица/model `crawler_run_jobs`, migration `ab12c9d4e701`, lifecycle service `enqueue → RUNNING lease/heartbeat → terminal status`. Синхронный start API создаёт job, берёт lease `sync-backend` и закрывает job вместе с run. Readiness показывает job counters и active job sample.
+  - Как проверить: `docker compose exec backend alembic upgrade head`; запустить сайт; в DB увидеть `crawler_run_jobs.status=SUCCEEDED` с `run_id`, `heartbeat_at` и очищенным `lease_expires_at`; `GET /crawler/readiness` показывает job counters.
+  - Вклад в цели: подготовлен реальный DB-контракт для worker-boundary без риска сломать текущий sync запуск (`high` architecture/reliability).
 
 - [x] **P0/P1 Operations reliability — crawler readiness endpoint MVP**.
   - Что было: оператор видел общий `/health`, но не видел состояние crawler: есть ли активные runs, отменяемые runs, stale recovery и какой режим исполнения включён.

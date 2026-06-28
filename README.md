@@ -78,6 +78,8 @@ docker compose up -d --build backend
 
 Операционная диагностика crawler доступна admin/root-admin через `GET /crawler/readiness`: режим исполнения, активные runs, ожидание отмены, stale recovery и порог `CRAWL_STALE_RUNNING_SECONDS`.
 
+Каждый запуск сайта теперь создаёт durable job-запись `crawler_run_jobs`. Пока execution остаётся синхронным (`mode=synchronous`), но readiness уже показывает job counters и lease-состояние. `CRAWLER_WORKER_ENABLED` зарезервирован для следующего шага worker execution; включать его сейчас не требуется.
+
 ## Метрики
 
 - JSON метрики backend: `GET /metrics`

@@ -22,6 +22,7 @@ from app.db.models.page import Page
 from app.db.models.page_retry_attempt import PageRetryAttempt
 from app.db.models.project import Project
 from app.db.models.crawl_persona import CrawlPersona
+from app.db.models.crawler_run_job import CrawlerRunJob
 from app.db.models.project_site import ProjectSite
 from app.db.models.run import Run
 from app.db.models.user import User
@@ -34,6 +35,13 @@ from app.core.events import (
     emit_event,
 )
 from app.services.crawl_personas import get_default_persona
+from app.services.crawler_jobs import (
+    enqueue_site_run_job,
+    fail_job,
+    finish_job_from_run,
+    heartbeat_job,
+    mark_job_running,
+)
 from app.services.page_context import build_page_context
 from app.services.persona_secrets import decrypt_session_bundle
 from app.services.persona_browser_state import build_browser_persona_state
@@ -542,6 +550,7 @@ def _finalize_cancelled_run(
     site: ProjectSite,
     persona: CrawlPersona | None,
     actor_user_id: int | None,
+    job: CrawlerRunJob | None = None,
 ) -> None:
     run.status = "CANCELLED"
     run.failure_code = "cancelled_by_user"
@@ -557,6 +566,7 @@ def _finalize_cancelled_run(
         actor_user_id=actor_user_id,
     )
     db.commit()
+    finish_job_from_run(db, job=job, run=run)
 
 
 def _execute_site_run(
@@ -565,6 +575,7 @@ def _execute_site_run(
     *,
     persona: CrawlPersona | None = None,
     actor_user_id: int | None = None,
+    job: CrawlerRunJob | None = None,
 ) -> Run:
     persona = persona or get_default_persona(db, site)
     _assert_persona_ready_for_run(persona)
@@ -586,6 +597,8 @@ def _execute_site_run(
     db.add(run)
     db.commit()
     db.refresh(run)
+    if job is not None:
+        mark_job_running(db, job=job, run=run)
 
     allowed_domains = _parse_allowed_domains(site)
     excluded_ext = _parse_excluded_ext(site)
@@ -622,6 +635,7 @@ def _execute_site_run(
                         site=site,
                         persona=persona,
                         actor_user_id=actor_user_id,
+                        job=job,
                     )
                     raise RunCancelled()
                 if run_deadline is not None and time.monotonic() >= run_deadline:
@@ -638,6 +652,7 @@ def _execute_site_run(
                 run.current_url = current
                 run.progress_updated_at = datetime.utcnow()
                 db.commit()
+                heartbeat_job(db, job=job)
 
                 started_fetch = time.monotonic()
                 try:
@@ -666,6 +681,8 @@ def _execute_site_run(
                     run.pages_total = len(pages)
                     run.current_batch_no = (len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1
                     run.progress_updated_at = datetime.utcnow()
+                    db.commit()
+                    heartbeat_job(db, job=job)
                     continue
 
                 response_time_ms = round((time.monotonic() - started_fetch) * 1000)
@@ -704,6 +721,8 @@ def _execute_site_run(
                     run.pages_total = len(pages)
                     run.current_batch_no = (len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1
                     run.progress_updated_at = datetime.utcnow()
+                    db.commit()
+                    heartbeat_job(db, job=job)
                     continue
                 ct = (resp.headers.get("content-type", "") or "").lower()
                 html = resp.text if "text/html" in ct else ""
@@ -729,6 +748,8 @@ def _execute_site_run(
                 run.pages_total = len(pages)
                 run.current_batch_no = (len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1
                 run.progress_updated_at = datetime.utcnow()
+                db.commit()
+                heartbeat_job(db, job=job)
 
                 if not html or resp.status_code >= 400:
                     continue
@@ -755,6 +776,7 @@ def _execute_site_run(
                 run.pages_discovered = len(queued)
                 run.progress_updated_at = datetime.utcnow()
                 db.commit()
+                heartbeat_job(db, job=job)
 
         run.pages_total = len(pages)
         run.pages_discovered = max(len(queued), len(pages))
@@ -792,6 +814,7 @@ def _execute_site_run(
                 actor_user_id=actor_user_id,
             )
             db.commit()
+            finish_job_from_run(db, job=job, run=run)
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -842,6 +865,7 @@ def _execute_site_run(
             actor_user_id=actor_user_id,
         )
         db.commit()
+        finish_job_from_run(db, job=job, run=run)
     except HTTPException as exc:
         if run.status != "FAILED":
             detail = exc.detail if isinstance(exc.detail, dict) else {}
@@ -863,6 +887,7 @@ def _execute_site_run(
                 actor_user_id=actor_user_id,
             )
             db.commit()
+            finish_job_from_run(db, job=job, run=run)
         raise
     except BrowserCrawlerError as exc:
         run.status = "FAILED"
@@ -879,6 +904,7 @@ def _execute_site_run(
             actor_user_id=actor_user_id,
         )
         db.commit()
+        finish_job_from_run(db, job=job, run=run)
         raise HTTPException(
             status_code=502,
             detail={
@@ -906,6 +932,7 @@ def _execute_site_run(
             actor_user_id=actor_user_id,
         )
         db.commit()
+        finish_job_from_run(db, job=job, run=run)
         raise
 
     return run
@@ -943,7 +970,19 @@ def start_site_run(
         )
         if persona is None:
             raise HTTPException(status_code=404, detail="Crawl persona not found")
-    run = _execute_site_run(db, site, persona=persona, actor_user_id=current_user.id)
+    run_persona = persona or get_default_persona(db, site)
+    _assert_persona_ready_for_run(run_persona)
+    job = enqueue_site_run_job(db, site=site, persona=run_persona, actor_user_id=current_user.id)
+    try:
+        run = _execute_site_run(db, site, persona=run_persona, actor_user_id=current_user.id, job=job)
+    except Exception:
+        fail_job(
+            db,
+            job=job,
+            failure_code="start_failed",
+            failure_message="Crawler job не смог завершить синхронный запуск.",
+        )
+        raise
     persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
     session = _persona_session_status(persona)
     return {
@@ -1003,7 +1042,18 @@ def start_project_sites(
         }
         try:
             _assert_no_active_site_run(db, site)
-            run = _execute_site_run(db, site, persona=persona, actor_user_id=current_user.id)
+            _assert_persona_ready_for_run(persona)
+            job = enqueue_site_run_job(db, site=site, persona=persona, actor_user_id=current_user.id)
+            try:
+                run = _execute_site_run(db, site, persona=persona, actor_user_id=current_user.id, job=job)
+            except Exception:
+                fail_job(
+                    db,
+                    job=job,
+                    failure_code="start_failed",
+                    failure_message="Crawler job не смог завершить синхронный запуск.",
+                )
+                raise
             results.append(
                 {
                     **base_result,

@@ -17,6 +17,7 @@ from app.db.base import Base
 from app.db.models.admin_audit_log import AdminAuditLog
 from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.crawl_persona_login_capture import CrawlPersonaLoginCapture
+from app.db.models.crawler_run_job import CrawlerRunJob
 from app.db.models.event_feed import EventFeed
 from app.db.models.login_history import LoginHistory
 from app.db.models.project import Project
@@ -549,6 +550,10 @@ def test_crawler_readiness_reports_active_runs_and_recovers_stale(monkeypatch):
     assert data["ready"] is True
     assert data["mode"] == "synchronous"
     assert data["worker"]["enabled"] is False
+    assert data["jobs"]["total_active"] == 0
+    assert data["jobs"]["queued"] == 0
+    assert data["jobs"]["running"] == 0
+    assert data["jobs"]["sample"] == []
     assert data["stale_recovery"]["threshold_seconds"] == 60
     assert data["stale_recovery"]["recovered_runs"] == 1
     assert data["active"]["running"] == 1
@@ -734,6 +739,15 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     assert summaries_by_id[primary_id]["anomaly"]["status"] == "insufficient_data"
     assert summaries_by_id[secondary_id]["runs_total"] == 1
     assert summaries_by_id[secondary_id]["last_run"]["id"] == secondary_response.json()["run_id"]
+    with SessionLocal() as db:
+        jobs = db.query(CrawlerRunJob).order_by(CrawlerRunJob.id.asc()).all()
+        assert len(jobs) == 2
+        assert [job.project_site_id for job in jobs] == [primary_id, secondary_id]
+        assert [job.run_id for job in jobs] == [primary_run_id, secondary_response.json()["run_id"]]
+        assert [job.status for job in jobs] == ["SUCCEEDED", "SUCCEEDED"]
+        assert all(job.lease_owner == "sync-backend" for job in jobs)
+        assert all(job.lease_expires_at is None for job in jobs)
+        assert all(job.heartbeat_at is not None for job in jobs)
     anomaly_response = client.get(
         f"/projects/{project_id}/sites/{primary_id}/anomaly",
         headers=editor_headers,

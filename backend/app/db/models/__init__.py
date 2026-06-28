@@ -4,6 +4,7 @@ from .project_site import ProjectSite  # noqa: F401
 from .crawl_persona import CrawlPersona  # noqa: F401
 from .crawl_persona_login_capture import CrawlPersonaLoginCapture  # noqa: F401
 from .run import Run  # noqa: F401
+from .crawler_run_job import CrawlerRunJob  # noqa: F401
 from .page import Page  # noqa: F401
 from .page_retry_attempt import PageRetryAttempt  # noqa: F401
 from .login_code import LoginCode  # noqa: F401

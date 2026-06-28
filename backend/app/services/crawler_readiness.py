@@ -4,6 +4,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.models.run import Run
+from app.services.crawler_jobs import active_crawler_jobs_sample, crawler_job_status_counts, crawler_worker_enabled
 from app.services.run_recovery import mark_stale_running_runs_failed, stale_running_run_seconds
 
 
@@ -27,14 +28,29 @@ def build_crawler_readiness(db: Session) -> dict:
         .limit(10)
         .all()
     )
+    job_counts = crawler_job_status_counts(db)
 
     return {
         "ready": True,
         "status": "ok",
         "mode": "synchronous",
         "worker": {
-            "enabled": False,
-            "message": "Durable worker/queue ещё не включены; crawler выполняется в backend request lifecycle.",
+            "enabled": crawler_worker_enabled(),
+            "message": (
+                "Durable worker включён через CRAWLER_WORKER_ENABLED."
+                if crawler_worker_enabled()
+                else "Durable job boundary уже пишет crawler_run_jobs, но execution пока выполняется в backend request lifecycle."
+            ),
+        },
+        "jobs": {
+            "total_active": sum(job_counts.get(status, 0) for status in ("QUEUED", "RUNNING", "CANCEL_REQUESTED")),
+            "queued": job_counts.get("QUEUED", 0),
+            "running": job_counts.get("RUNNING", 0),
+            "cancel_requested": job_counts.get("CANCEL_REQUESTED", 0),
+            "succeeded": job_counts.get("SUCCEEDED", 0),
+            "failed": job_counts.get("FAILED", 0),
+            "cancelled": job_counts.get("CANCELLED", 0),
+            "sample": active_crawler_jobs_sample(db),
         },
         "stale_recovery": {
             "threshold_seconds": stale_running_run_seconds(),
