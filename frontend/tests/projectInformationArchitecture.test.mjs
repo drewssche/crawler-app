@@ -288,6 +288,15 @@ test("guest crawl persona is visible in site, compare and page context UX", () =
   assert.match(compareSource, /Различия могут означать разные права доступа/);
 });
 
+test("managed persona login bridge explains visible browser and MFA workflow", () => {
+  assert.match(sitesSource, /Видимое browser-окно открыто/);
+  assert.match(sitesSource, /MFA\/2FA/);
+  assert.match(sitesSource, /CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS=0/);
+  assert.match(sitesSource, /docker compose up -d --build backend/);
+  assert.match(sitesSource, /DISPLAY\/WAYLAND_DISPLAY/);
+  assert.match(sitesSource, /ручной storageState/);
+});
+
 test("compare auto-match suggests but does not force a relative-path pair", () => {
   assert.match(compareSource, /suggestPageMatch/);
   assert.match(compareSource, /Предложение пары/);

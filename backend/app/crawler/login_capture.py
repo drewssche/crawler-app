@@ -57,6 +57,43 @@ def _launch_mode() -> str:
     return "headless" if _headless() else "headed"
 
 
+def _display_available() -> bool:
+    if _headless():
+        return False
+    return bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+
+
+def _environment_status() -> dict:
+    headless = _headless()
+    display_available = _display_available()
+    interactive_available = not headless and display_available
+    if interactive_available:
+        message = "Backend запустил видимое окно браузера. Войдите в нём нужной ролью и вернитесь в UI для сохранения."
+    elif headless:
+        message = (
+            "Backend работает в headless-режиме: окно не видно пользователю. "
+            "Для ручного входа/MFA включите видимое окно через CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS=0."
+        )
+    else:
+        message = (
+            "Запрошено видимое окно, но backend не видит DISPLAY/WAYLAND_DISPLAY. "
+            "В Docker это обычно означает, что GUI не проброшен; используйте ручной storageState или настройте X11/VNC."
+        )
+    return {
+        "launch_mode": _launch_mode(),
+        "headless": headless,
+        "display_available": display_available,
+        "interactive_window_available": interactive_available,
+        "message": message,
+        "recommended_env": {
+            "CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_ENABLED": "1",
+            "CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS": "0",
+        },
+        "restart_command": "docker compose up -d --build backend",
+        "values_exposed": False,
+    }
+
+
 def assess_login_capture_readiness(
     storage_state: dict,
     *,
@@ -130,6 +167,7 @@ def _expire_sessions() -> None:
 
 
 def _session_public_payload(session: ManagedLoginSession) -> dict:
+    environment = _environment_status()
     return {
         "session_id": session.session_id,
         "status": session.status,
@@ -137,12 +175,15 @@ def _session_public_payload(session: ManagedLoginSession) -> dict:
         "final_url": session.final_url or None,
         "page_title": session.page_title or None,
         "launch_mode": session.launch_mode,
+        "interactive_window_available": environment["interactive_window_available"],
+        "environment": environment,
         "created_at": session.created_at.isoformat(),
         "expires_at": session.expires_at.isoformat(),
         "error_message": session.error_message or None,
         "values_exposed": False,
         "instructions": (
-            "Откройте управляемое окно, войдите нужной ролью и пройдите MFA. "
+            f"{environment['message']} "
+            "Войдите нужной ролью и пройдите MFA/2FA, если сайт попросит. "
             "После этого нажмите «Сохранить сессию» — backend заберёт storageState без показа cookies/tokens в UI."
         ),
     }

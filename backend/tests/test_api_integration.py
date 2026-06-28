@@ -1679,6 +1679,29 @@ def test_fetch_failure_codes_are_stable_and_safe():
     assert "secret" not in message
 
 
+def test_managed_login_session_payload_explains_headless_bridge(monkeypatch):
+    from app.crawler.login_capture import ManagedLoginSession, _session_public_payload
+
+    monkeypatch.setenv("CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS", "1")
+    session = ManagedLoginSession(
+        session_id="session_headless",
+        login_url="https://example.test/login",
+        status="WAITING_FOR_LOGIN",
+        created_at=datetime.utcnow(),
+        expires_at=datetime.utcnow() + timedelta(minutes=30),
+        launch_mode="headless",
+    )
+
+    payload = _session_public_payload(session)
+
+    assert payload["interactive_window_available"] is False
+    assert payload["environment"]["launch_mode"] == "headless"
+    assert payload["environment"]["recommended_env"]["CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS"] == "0"
+    assert "MFA/2FA" in payload["instructions"]
+    assert "cookies" in payload["instructions"]
+    assert payload["values_exposed"] is False
+
+
 def test_retry_problem_page_preserves_original_result_and_records_attempt(monkeypatch):
     from app.api import runs as runs_api
 

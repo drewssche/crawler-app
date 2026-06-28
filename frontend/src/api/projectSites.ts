@@ -206,6 +206,17 @@ export type PersonaManagedLoginSession = {
   final_url: string | null;
   page_title: string | null;
   launch_mode?: "headless" | "headed" | string;
+  interactive_window_available?: boolean;
+  environment?: {
+    launch_mode: "headless" | "headed" | string;
+    headless: boolean;
+    display_available: boolean;
+    interactive_window_available: boolean;
+    message: string;
+    recommended_env: Record<string, string>;
+    restart_command: string;
+    values_exposed: false;
+  };
   created_at: string;
   expires_at: string;
   error_message: string | null;

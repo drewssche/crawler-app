@@ -474,7 +474,11 @@ function ProjectSitePersonasPanel({
       });
       setCaptureByPersonaId((current) => ({ ...current, [persona.id]: result.capture }));
       setManagedSessionByPersonaId((current) => ({ ...current, [persona.id]: result.session }));
-      setMessage("Управляемая browser-сессия открыта. Войдите на сайте, пройдите MFA и нажмите «Сохранить сессию».");
+      setMessage(
+        result.session.interactive_window_available
+          ? "Видимое browser-окно открыто. Войдите на сайте, пройдите MFA/2FA и нажмите «Сохранить сессию»."
+          : "Browser-сессия создана, но видимое окно недоступно в текущем окружении. Проверьте подсказку ниже или используйте ручной storageState.",
+      );
     } catch (err) {
       if (err instanceof ApiError && err.code === "managed_login_capture_unavailable") {
         setError("Управляемая browser-сессия ещё не включена на backend. Используйте ручную вставку Playwright storageState.");
@@ -784,7 +788,7 @@ function ProjectSitePersonasPanel({
                                 <div>
                                   <div style={{ fontWeight: 700 }}>Управляемая browser-сессия</div>
                                   <MetaText opacity={0.72}>
-                                    Откройте сессию, войдите руками и нажмите «Сохранить из управляемого окна». Cookies/tokens не показываются в интерфейсе.
+                                    Откройте сессию, войдите руками, пройдите MFA/2FA и только после перехода в личный кабинет нажмите «Сохранить из управляемого окна». Cookies/tokens не показываются в интерфейсе.
                                   </MetaText>
                                 </div>
                               }
@@ -806,8 +810,21 @@ function ProjectSitePersonasPanel({
                                 </MetaText>
                                 {managedSession.launch_mode === "headless" && (
                                   <StatusText tone="warning">
-                                    Backend запустил browser в headless-режиме. Для ручного входа и MFA включите видимое окно: `CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS=0`.
+                                    Видимое окно не открыто: backend работает в headless-режиме. Для ручного входа и MFA добавьте в `.env` `CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_ENABLED=1` и `CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS=0`, затем выполните `docker compose up -d --build backend`.
                                   </StatusText>
+                                )}
+                                {managedSession.launch_mode !== "headless" && managedSession.interactive_window_available === false && (
+                                  <StatusText tone="warning">
+                                    Запрошено видимое окно, но backend не видит DISPLAY/WAYLAND_DISPLAY. В Docker потребуется проброс GUI/X11/VNC; пока используйте ручной storageState.
+                                  </StatusText>
+                                )}
+                                {managedSession.interactive_window_available && (
+                                  <StatusText tone="success">
+                                    Видимое окно открыто на стороне backend. Держите его открытым до сохранения сессии.
+                                  </StatusText>
+                                )}
+                                {managedSession.environment?.message && (
+                                  <MetaText opacity={0.68}>{managedSession.environment.message}</MetaText>
                                 )}
                                 {managedSession.error_message && (
                                   <StatusText tone="danger">{managedSession.error_message}</StatusText>

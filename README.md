@@ -50,6 +50,23 @@ docker compose up -d --build backend frontend
 - backend жёстко отключает режим при `APP_ENV=production`;
 - настоящая impersonation намеренно не реализована.
 
+## Managed login для crawl personas
+
+Для подключения авторизованной persona через управляемый браузер добавьте в `.env`:
+
+```env
+CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_ENABLED=1
+CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS=0
+```
+
+Затем перезапустите backend:
+
+```bash
+docker compose up -d --build backend
+```
+
+Если backend запущен в Docker без GUI/DISPLAY, видимое окно может не открыться. UI покажет это явно и предложит fallback: ручной импорт Playwright `storageState`.
+
 ## Метрики
 
 - JSON метрики backend: `GET /metrics`
