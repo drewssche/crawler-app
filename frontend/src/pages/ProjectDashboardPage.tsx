@@ -183,6 +183,33 @@ type CrawlerReadiness = {
   }>;
 };
 
+type ActiveSiteJobResponse = {
+  active: boolean;
+  job: null | {
+    id: number;
+    project_site_id: number;
+    crawl_persona_id: number | null;
+    run_id: number | null;
+    status: string;
+    scheduled_at: string;
+    started_at: string | null;
+    heartbeat_at: string | null;
+    failure_code: string | null;
+    failure_message: string | null;
+    site?: {
+      id: number;
+      name: string;
+      start_url: string;
+    } | null;
+    persona?: {
+      id: number;
+      key: string;
+      label: string;
+      kind: string;
+    } | null;
+  };
+};
+
 type ProjectTab = "main" | "history" | "settings";
 type StructureViewFilter = "all" | "added" | "error";
 
@@ -804,6 +831,42 @@ export default function ProjectDashboardPage() {
   const coveragePercent = lastRunCoverage && lastRunCoverage.total > 0
     ? (lastRunCoverage.ok / lastRunCoverage.total) * 100
     : 0;
+
+  useEffect(() => {
+    if (selectedSiteId === null) return;
+    let cancelled = false;
+    apiGet<ActiveSiteJobResponse>(`/runs/active-job/by-site/${selectedSiteId}`)
+      .then((payload) => {
+        if (cancelled) return;
+        if (payload.active && payload.job?.status === "QUEUED") {
+          const job = payload.job;
+          setPendingCrawlerJobs((current) => ({
+            ...current,
+            [selectedSiteId]: {
+              jobId: job.id,
+              siteId: selectedSiteId,
+              siteName: job.site?.name || selectedSite?.name || "Сайт",
+              status: job.status,
+              personaLabel: job.persona?.label || selectedSite?.default_persona?.label || "Гость",
+              queuedAt: job.scheduled_at,
+              source: "site",
+            },
+          }));
+          void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
+          return;
+        }
+        setPendingCrawlerJobs((current) => {
+          if (!current[selectedSiteId]) return current;
+          const next = { ...current };
+          delete next[selectedSiteId];
+          return next;
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSiteId, selectedSite?.name, selectedSite?.default_persona?.label]);
 
   const domainOptions = useMemo(() => ["all", ...domains], [domains]);
 

@@ -336,7 +336,8 @@
   - 7. Docker Compose worker service готов: dev stack поднимает `crawler_worker` вместе с backend/frontend; backend работает с `CRAWLER_WORKER_ENABLED=1`, поэтому site-runs попадают в очередь, а worker забирает их автоматически.
   - 8. Worker recovery/readiness MVP готов: readiness закрывает expired `RUNNING/CANCEL_REQUESTED` jobs с истёкшей lease, освобождает сайт для нового запуска, показывает `recovered_expired_jobs`, stale queued diagnostics и переводит статус в `degraded`, если очередь ждёт дольше `CRAWLER_JOB_STALE_QUEUED_SECONDS`.
   - 9. UI worker execution indication MVP готов: Project Dashboard больше не имитирует `RUNNING` сразу после клика; queued start-site/start-project показываются как `В очереди worker`, pending job хранится локально, runs/readiness polling продолжается до появления real run, live-блок различает этапы `очередь → worker взял → crawler обходит`.
-  - Следующее: более быстрый interrupt текущего fetch, bounded retries/backoff для failed jobs/pages, persistent job-status API для восстановления pending UI после reload.
+  - 10. Persistent active job status MVP готов: `GET /runs/active-job/by-site/{site_id}` возвращает active crawler job сайта с site/persona metadata или `active=false`; Project Dashboard восстанавливает queued pending-блок после reload без ожидания нового run.
+  - Следующее: более быстрый interrupt текущего fetch, bounded retries/backoff для failed jobs/pages, project-level active jobs endpoint для восстановления очереди всех сайтов сразу.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -380,6 +381,12 @@
   - Что стало: Project Dashboard различает этапы: отправка запуска, `QUEUED` job, ожидание worker, реальный `RUNNING` run и terminal run. Pending job отображается в верхнем блоке, блокирует конфликтующие кнопки, live-структура показывает `очередь → worker взял → crawler обходит → обновление структуры`, а общий запуск показывает queued jobs по сайтам.
   - Как проверить: `docker compose up -d --build`; нажать `Запустить выбранный сайт`; увидеть `Сайт ожидает worker / Job #...`, затем live run после появления real run. Typecheck: `corepack pnpm --dir frontend exec tsc -b`.
   - Вклад в цели: пользователь видит честное состояние worker execution и не принимает queued API response за завершённый crawl (`high` friendly UX/reliability).
+
+- [x] **P0/P1 Operations UX/API — persistent active site job status**.
+  - Что было: pending job был только локальным состоянием Project Dashboard; после reload backend продолжал держать queued job, но UI терял `Job #...` и пояснение ожидания worker.
+  - Что стало: добавлен `GET /runs/active-job/by-site/{site_id}` под `data.view`. Endpoint применяет recovery expired lease через `find_active_site_job`, возвращает active job с site/persona metadata или `active=false`. Project Dashboard при выборе сайта восстанавливает queued pending job из backend.
+  - Как проверить: в worker-mode запустить сайт, обновить страницу до того как worker взял job; UI снова показывает `Сайт ожидает worker / Job #...`. Backend targeted: `pytest -q tests/test_api_integration.py::test_worker_enabled_queues_and_tick_executes_site_run`; frontend: `corepack pnpm --dir frontend exec tsc -b`.
+  - Вклад в цели: pending worker state стал устойчивым к reload и ближе к production UX (`high` reliability/friendly UX).
 
 - [x] **P0/P1 Operations reliability — feature-flagged worker execution tick**.
   - Что было: durable job boundary уже был в DB, но start API всё равно всегда выполнял run синхронно.

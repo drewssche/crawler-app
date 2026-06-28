@@ -835,6 +835,15 @@ def test_worker_enabled_queues_and_tick_executes_site_run(monkeypatch):
     assert readiness["jobs"]["queued"] == 1
     assert readiness["jobs"]["sample"][0]["job_id"] == job_id
 
+    active_job = client.get(f"/runs/active-job/by-site/{site_id}", headers=headers)
+    assert active_job.status_code == 200
+    active_job_payload = active_job.json()
+    assert active_job_payload["active"] is True
+    assert active_job_payload["job"]["id"] == job_id
+    assert active_job_payload["job"]["status"] == "QUEUED"
+    assert active_job_payload["job"]["site"]["id"] == site_id
+    assert active_job_payload["site"]["id"] == site_id
+
     blocked = client.post(f"/runs/start-site/{site_id}", headers=headers)
     assert blocked.status_code == 409
     assert _extract_error_payload(blocked)["error"]["code"] == "site_run_already_active"
@@ -861,6 +870,10 @@ def test_worker_enabled_queues_and_tick_executes_site_run(monkeypatch):
     empty_tick = client.post("/runs/worker/tick", headers=headers)
     assert empty_tick.status_code == 200
     assert empty_tick.json()["processed"] is False
+
+    inactive_job = client.get(f"/runs/active-job/by-site/{site_id}", headers=headers)
+    assert inactive_job.status_code == 200
+    assert inactive_job.json()["active"] is False
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

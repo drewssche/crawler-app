@@ -96,6 +96,8 @@ CRAWLER_JOB_STALE_QUEUED_SECONDS=600
 
 В этом режиме `POST /runs/start-site/{site_id}` ставит задачу в очередь. Постоянный `worker` service автоматически забирает queued jobs. Ручной `POST /runs/worker/tick` остаётся debug/admin-инструментом для проверки одного шага worker execution.
 
+Для восстановления UI после перезагрузки страницы доступен `GET /runs/active-job/by-site/{site_id}`: он возвращает текущую active job сайта или `active=false`, если очередь/worker уже завершили работу.
+
 Dev stack с worker запускается обычной командой:
 
 ```bash

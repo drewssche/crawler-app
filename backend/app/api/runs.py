@@ -135,6 +135,57 @@ def _serialize_run(run: Run, persona: CrawlPersona | None = None) -> dict:
     }
 
 
+def _serialize_crawler_job(
+    job: CrawlerRunJob,
+    *,
+    site: ProjectSite | None = None,
+    persona: CrawlPersona | None = None,
+) -> dict:
+    return {
+        "id": job.id,
+        "project_id": job.project_id,
+        "project_site_id": job.project_site_id,
+        "crawl_persona_id": job.crawl_persona_id,
+        "run_id": job.run_id,
+        "kind": job.kind,
+        "status": job.status,
+        "lease_owner": job.lease_owner,
+        "lease_expires_at": job.lease_expires_at,
+        "attempts": job.attempts,
+        "max_attempts": job.max_attempts,
+        "scheduled_at": job.scheduled_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "heartbeat_at": job.heartbeat_at,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "failure_code": job.failure_code,
+        "failure_message": job.failure_message,
+        "site": (
+            None
+            if site is None
+            else {
+                "id": site.id,
+                "project_id": site.project_id,
+                "name": site.name,
+                "start_url": site.start_url,
+                "is_enabled": site.is_enabled,
+            }
+        ),
+        "persona": (
+            None
+            if persona is None
+            else {
+                "id": persona.id,
+                "key": persona.key,
+                "label": persona.label,
+                "kind": persona.kind,
+                "has_secrets": persona.has_secrets,
+            }
+        ),
+    }
+
+
 def _string_value(value: Any) -> str:
     if value is None:
         return ""
@@ -1560,6 +1611,49 @@ def list_site_runs(
         page=safe_page,
         page_size=safe_page_size,
     )
+
+
+@router.get("/active-job/by-site/{site_id}")
+def get_active_site_job(
+    site_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("data.view")),
+):
+    site = db.get(ProjectSite, site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Project site not found")
+    job = find_active_site_job(db, project_site_id=site_id)
+    if job is None:
+        return {
+            "active": False,
+            "job": None,
+            "site": {
+                "id": site.id,
+                "project_id": site.project_id,
+                "name": site.name,
+                "start_url": site.start_url,
+                "is_enabled": site.is_enabled,
+            },
+        }
+    persona = db.get(CrawlPersona, job.crawl_persona_id) if job.crawl_persona_id else None
+    return {
+        "active": True,
+        "job": _serialize_crawler_job(job, site=site, persona=persona),
+        "site": {
+            "id": site.id,
+            "project_id": site.project_id,
+            "name": site.name,
+            "start_url": site.start_url,
+            "is_enabled": site.is_enabled,
+        },
+        "persona": None if persona is None else {
+            "id": persona.id,
+            "key": persona.key,
+            "label": persona.label,
+            "kind": persona.kind,
+            "has_secrets": persona.has_secrets,
+        },
+    }
 
 
 @router.get("/{run_id}/pages")
