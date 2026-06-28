@@ -1018,6 +1018,58 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     assert "interactive-secret" not in str(interactive_saved)
     assert "interactive-role-secret" not in str(interactive_saved)
 
+    not_ready_persona_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas",
+        json={"key": "notready", "label": "Not ready user", "kind": "authenticated"},
+        headers=editor_headers,
+    )
+    assert not_ready_persona_response.status_code == 200
+    not_ready_persona = _extract_success_data(not_ready_persona_response)
+    not_ready_capture_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{not_ready_persona['id']}/login-captures",
+        json={"login_url": "https://persona.test/login"},
+        headers=editor_headers,
+    )
+    assert not_ready_capture_response.status_code == 200
+    not_ready_capture = _extract_success_data(not_ready_capture_response)
+    monkeypatch.setattr(
+        project_sites_api,
+        "capture_managed_login_session_state",
+        lambda session_id: SimpleNamespace(
+            storage_state={"cookies": [], "origins": []},
+            final_url="https://persona.test/login",
+            page_title="Login",
+            readiness={
+                "ready": False,
+                "cookies_count": 0,
+                "local_storage_count": 0,
+                "still_login_like": True,
+                "same_host": True,
+                "warnings": ["В browser state нет cookies/localStorage."],
+                "values_exposed": False,
+            },
+        ),
+    )
+    not_ready_save_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{not_ready_persona['id']}/login-captures/{not_ready_capture['id']}/managed-session/save",
+        json={"session_id": "session_test_123456"},
+        headers=editor_headers,
+    )
+    assert not_ready_save_response.status_code == 409
+    not_ready_payload = _extract_error_payload(not_ready_save_response)
+    assert not_ready_payload["error"]["code"] == "managed_login_session_not_ready"
+    assert not_ready_payload["error"]["details"]["readiness"]["values_exposed"] is False
+
+    force_save_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{not_ready_persona['id']}/login-captures/{not_ready_capture['id']}/managed-session/save",
+        json={"session_id": "session_test_123456", "force": True},
+        headers=editor_headers,
+    )
+    assert force_save_response.status_code == 200
+    force_saved = _extract_success_data(force_save_response)
+    assert force_saved["capture"]["status"] == "COMPLETED"
+    assert "В browser state нет cookies/localStorage." not in str(force_saved)
+
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
     engine.dispose()

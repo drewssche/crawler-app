@@ -71,6 +71,16 @@ type PersonaDraft = {
   description: string;
 };
 
+type ManagedLoginReadiness = {
+  ready?: boolean;
+  cookies_count?: number;
+  local_storage_count?: number;
+  still_login_like?: boolean;
+  same_host?: boolean;
+  warnings?: string[];
+  values_exposed?: false;
+};
+
 const EMPTY_PERSONA_DRAFT: PersonaDraft = {
   key: "",
   label: "",
@@ -214,6 +224,7 @@ function ProjectSitePersonasPanel({
   const [captureJsonByPersonaId, setCaptureJsonByPersonaId] = useState<Record<number, string>>({});
   const [captureExpiresAtByPersonaId, setCaptureExpiresAtByPersonaId] = useState<Record<number, string>>({});
   const [managedSessionByPersonaId, setManagedSessionByPersonaId] = useState<Record<number, PersonaManagedLoginSession>>({});
+  const [managedReadinessByPersonaId, setManagedReadinessByPersonaId] = useState<Record<number, ManagedLoginReadiness>>({});
   const [pending, setPending] = useState<number | "new" | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -351,6 +362,11 @@ function ProjectSitePersonasPanel({
         [persona.id]: "{\n  \"cookies\": [],\n  \"origins\": []\n}",
       }));
       setCaptureExpiresAtByPersonaId((current) => ({ ...current, [persona.id]: "" }));
+      setManagedReadinessByPersonaId((current) => {
+        const next = { ...current };
+        delete next[persona.id];
+        return next;
+      });
       setMessage("Сеанс подключения создан в ручном режиме: откройте сайт, войдите нужной ролью и вставьте Playwright storageState JSON.");
     } catch (err) {
       const activeCapture =
@@ -367,6 +383,11 @@ function ProjectSitePersonasPanel({
           ...current,
           [persona.id]: current[persona.id] || "{\n  \"cookies\": [],\n  \"origins\": []\n}",
         }));
+        setManagedReadinessByPersonaId((current) => {
+          const next = { ...current };
+          delete next[persona.id];
+          return next;
+        });
         setMessage("Для этой персоны уже есть активный сеанс подключения. Продолжите его или отмените.");
       } else {
         setError(err instanceof Error ? err.message : "Не удалось начать подключение через браузер.");
@@ -469,6 +490,7 @@ function ProjectSitePersonasPanel({
     persona: CrawlPersonaSummary,
     capture: PersonaLoginCapture,
     session: PersonaManagedLoginSession,
+    force = false,
   ) {
     setPending(persona.id);
     setError("");
@@ -480,6 +502,7 @@ function ProjectSitePersonasPanel({
       const result = await saveProjectSitePersonaManagedLoginSession(projectId, site.id, persona.id, capture.id, {
         session_id: session.session_id,
         expires_at: expiresAt,
+        force,
       });
       setPersonas((current) => current.map((row) => row.id === result.persona.id ? result.persona : row));
       setCaptureByPersonaId((current) => {
@@ -492,9 +515,27 @@ function ProjectSitePersonasPanel({
         delete next[persona.id];
         return next;
       });
+      setManagedReadinessByPersonaId((current) => {
+        const next = { ...current };
+        delete next[persona.id];
+        return next;
+      });
       setMessage("Browser-сессия сохранена из управляемого окна. Значения cookies/tokens скрыты.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось сохранить управляемую browser-сессию.");
+      if (err instanceof ApiError && err.code === "managed_login_session_not_ready") {
+        const readiness =
+          err.details &&
+          typeof err.details === "object" &&
+          "readiness" in err.details
+            ? (err.details as { readiness?: ManagedLoginReadiness }).readiness
+            : undefined;
+        if (readiness) {
+          setManagedReadinessByPersonaId((current) => ({ ...current, [persona.id]: readiness }));
+        }
+        setError("Похоже, вход ещё не завершён. Проверьте управляемое окно или сохраните принудительно, если это ожидаемо.");
+      } else {
+        setError(err instanceof Error ? err.message : "Не удалось сохранить управляемую browser-сессию.");
+      }
     } finally {
       setPending(null);
     }
@@ -511,6 +552,11 @@ function ProjectSitePersonasPanel({
     try {
       await cancelProjectSitePersonaManagedLoginSession(projectId, site.id, persona.id, capture.id, session.session_id);
       setManagedSessionByPersonaId((current) => {
+        const next = { ...current };
+        delete next[persona.id];
+        return next;
+      });
+      setManagedReadinessByPersonaId((current) => {
         const next = { ...current };
         delete next[persona.id];
         return next;
@@ -646,6 +692,7 @@ function ProjectSitePersonasPanel({
         const editingSession = sessionPersonaId === persona.id;
         const capture = captureByPersonaId[persona.id];
         const managedSession = managedSessionByPersonaId[persona.id];
+        const managedReadiness = managedReadinessByPersonaId[persona.id];
         return (
           <Card key={persona.id} style={{ display: "grid", gap: 8 }}>
             <SectionHeaderRow
@@ -752,14 +799,34 @@ function ProjectSitePersonasPanel({
                                 <MetaText opacity={0.72}>
                                   Открыта до {formatOperationalDateTime(managedSession.expires_at)}
                                   {managedSession.page_title ? ` · ${managedSession.page_title}` : ""}
+                                  {managedSession.launch_mode ? ` · режим: ${managedSession.launch_mode === "headed" ? "видимое окно" : "headless"}` : ""}
                                 </MetaText>
                                 <MetaText opacity={0.68} style={{ wordBreak: "break-word" }}>
                                   Сейчас: {managedSession.final_url || managedSession.login_url}
                                 </MetaText>
+                                {managedSession.launch_mode === "headless" && (
+                                  <StatusText tone="warning">
+                                    Backend запустил browser в headless-режиме. Для ручного входа и MFA включите видимое окно: `CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS=0`.
+                                  </StatusText>
+                                )}
                                 {managedSession.error_message && (
                                   <StatusText tone="danger">{managedSession.error_message}</StatusText>
                                 )}
                               </>
+                            )}
+                            {managedReadiness && (
+                              <Card variant="warning" style={{ display: "grid", gap: 6 }}>
+                                <div style={{ fontWeight: 700 }}>Сессия выглядит неготовой</div>
+                                <MetaText opacity={0.72}>
+                                  Найдено cookies: {managedReadiness.cookies_count ?? 0}; localStorage: {managedReadiness.local_storage_count ?? 0}.
+                                </MetaText>
+                                {(managedReadiness.warnings || []).map((warning) => (
+                                  <MetaText key={warning} opacity={0.76}>• {warning}</MetaText>
+                                ))}
+                                <MetaText opacity={0.68}>
+                                  Если сайт действительно хранит авторизацию иначе, можно сохранить принудительно.
+                                </MetaText>
+                              </Card>
                             )}
                             <CardFooterActions>
                               {!managedSession ? (
@@ -781,6 +848,16 @@ function ProjectSitePersonasPanel({
                                   >
                                     {pending === persona.id ? "Сохранение..." : "Сохранить из управляемого окна"}
                                   </CardActionButton>
+                                  {managedReadiness && (
+                                    <CardActionButton
+                                      variant="secondary"
+                                      compact
+                                      disabled={pending === persona.id}
+                                      onClick={() => void handleSaveManagedLoginSession(persona, capture, managedSession, true)}
+                                    >
+                                      Сохранить принудительно
+                                    </CardActionButton>
+                                  )}
                                   <CardActionButton
                                     variant="ghost"
                                     compact

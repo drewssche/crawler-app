@@ -17,6 +17,7 @@ class ManagedLoginCaptureResult:
     storage_state: dict
     final_url: str
     page_title: str
+    readiness: dict | None = None
 
 
 @dataclass
@@ -28,6 +29,7 @@ class ManagedLoginSession:
     expires_at: datetime
     final_url: str = ""
     page_title: str = ""
+    launch_mode: str = "headless"
     error_message: str = ""
     playwright: Any = None
     browser: Any = None
@@ -48,6 +50,56 @@ def _headless() -> bool:
         "false",
         "no",
         "off",
+    }
+
+
+def _launch_mode() -> str:
+    return "headless" if _headless() else "headed"
+
+
+def assess_login_capture_readiness(
+    storage_state: dict,
+    *,
+    login_url: str,
+    final_url: str,
+    page_title: str,
+) -> dict:
+    cookies = storage_state.get("cookies") if isinstance(storage_state, dict) else []
+    origins = storage_state.get("origins") if isinstance(storage_state, dict) else []
+    cookies_count = len(cookies) if isinstance(cookies, list) else 0
+    local_storage_count = 0
+    if isinstance(origins, list):
+        for origin in origins:
+            if isinstance(origin, dict) and isinstance(origin.get("localStorage"), list):
+                local_storage_count += len(origin["localStorage"])
+    login_host = ""
+    final_host = ""
+    try:
+        from urllib.parse import urlparse
+
+        login_host = (urlparse(login_url).hostname or "").lower()
+        final_host = (urlparse(final_url).hostname or "").lower()
+    except Exception:
+        pass
+    final_text = f"{final_url} {page_title}".lower()
+    still_login_like = any(marker in final_text for marker in ("login", "signin", "sign-in", "auth", "authorize", "вход", "авторизац"))
+    has_state = cookies_count > 0 or local_storage_count > 0
+    same_host = bool(login_host and final_host and (final_host == login_host or final_host.endswith(f".{login_host}")))
+    warnings: list[str] = []
+    if not has_state:
+        warnings.append("В browser state нет cookies/localStorage. Похоже, вход ещё не выполнен или сайт не сохранил сессию.")
+    if still_login_like:
+        warnings.append("Текущий адрес или title всё ещё похожи на страницу входа.")
+    if login_host and final_host and not same_host:
+        warnings.append("После входа браузер находится на другом домене. Проверьте, что это ожидаемый переход.")
+    return {
+        "ready": has_state and not still_login_like,
+        "cookies_count": cookies_count,
+        "local_storage_count": local_storage_count,
+        "still_login_like": still_login_like,
+        "same_host": same_host,
+        "warnings": warnings,
+        "values_exposed": False,
     }
 
 
@@ -84,6 +136,7 @@ def _session_public_payload(session: ManagedLoginSession) -> dict:
         "login_url": session.login_url,
         "final_url": session.final_url or None,
         "page_title": session.page_title or None,
+        "launch_mode": session.launch_mode,
         "created_at": session.created_at.isoformat(),
         "expires_at": session.expires_at.isoformat(),
         "error_message": session.error_message or None,
@@ -108,10 +161,11 @@ def start_managed_login_session(login_url: str, *, ttl_minutes: int = 30) -> dic
         status="OPENING",
         created_at=datetime.utcnow(),
         expires_at=datetime.utcnow() + timedelta(minutes=max(5, min(ttl_minutes, 180))),
+        launch_mode=_launch_mode(),
     )
     try:
         session.playwright = sync_playwright().start()
-        session.browser = session.playwright.chromium.launch(headless=_headless())
+        session.browser = session.playwright.chromium.launch(headless=session.launch_mode == "headless")
         session.context = session.browser.new_context(ignore_https_errors=True)
         session.page = session.context.new_page()
         session.page.goto(login_url, wait_until="domcontentloaded", timeout=60_000)
@@ -152,11 +206,18 @@ def capture_managed_login_session_state(session_id: str) -> ManagedLoginCaptureR
         storage_state = session.context.storage_state()
         session.final_url = session.page.url
         session.page_title = session.page.title()
+        readiness = assess_login_capture_readiness(
+            storage_state,
+            login_url=session.login_url,
+            final_url=session.final_url,
+            page_title=session.page_title,
+        )
         session.status = "CAPTURED"
         return ManagedLoginCaptureResult(
             storage_state=storage_state,
             final_url=session.final_url,
             page_title=session.page_title,
+            readiness=readiness,
         )
     finally:
         _close_session(session)
@@ -192,10 +253,17 @@ def capture_managed_login_state(login_url: str, *, wait_seconds: int = 0) -> Man
                 pass
             page.wait_for_timeout(wait_ms)
         storage_state = context.storage_state()
+        readiness = assess_login_capture_readiness(
+            storage_state,
+            login_url=login_url,
+            final_url=page.url,
+            page_title=page.title(),
+        )
         result = ManagedLoginCaptureResult(
             storage_state=storage_state,
             final_url=page.url,
             page_title=page.title(),
+            readiness=readiness,
         )
         context.close()
         browser.close()

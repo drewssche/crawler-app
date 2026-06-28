@@ -72,6 +72,7 @@ class PersonaLoginCaptureManagedSessionCreate(BaseModel):
 class PersonaLoginCaptureManagedSessionSave(BaseModel):
     session_id: str = Field(min_length=12, max_length=160)
     expires_at: datetime | None = None
+    force: bool = False
 
 
 def _capture_payload(capture: CrawlPersonaLoginCapture) -> dict:
@@ -328,7 +329,18 @@ def _managed_capture_complete_payload(
     persona: CrawlPersona,
     result,
     expires_at: datetime | None,
+    force: bool = False,
 ) -> dict:
+    readiness = getattr(result, "readiness", None) or {}
+    if readiness and not readiness.get("ready") and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "managed_login_session_not_ready",
+                "message": "Похоже, вход ещё не завершён. Проверьте управляемое окно или сохраните принудительно, если это ожидаемое состояние.",
+                "readiness": readiness,
+            },
+        )
     _complete_login_capture_with_bundle(
         db,
         capture=capture,
@@ -338,6 +350,7 @@ def _managed_capture_complete_payload(
             result={
                 "final_url": result.final_url,
                 "page_title": result.page_title,
+                "readiness": readiness,
                 "values_exposed": False,
             },
         ),
@@ -789,6 +802,7 @@ def capture_project_site_persona_login_managed_state(
         persona=persona,
         result=result,
         expires_at=payload.expires_at,
+        force=True,
     )
 
 
@@ -896,6 +910,7 @@ def save_project_site_persona_login_managed_session(
         persona=persona,
         result=result,
         expires_at=payload.expires_at,
+        force=payload.force,
     )
 
 

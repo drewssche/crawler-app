@@ -202,6 +202,7 @@ export type PersonaManagedLoginSession = {
   login_url: string;
   final_url: string | null;
   page_title: string | null;
+  launch_mode?: "headless" | "headed" | string;
   created_at: string;
   expires_at: string;
   error_message: string | null;
@@ -296,7 +297,7 @@ export function saveProjectSitePersonaManagedLoginSession(
   siteId: number,
   personaId: number,
   captureId: number,
-  input: { session_id: string; expires_at?: string | null },
+  input: { session_id: string; expires_at?: string | null; force?: boolean },
 ): Promise<PersonaLoginCaptureCompleteResult> {
   return apiPost<PersonaLoginCaptureCompleteResult>(
     `/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures/${captureId}/managed-session/save`,
