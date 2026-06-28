@@ -1707,6 +1707,84 @@ def test_run_lock_is_scoped_to_project(monkeypatch):
     engine.dispose()
 
 
+def test_stale_running_run_is_recovered_before_new_start(monkeypatch):
+    from app.api import runs as runs_api
+
+    monkeypatch.setenv("CRAWL_STALE_RUNNING_SECONDS", "60")
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="runs-stale@test.local", role="editor", is_approved=True))
+        project = Project(name="Stale", start_url="https://stale.test", allowed_domains_csv="stale.test", max_pages=1)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        site = _add_primary_site(db, project)
+        stale_run = Run(
+            project_id=project.id,
+            project_site_id=site.id,
+            status="RUNNING",
+            started_at=datetime.utcnow() - timedelta(hours=2),
+            progress_updated_at=datetime.utcnow() - timedelta(hours=2),
+            current_url="https://stale.test/hanging",
+        )
+        db.add(stale_run)
+        db.commit()
+        site_id = site.id
+        stale_run_id = stale_run.id
+
+    class FakeResponse:
+        def __init__(self, url: str):
+            self.url = url
+            self.status_code = 200
+            self.headers = {"content-type": "text/html"}
+            self.text = "<html><body>ok</body></html>"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            return FakeResponse(url)
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    headers = _auth_header("runs-stale@test.local", role="editor")
+
+    listed = client.get(f"/runs/by-site/{site_id}", headers=headers)
+    assert listed.status_code == 200
+    stale_payload = next(row for row in listed.json() if row["id"] == stale_run_id)
+    assert stale_payload["status"] == "FAILED"
+    assert stale_payload["failure_code"] == "stale_run_recovered"
+    assert stale_payload["current_url"] is None
+
+    started = client.post(f"/runs/start-site/{site_id}", headers=headers)
+    assert started.status_code == 200
+
+    with SessionLocal() as db:
+        recovered = db.get(Run, stale_run_id)
+        assert recovered.status == "FAILED"
+        assert recovered.finished_at is not None
+        assert recovered.failure_code == "stale_run_recovered"
+        assert recovered.current_url is None
+        latest = db.query(Run).filter(Run.project_site_id == site_id).order_by(Run.id.desc()).first()
+        assert latest.id != stale_run_id
+        assert latest.status == "FINISHED"
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_empty_crawl_marks_run_failed(monkeypatch):
     from app.api import runs as runs_api
 

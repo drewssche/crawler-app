@@ -37,6 +37,7 @@ from app.services.crawl_personas import get_default_persona
 from app.services.page_context import build_page_context
 from app.services.persona_secrets import decrypt_session_bundle
 from app.services.persona_browser_state import build_browser_persona_state
+from app.services.run_recovery import mark_stale_running_runs_failed
 from app.crawler.browser_fetcher import BrowserCrawlerError, BrowserPersonaClient, browser_state_requires_runtime
 from app.crawler.renderer import (
     get_rendered_snapshot_metadata,
@@ -461,6 +462,7 @@ def _retry_page(
 
 
 def _assert_no_active_site_run(db: Session, site: ProjectSite) -> None:
+    mark_stale_running_runs_failed(db, project_site_id=site.id)
     active_run = (
         db.query(Run)
         .filter(Run.project_site_id == site.id, Run.status == "RUNNING")
@@ -1207,6 +1209,7 @@ def list_runs(
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_permission("data.view")),
 ):
+    mark_stale_running_runs_failed(db, project_id=project_id)
     query = (
         db.query(Run, CrawlPersona)
         .outerjoin(CrawlPersona, CrawlPersona.id == Run.crawl_persona_id)
@@ -1236,6 +1239,7 @@ def list_site_runs(
 ):
     if not db.get(ProjectSite, site_id):
         raise HTTPException(status_code=404, detail="Project site not found")
+    mark_stale_running_runs_failed(db, project_site_id=site_id)
     query = (
         db.query(Run, CrawlPersona)
         .outerjoin(CrawlPersona, CrawlPersona.id == Run.crawl_persona_id)

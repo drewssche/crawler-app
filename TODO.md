@@ -326,7 +326,9 @@
   Backend viewer получает `403`, frontend не монтирует Event Center. Остался явный viewer UI-smoke по запросу.
 
 - [ ] **P0/P1 Operations reliability + unattended recovery** (`HIGH`, epic).
-  Celery boundary, lease/heartbeat, bounded retries/backoff, timeout/cancel, stale recovery, health/readiness; Telegram digest только после достоверных signals.
+  Celery boundary, lease/heartbeat, bounded retries/backoff, timeout/cancel, health/readiness; Telegram digest только после достоверных signals.
+  - 1. Stale recovery MVP готов: `RUNNING` run без progress heartbeat дольше `CRAWL_STALE_RUNNING_SECONDS` автоматически помечается `FAILED/stale_run_recovered` при чтении истории или перед новым запуском сайта/проекта; это снимает вечную блокировку site-run после падения процесса.
+  - Следующее: durable worker/lease boundary, явный cancel API и health/readiness для очереди.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -346,6 +348,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P0/P1 Operations reliability — stale RUNNING recovery MVP**.
+  - Что было: если backend-процесс падал во время crawler run, запись могла остаться `RUNNING` навсегда и блокировать следующий запуск сайта.
+  - Что стало: backend восстанавливает такие runs при чтении истории или перед новым запуском: если `progress_updated_at/started_at` старше `CRAWL_STALE_RUNNING_SECONDS`, run становится `FAILED` с кодом `stale_run_recovered`, очищенным `current_url` и friendly-пояснением. Порог по умолчанию — 30 минут, env ограничен диапазоном 60 секунд — 24 часа.
+  - Как проверить: создать старый `RUNNING` run, вызвать `/runs/by-site/{site_id}` или `/runs/start-site/{site_id}`; старый run больше не блокирует запуск и отображается как recovered failure.
+  - Вклад в цели: закрывает первый unattended recovery сценарий без Celery-миграции (`high` operations value), сохраняя честный UI-статус вместо вечного “идёт прогон”.
 
 - [x] **MEDIUM Reuse rollout — search highlighting for user email lists**.
   - Что было: подсветка совпадений работала в project search и Structure, но user/root-admin email search показывал обычный текст.
