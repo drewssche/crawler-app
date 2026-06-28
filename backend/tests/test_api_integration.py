@@ -867,6 +867,95 @@ def test_worker_enabled_queues_and_tick_executes_site_run(monkeypatch):
     engine.dispose()
 
 
+def test_crawler_readiness_recovers_expired_jobs_and_reports_stale_queue(monkeypatch):
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    monkeypatch.setenv("CRAWLER_WORKER_ENABLED", "1")
+    monkeypatch.setenv("CRAWLER_JOB_STALE_QUEUED_SECONDS", "60")
+
+    now = datetime.utcnow()
+    with SessionLocal() as db:
+        db.add(_make_user(email="worker-readiness@test.local", role="admin", is_admin=True, is_approved=True))
+        project = Project(name="Worker readiness", start_url="https://worker-readiness.test", allowed_domains_csv="worker-readiness.test")
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        site = _add_primary_site(db, project)
+        run = Run(
+            project_id=project.id,
+            project_site_id=site.id,
+            status="RUNNING",
+            started_at=now - timedelta(minutes=5),
+            progress_updated_at=now - timedelta(minutes=5),
+            current_url=site.start_url,
+        )
+        db.add(run)
+        db.flush()
+        stale_queued = CrawlerRunJob(
+            project_id=project.id,
+            project_site_id=site.id,
+            kind="site_run",
+            status="QUEUED",
+            scheduled_at=now - timedelta(minutes=3),
+            created_at=now - timedelta(minutes=3),
+            updated_at=now - timedelta(minutes=3),
+        )
+        expired_running = CrawlerRunJob(
+            project_id=project.id,
+            project_site_id=site.id,
+            run_id=run.id,
+            kind="site_run",
+            status="RUNNING",
+            lease_owner="crawler-worker",
+            lease_expires_at=now - timedelta(seconds=30),
+            attempts=1,
+            scheduled_at=now - timedelta(minutes=5),
+            started_at=now - timedelta(minutes=5),
+            heartbeat_at=now - timedelta(minutes=5),
+            created_at=now - timedelta(minutes=5),
+            updated_at=now - timedelta(minutes=5),
+        )
+        db.add_all([stale_queued, expired_running])
+        db.commit()
+        run_id = run.id
+        stale_queued_id = stale_queued.id
+        expired_running_id = expired_running.id
+
+    client = TestClient(app)
+    headers = _auth_header("worker-readiness@test.local", role="admin")
+    readiness = _extract_success_data(client.get("/crawler/readiness", headers=headers))
+
+    assert readiness["ready"] is False
+    assert readiness["status"] == "degraded"
+    assert readiness["mode"] == "worker"
+    assert readiness["jobs"]["recovered_expired_jobs"] == 1
+    assert readiness["jobs"]["queued"] == 1
+    assert readiness["jobs"]["failed"] == 1
+    assert readiness["jobs"]["diagnostics"]["stale_queued"] == 1
+    assert readiness["jobs"]["diagnostics"]["stale_queued_sample"][0]["job_id"] == stale_queued_id
+    assert {issue["code"] for issue in readiness["issues"]} == {
+        "crawler_jobs_stale_queued",
+        "crawler_jobs_expired_recovered",
+    }
+
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        expired_job = db.get(CrawlerRunJob, expired_running_id)
+        stale_job = db.get(CrawlerRunJob, stale_queued_id)
+        assert run.status == "FAILED"
+        assert run.failure_code == "crawler_job_lease_expired"
+        assert run.current_url is None
+        assert expired_job.status == "FAILED"
+        assert expired_job.lease_expires_at is None
+        assert stale_job.status == "QUEUED"
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeypatch):
     from app.api import project_sites as project_sites_api
     from app.api import runs as runs_api

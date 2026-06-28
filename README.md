@@ -80,11 +80,18 @@ docker compose up -d --build backend
 
 Каждый запуск сайта теперь создаёт durable job-запись `crawler_run_jobs`. В dev `docker-compose` включён worker-mode: backend ставит site-run в очередь, а отдельный `worker` service забирает queued jobs и выполняет crawl.
 
+Readiness также контролирует production-состояние очереди:
+
+- `RUNNING/CANCEL_REQUESTED` job с истёкшей lease автоматически закрывается как failed/cancelled и освобождает сайт для нового запуска;
+- старая `QUEUED` job не удаляется автоматически, но переводит readiness в `degraded`, чтобы было видно проблему worker/backlog;
+- порог старой очереди задаёт `CRAWLER_JOB_STALE_QUEUED_SECONDS` — по умолчанию 600 секунд.
+
 Worker включён в `docker-compose.yml` явно:
 
 ```env
 CRAWLER_WORKER_ENABLED=1
 CRAWLER_JOB_LEASE_SECONDS=300
+CRAWLER_JOB_STALE_QUEUED_SECONDS=600
 ```
 
 В этом режиме `POST /runs/start-site/{site_id}` ставит задачу в очередь. Постоянный `worker` service автоматически забирает queued jobs. Ручной `POST /runs/worker/tick` остаётся debug/admin-инструментом для проверки одного шага worker execution.

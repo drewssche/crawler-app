@@ -4,7 +4,13 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.models.run import Run
-from app.services.crawler_jobs import active_crawler_jobs_sample, crawler_job_status_counts, crawler_worker_enabled
+from app.services.crawler_jobs import (
+    active_crawler_jobs_sample,
+    crawler_job_operational_diagnostics,
+    crawler_job_status_counts,
+    crawler_worker_enabled,
+    recover_expired_crawler_jobs,
+)
 from app.services.run_recovery import mark_stale_running_runs_failed, stale_running_run_seconds
 
 
@@ -13,6 +19,7 @@ ACTIVE_RUN_STATUSES = ("RUNNING", "CANCEL_REQUESTED")
 
 def build_crawler_readiness(db: Session) -> dict:
     recovered_stale_runs = mark_stale_running_runs_failed(db)
+    recovered_expired_jobs = recover_expired_crawler_jobs(db)
     now = datetime.utcnow()
 
     status_counts = dict(
@@ -30,10 +37,44 @@ def build_crawler_readiness(db: Session) -> dict:
     )
     job_counts = crawler_job_status_counts(db)
     worker_enabled = crawler_worker_enabled()
+    job_diagnostics = crawler_job_operational_diagnostics(db, now=now)
+    issues = []
+    if worker_enabled and job_diagnostics["stale_queued"] > 0:
+        issues.append(
+            {
+                "code": "crawler_jobs_stale_queued",
+                "severity": "warning",
+                "message": "В очереди есть crawler-задачи, которые ждут дольше допустимого порога. Проверьте worker и нагрузку.",
+                "count": job_diagnostics["stale_queued"],
+            }
+        )
+    if recovered_expired_jobs > 0:
+        issues.append(
+            {
+                "code": "crawler_jobs_expired_recovered",
+                "severity": "warning",
+                "message": "Readiness закрыла crawler-задачи с истёкшей lease. Сайт можно запускать повторно.",
+                "count": recovered_expired_jobs,
+            }
+        )
+    if job_diagnostics["expired_leases"] > 0:
+        issues.append(
+            {
+                "code": "crawler_jobs_expired_leases",
+                "severity": "critical",
+                "message": "Есть crawler-задачи с истёкшей lease. Readiness восстановит их при следующем чтении.",
+                "count": job_diagnostics["expired_leases"],
+            }
+        )
+    ready = not any(issue["severity"] == "critical" for issue in issues) and not (
+        worker_enabled and job_diagnostics["stale_queued"] > 0
+    ) and (
+        recovered_expired_jobs == 0
+    )
 
     return {
-        "ready": True,
-        "status": "ok",
+        "ready": ready,
+        "status": "ok" if ready else "degraded",
         "mode": "worker" if worker_enabled else "synchronous",
         "worker": {
             "enabled": worker_enabled,
@@ -52,7 +93,10 @@ def build_crawler_readiness(db: Session) -> dict:
             "failed": job_counts.get("FAILED", 0),
             "cancelled": job_counts.get("CANCELLED", 0),
             "sample": active_crawler_jobs_sample(db),
+            "diagnostics": job_diagnostics,
+            "recovered_expired_jobs": recovered_expired_jobs,
         },
+        "issues": issues,
         "stale_recovery": {
             "threshold_seconds": stale_running_run_seconds(),
             "recovered_runs": recovered_stale_runs,

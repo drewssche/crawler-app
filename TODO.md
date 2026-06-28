@@ -334,7 +334,8 @@
   - 5. Worker execution tick MVP готов: при `CRAWLER_WORKER_ENABLED=1` start API ставит jobs в `QUEUED`, `POST /runs/worker/tick` claim-ит одну queued job, берёт lease `crawler-worker` и выполняет её через общий runner. Это manual tick, ещё не continuous daemon.
   - 6. Continuous worker loop MVP готов: `python -m app.worker.crawler_worker` обрабатывает queued jobs в отдельном процессе до SIGTERM/SIGINT; `CRAWLER_WORKER_POLL_SECONDS` задаёт polling, `CRAWLER_WORKER_TICK_LIMIT` нужен для bounded/dev runs.
   - 7. Docker Compose worker service готов: dev stack поднимает `crawler_worker` вместе с backend/frontend; backend работает с `CRAWLER_WORKER_ENABLED=1`, поэтому site-runs попадают в очередь, а worker забирает их автоматически.
-  - Следующее: более быстрый interrupt текущего fetch, readiness для lease expiry/stale queued jobs, UI-индикация queued/worker execution без ручного refresh.
+  - 8. Worker recovery/readiness MVP готов: readiness закрывает expired `RUNNING/CANCEL_REQUESTED` jobs с истёкшей lease, освобождает сайт для нового запуска, показывает `recovered_expired_jobs`, stale queued diagnostics и переводит статус в `degraded`, если очередь ждёт дольше `CRAWLER_JOB_STALE_QUEUED_SECONDS`.
+  - Следующее: более быстрый interrupt текущего fetch, UI-индикация queued/worker execution без ручного refresh, bounded retries/backoff для failed jobs/pages.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -366,6 +367,12 @@
   - Что стало: в `docker-compose.yml` добавлен `worker` service на том же backend image/volume. Backend и worker получают `CRAWLER_WORKER_ENABLED=1`, поэтому обычный dev stack сразу работает через очередь: start-site создаёт queued job, worker автоматически забирает и выполняет её.
   - Как проверить: `docker compose config --services` должен показывать `worker`; после `docker compose up -d --build` можно смотреть `docker compose logs -f worker`.
   - Вклад в цели: локальное тестирование стало ближе к целевой архитектуре без отдельного ручного запуска worker (`high` operations usability).
+
+- [x] **P0/P1 Operations reliability — worker lease expiry + stale queue readiness**.
+  - Что было: активная job с истёкшей lease могла оставаться `RUNNING/CANCEL_REQUESTED` и блокировать сайт; старая `QUEUED` job была видна только как счётчик без операционного объяснения.
+  - Что стало: `recover_expired_crawler_jobs` закрывает expired active jobs как `FAILED/CANCELLED`, синхронизирует связанный `Run`, очищает lease и освобождает сайт. `GET /crawler/readiness` показывает `jobs.diagnostics`: stale queued count/sample, oldest queued age, expired lease sample, `recovered_expired_jobs` и `issues`; при проблемах возвращает `ready=false/status=degraded`.
+  - Как проверить: создать старую queued job и expired running job; вызвать `GET /crawler/readiness`; expired job станет terminal, linked run получит `crawler_job_lease_expired`, stale queued останется в очереди и будет видна в diagnostics.
+  - Вклад в цели: worker-mode стал безопаснее для production-like эксплуатации: падение worker больше не создаёт вечную блокировку, а backlog отображается явно (`high` operations reliability/friendly admin UX).
 
 - [x] **P0/P1 Operations reliability — feature-flagged worker execution tick**.
   - Что было: durable job boundary уже был в DB, но start API всё равно всегда выполнял run синхронно.
