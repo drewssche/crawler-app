@@ -333,7 +333,8 @@
   - 4. Durable job/lease boundary foundation готов: `crawler_run_jobs` фиксирует site-run jobs, sync runner берёт lease `sync-backend`, пишет heartbeat и закрывает job как `SUCCEEDED/FAILED/CANCELLED`; readiness показывает job counters/sample. Execution пока остаётся synchronous.
   - 5. Worker execution tick MVP готов: при `CRAWLER_WORKER_ENABLED=1` start API ставит jobs в `QUEUED`, `POST /runs/worker/tick` claim-ит одну queued job, берёт lease `crawler-worker` и выполняет её через общий runner. Это manual tick, ещё не continuous daemon.
   - 6. Continuous worker loop MVP готов: `python -m app.worker.crawler_worker` обрабатывает queued jobs в отдельном процессе до SIGTERM/SIGINT; `CRAWLER_WORKER_POLL_SECONDS` задаёт polling, `CRAWLER_WORKER_TICK_LIMIT` нужен для bounded/dev runs.
-  - Следующее: docker-compose worker service, более быстрый interrupt текущего fetch, readiness для lease expiry/stale queued jobs.
+  - 7. Docker Compose worker service готов: dev stack поднимает `crawler_worker` вместе с backend/frontend; backend работает с `CRAWLER_WORKER_ENABLED=1`, поэтому site-runs попадают в очередь, а worker забирает их автоматически.
+  - Следующее: более быстрый interrupt текущего fetch, readiness для lease expiry/stale queued jobs, UI-индикация queued/worker execution без ручного refresh.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -358,7 +359,13 @@
   - Что было: worker execution был доступен только как ручной `POST /runs/worker/tick`, то есть без постоянного обработчика очереди.
   - Что стало: добавлен запускаемый процесс `python -m app.worker.crawler_worker`. Он требует `CRAWLER_WORKER_ENABLED=1`, claim-ит queued jobs через общий worker-step, логирует обработку, ждёт `CRAWLER_WORKER_POLL_SECONDS` при пустой очереди и корректно останавливается по SIGTERM/SIGINT. `CRAWLER_WORKER_TICK_LIMIT` позволяет bounded/dev запуск.
   - Как проверить: `docker compose exec backend env CRAWLER_WORKER_ENABLED=1 CRAWLER_WORKER_TICK_LIMIT=1 PYTHONPATH=/app python -m app.worker.crawler_worker`.
-  - Вклад в цели: появился реальный long-running worker entrypoint без включения нового сервиса по умолчанию (`high` operations architecture).
+  - Вклад в цели: появился реальный long-running worker entrypoint (`high` operations architecture).
+
+- [x] **P0/P1 Operations reliability — docker-compose worker service by default**.
+  - Что было: worker process существовал, но его нужно было запускать отдельной ручной командой; `docker compose up -d --build` поднимал только API/frontend/infra, а backend мог остаться в synchronous-mode.
+  - Что стало: в `docker-compose.yml` добавлен `worker` service на том же backend image/volume. Backend и worker получают `CRAWLER_WORKER_ENABLED=1`, поэтому обычный dev stack сразу работает через очередь: start-site создаёт queued job, worker автоматически забирает и выполняет её.
+  - Как проверить: `docker compose config --services` должен показывать `worker`; после `docker compose up -d --build` можно смотреть `docker compose logs -f worker`.
+  - Вклад в цели: локальное тестирование стало ближе к целевой архитектуре без отдельного ручного запуска worker (`high` operations usability).
 
 - [x] **P0/P1 Operations reliability — feature-flagged worker execution tick**.
   - Что было: durable job boundary уже был в DB, но start API всё равно всегда выполнял run синхронно.

@@ -78,24 +78,36 @@ docker compose up -d --build backend
 
 Операционная диагностика crawler доступна admin/root-admin через `GET /crawler/readiness`: режим исполнения, активные runs, ожидание отмены, stale recovery и порог `CRAWL_STALE_RUNNING_SECONDS`.
 
-Каждый запуск сайта теперь создаёт durable job-запись `crawler_run_jobs`. По умолчанию execution остаётся синхронным (`mode=synchronous`), но readiness уже показывает job counters и lease-состояние.
+Каждый запуск сайта теперь создаёт durable job-запись `crawler_run_jobs`. В dev `docker-compose` включён worker-mode: backend ставит site-run в очередь, а отдельный `worker` service забирает queued jobs и выполняет crawl.
 
-Для проверки worker-boundary можно включить:
+Worker включён в `docker-compose.yml` явно:
 
 ```env
 CRAWLER_WORKER_ENABLED=1
 CRAWLER_JOB_LEASE_SECONDS=300
 ```
 
-В этом режиме `POST /runs/start-site/{site_id}` ставит задачу в очередь, а `POST /runs/worker/tick` забирает и выполняет одну queued job.
+В этом режиме `POST /runs/start-site/{site_id}` ставит задачу в очередь. Постоянный `worker` service автоматически забирает queued jobs. Ручной `POST /runs/worker/tick` остаётся debug/admin-инструментом для проверки одного шага worker execution.
 
-Для постоянной обработки очереди запустите отдельный worker process:
+Dev stack с worker запускается обычной командой:
 
 ```bash
-docker compose exec backend env CRAWLER_WORKER_ENABLED=1 PYTHONPATH=/app python -m app.worker.crawler_worker
+docker compose up -d --build
 ```
 
-Опционально:
+Остановить только worker, если нужно временно проверить backend без фонового crawl:
+
+```bash
+docker compose stop worker
+```
+
+Запустить bounded smoke-проверку worker process внутри backend-контейнера:
+
+```bash
+docker compose exec backend env CRAWLER_WORKER_ENABLED=1 CRAWLER_WORKER_TICK_LIMIT=1 PYTHONPATH=/app python -m app.worker.crawler_worker
+```
+
+Опциональные настройки:
 
 ```env
 CRAWLER_WORKER_POLL_SECONDS=2

@@ -28,6 +28,7 @@ services:
       - .env
     environment:
       - ENV_FILE_PATH=/app/.env.root
+      - CRAWLER_WORKER_ENABLED=1
     volumes:
       - ./backend:/app
       - ./.env:/app/.env.root
@@ -37,6 +38,27 @@ services:
     depends_on:
       - postgres
       - redis
+
+  worker:
+    build: ./backend
+    container_name: crawler_worker
+    restart: always
+    command: sh -c "python -m app.worker.crawler_worker"
+    env_file:
+      - .env
+    environment:
+      - ENV_FILE_PATH=/app/.env.root
+      - CRAWLER_WORKER_ENABLED=1
+      - CRAWLER_WORKER_POLL_SECONDS=${CRAWLER_WORKER_POLL_SECONDS:-2}
+      - CRAWLER_WORKER_TICK_LIMIT=${CRAWLER_WORKER_TICK_LIMIT:-0}
+    volumes:
+      - ./backend:/app
+      - ./.env:/app/.env.root
+      - rendered_snapshots:/app/data/rendered_snapshots
+    depends_on:
+      - postgres
+      - redis
+      - backend
 
   frontend:
     build: ./frontend
