@@ -9,6 +9,7 @@ import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import ClearableInput from "../../components/ui/ClearableInput";
 import ListTotalMeta from "../../components/ui/ListTotalMeta";
 import FormModal from "../../components/ui/FormModal";
+import HighlightedText from "../../components/ui/HighlightedText";
 import ApplicabilityHint from "../../components/ui/ApplicabilityHint";
 import InlineInfoRow from "../../components/ui/InlineInfoRow";
 import SelectableListRow from "../../components/ui/SelectableListRow";
@@ -483,7 +484,7 @@ export default function RootAdminsPage() {
                 key={email}
                 checked={selected.includes(email)}
                 onToggle={() => toggleOne(email)}
-                title={email}
+                title={<HighlightedText value={email} query={search} />}
                 badges={
                   <IdentityBadgeRow
                     role="root-admin"

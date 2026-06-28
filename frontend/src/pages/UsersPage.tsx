@@ -4,6 +4,7 @@ import { apiPost, isAbortError } from "../api/client";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import ClearableInput from "../components/ui/ClearableInput";
+import HighlightedText from "../components/ui/HighlightedText";
 import ListTotalMeta from "../components/ui/ListTotalMeta";
 import RelevanceBadge from "../components/ui/RelevanceBadge";
 import RolePermissionsHint from "../components/ui/RolePermissionsHint";
@@ -469,6 +470,7 @@ export default function UsersPage() {
               key={row.id}
               row={row}
               actorEmail={actorEmail}
+              searchQuery={query}
               checked={selectedIds.includes(row.id)}
               highlighted={drawerOpen && drawerData?.user.id === row.id}
               trustPolicyCatalog={trustPolicyCatalog}
@@ -541,6 +543,7 @@ const UsersListRow = memo(
   function UsersListRow({
     row,
     actorEmail,
+    searchQuery,
     checked,
     highlighted,
     trustPolicyCatalog,
@@ -552,6 +555,7 @@ const UsersListRow = memo(
   }: {
     row: UserRow;
     actorEmail: string;
+    searchQuery: string;
     checked: boolean;
     highlighted: boolean;
     trustPolicyCatalog: Record<TrustPolicy, TrustPolicyCatalogItem>;
@@ -573,7 +577,7 @@ const UsersListRow = memo(
       <SelectableListRow
         checked={checked}
         onToggle={() => onToggle(row.id)}
-        title={row.email}
+        title={<HighlightedText value={row.email} query={searchQuery} />}
         badges={
           <UserBadgeGroups
             identity={identityBadges}
@@ -620,6 +624,7 @@ const UsersListRow = memo(
   (prev, next) =>
     prev.row === next.row &&
     prev.actorEmail === next.actorEmail &&
+    prev.searchQuery === next.searchQuery &&
     prev.checked === next.checked &&
     prev.highlighted === next.highlighted &&
     prev.trustPolicyCatalog === next.trustPolicyCatalog &&
@@ -627,4 +632,3 @@ const UsersListRow = memo(
     prev.checkboxTitle === next.checkboxTitle &&
     prev.openLabel === next.openLabel,
 );
-

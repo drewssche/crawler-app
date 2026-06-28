@@ -303,8 +303,8 @@
 - [x] **MEDIUM Reuse: collapse-reset windowed lazy loader audit**.
   Audit 2026-06-28: второго подтверждённого call-site нет. Collapse-reset/windowed children остаются локально в `ProjectStructureTree`; `useIncrementalPager` и section-nav observers имеют другой контракт. Shared abstraction не выносить до появления второго дерева/иерархии с тем же UX.
 
-- [ ] **MEDIUM Reuse: search highlighting rollout audit**.
-  `HighlightedText` уже используется в Structure и project search; расширять на Users/RootAdmins/Activity только по подтверждённой пользе.
+- [x] **MEDIUM Reuse: search highlighting rollout audit**.
+  Audit 2026-06-28: `HighlightedText` оставлен для Structure/project search и точечно расширен на Users/RootAdmins email search, где результат прямо сопоставляется с видимым email. Activity/Monitoring не расширять без отдельного UX-сценария: там есть event-context highlighting и смешанные типы строк.
 
 ## Reliability and Foundations
 
@@ -346,6 +346,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **MEDIUM Reuse rollout — search highlighting for user email lists**.
+  - Что было: подсветка совпадений работала в project search и Structure, но user/root-admin email search показывал обычный текст.
+  - Что стало: Users и RootAdmins подсвечивают совпавшую часть email через существующий `HighlightedText`. Activity/Monitoring не затронуты, чтобы не смешивать текстовый search-highlight с event-context highlighting.
+  - Как проверить: открыть Users или RootAdmins, ввести часть email в поиск; совпавший фрагмент email подсвечивается в строках.
+  - Вклад в цели: повышает понятность search-results там, где пользователь ищет конкретный email (`medium` friendly UX), без расширения abstraction на неподходящие контексты.
 
 - [x] **MEDIUM Reuse audit — collapse-reset windowed lazy loader**.
   - Что было: в TODO висел риск преждевременного reuse для Structure tree.
