@@ -297,6 +297,13 @@ test("managed persona login bridge explains visible browser and MFA workflow", (
   assert.match(sitesSource, /ручной storageState/);
 });
 
+test("project run history exposes crawl runtime explicitly", () => {
+  assert.match(source, /RunRuntimePill/);
+  assert.match(source, /Browser runtime/);
+  assert.match(source, /HTTP runtime/);
+  assert.match(source, /crawl_runtime/);
+});
+
 test("compare auto-match suggests but does not force a relative-path pair", () => {
   assert.match(compareSource, /suggestPageMatch/);
   assert.match(compareSource, /Предложение пары/);

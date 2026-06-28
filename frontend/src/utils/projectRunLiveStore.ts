@@ -3,6 +3,7 @@ import type { ProjectSummaryItem } from "./projectListCache";
 export type ProjectRunLiveUpdate = {
   projectId: number;
   status: string;
+  crawlRuntime?: string | null;
   startedAt?: string | null;
   finishedAt?: string | null;
   pagesTotal?: number;
@@ -29,6 +30,7 @@ export function applyProjectRunLiveUpdate(row: ProjectSummaryItem, update: Proje
   const nextLastRun = {
     id: prev?.id || -Date.now(),
     status: update.status,
+    crawl_runtime: update.crawlRuntime ?? prev?.crawl_runtime,
     started_at: update.startedAt ?? prev?.started_at ?? new Date().toISOString(),
     finished_at: update.finishedAt ?? (update.status === "RUNNING" ? null : prev?.finished_at ?? null),
     pages_total: update.pagesTotal ?? prev?.pages_total ?? 0,

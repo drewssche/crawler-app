@@ -10,6 +10,7 @@ export type ProjectListItem = {
 export type ProjectRunSummary = {
   id: number;
   status: string;
+  crawl_runtime?: "http" | "browser" | string;
   started_at: string | null;
   finished_at: string | null;
   pages_total: number;

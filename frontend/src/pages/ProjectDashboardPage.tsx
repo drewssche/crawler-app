@@ -17,6 +17,7 @@ import PageContextDrawer from "../components/projects/PageContextDrawer";
 import DirectoryContextDrawer from "../components/projects/DirectoryContextDrawer";
 import ProjectSiteContextCards from "../components/projects/ProjectSiteContextCards";
 import ProjectSitesSettings from "../components/projects/ProjectSitesSettings";
+import AccentPill from "../components/ui/AccentPill";
 import Card from "../components/ui/Card";
 import CardActionButton from "../components/ui/CardActionButton";
 import CardFooterActions from "../components/ui/CardFooterActions";
@@ -66,6 +67,7 @@ type ProjectRun = {
     has_secrets?: boolean;
   } | null;
   status: "CREATED" | "RUNNING" | "FINISHED" | "FAILED" | string;
+  crawl_runtime?: "http" | "browser" | string;
   started_at: string;
   finished_at: string | null;
   pages_total: number;
@@ -105,6 +107,7 @@ type ProjectRunResult = {
   } | null;
   persona_key?: string | null;
   persona_label?: string | null;
+  crawl_runtime?: "http" | "browser" | string;
   session_required?: boolean;
   session_status?: string;
   session_message?: string;
@@ -138,6 +141,26 @@ type StructureRow = {
 
 function getRetryPersonaLabel(result: RetryPagesResult, fallback?: string | null): string {
   return result.persona?.label || result.persona_label || fallback || "Гость";
+}
+
+function getRunRuntimeMeta(runtime?: string | null): { label: string; tone: "neutral" | "info"; title: string } {
+  if (runtime === "browser") {
+    return {
+      label: "Browser runtime",
+      tone: "info",
+      title: "Этот прогон выполнялся через browser-context: применялись cookies, localStorage/sessionStorage и headers выбранной persona.",
+    };
+  }
+  return {
+    label: "HTTP runtime",
+    tone: "neutral",
+    title: "Обычный быстрый HTTP-обход. Browser storage для этого прогона не требовался.",
+  };
+}
+
+function RunRuntimePill({ runtime }: { runtime?: string | null }) {
+  const meta = getRunRuntimeMeta(runtime);
+  return <AccentPill tone={meta.tone} title={meta.title}>{meta.label}</AccentPill>;
 }
 
 function parseDomains(csv: string): string[] {
@@ -276,6 +299,7 @@ export default function ProjectDashboardPage() {
         publishProjectRunLive({
           projectId: project.id,
           status: first.status,
+          crawlRuntime: first.crawl_runtime,
           startedAt: first.started_at,
           finishedAt: first.finished_at,
           pagesTotal: first.pages_total,
@@ -406,6 +430,7 @@ export default function ProjectDashboardPage() {
           crawl_persona_id: selectedPersona.id || null,
           persona: selectedPersona,
           status: "RUNNING",
+          crawl_runtime: selectedPersona.session_bundle_summary?.browser_state_stored ? "browser" : "http",
           started_at: new Date().toISOString(),
           finished_at: null,
           pages_total: 0,
@@ -428,6 +453,7 @@ export default function ProjectDashboardPage() {
     publishProjectRunLive({
       projectId: project.id,
       status: "RUNNING",
+      crawlRuntime: selectedPersona.session_bundle_summary?.browser_state_stored ? "browser" : "http",
       startedAt: new Date().toISOString(),
       pagesTotal: 0,
       pagesChanged: 0,
@@ -1007,6 +1033,7 @@ export default function ProjectDashboardPage() {
                             </StatusText>
                             <span style={{ fontWeight: 700 }}>{result.site_name}</span>
                             <MetaText opacity={0.78}>Контекст: {personaLabel}</MetaText>
+                            {result.status === "FINISHED" && <RunRuntimePill runtime={result.crawl_runtime} />}
                           </div>
                           {sessionText && <MetaText opacity={0.72}>{sessionText}</MetaText>}
                           {result.status !== "FINISHED" && (
@@ -1110,7 +1137,10 @@ export default function ProjectDashboardPage() {
                   )}
                   {!runsLoading && lastRun && (
                     <div style={{ display: "grid", gap: 6 }}>
-                      <div><ProjectRunBadge status={lastRun.status} /></div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <ProjectRunBadge status={lastRun.status} />
+                        <RunRuntimePill runtime={lastRun.crawl_runtime} />
+                      </div>
                       <MetaText>Старт: {formatOperationalDateTime(lastRun.started_at)}</MetaText>
                       <MetaText>
                         Завершение: {lastRun.finished_at ? formatOperationalDateTime(lastRun.finished_at) : "еще выполняется"}
@@ -1342,6 +1372,7 @@ export default function ProjectDashboardPage() {
                               {formatRunTitle(structureRun.started_at)} · {formatDuration(structureRun.started_at, structureRun.finished_at)}
                             </MetaText>
                             <MetaText opacity={0.68}>Контекст проверки: {structureRun.persona?.label || "Гость"}</MetaText>
+                            <div style={{ marginTop: 4 }}><RunRuntimePill runtime={structureRun.crawl_runtime} /></div>
                           </div>
                         }
                         actions={<ProjectRunBadge status={structureRun.status} />}
@@ -1510,7 +1541,10 @@ export default function ProjectDashboardPage() {
                           <div style={{ fontWeight: 700 }}>{formatRunTitle(run.started_at)}</div>
                           <ProjectRunBadge status={run.status} />
                         </div>
-                        <MetaText>Контекст просмотра: {run.persona?.label || "Гость"}</MetaText>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <MetaText>Контекст просмотра: {run.persona?.label || "Гость"}</MetaText>
+                          <RunRuntimePill runtime={run.crawl_runtime} />
+                        </div>
                         <MetaText>Старт: {formatOperationalDateTime(run.started_at)}</MetaText>
                         <MetaText>Завершение: {run.finished_at ? formatOperationalDateTime(run.finished_at) : "еще выполняется"}</MetaText>
                         <MetaText>Длительность: {formatDuration(run.started_at, run.finished_at)}</MetaText>

@@ -56,6 +56,7 @@ export type ProjectSiteRunSummary = {
   crawl_persona_id?: number | null;
   persona?: CrawlPersonaSummary | null;
   status: string;
+  crawl_runtime?: "http" | "browser" | string;
   started_at: string;
   finished_at: string | null;
   pages_total: number;

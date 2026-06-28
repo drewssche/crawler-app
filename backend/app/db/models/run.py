@@ -22,6 +22,7 @@ class Run(Base):
     )
 
     status: Mapped[str] = mapped_column(String(30), default="CREATED")
+    crawl_runtime: Mapped[str] = mapped_column(String(30), default="http")
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

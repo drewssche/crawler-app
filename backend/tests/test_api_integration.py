@@ -1416,6 +1416,7 @@ def test_project_run_uses_browser_client_for_persona_browser_storage(monkeypatch
 
     assert run_response.status_code == 200
     assert run_response.json()["persona"]["key"] == "auth"
+    assert run_response.json()["crawl_runtime"] == "browser"
     assert browser_states
     assert browser_states[0]["summary"]["local_storage_count"] == 1
     assert browser_states[0]["summary"]["session_storage_count"] == 1
@@ -1496,6 +1497,7 @@ def test_project_run_reports_browser_runtime_unavailable(monkeypatch):
 
     with SessionLocal() as db:
         run = db.query(Run).filter(Run.project_site_id == site_id).one()
+        assert run.crawl_runtime == "browser"
         assert run.status == "FAILED"
         assert run.failure_code == "browser_runtime_unavailable"
         assert "browser runtime" in run.failure_message

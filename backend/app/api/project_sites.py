@@ -425,6 +425,7 @@ def list_project_sites_summary(
             ProjectSite,
             Run.id.label("last_run_id"),
             Run.status.label("last_run_status"),
+            Run.crawl_runtime.label("last_run_crawl_runtime"),
             Run.started_at.label("last_run_started_at"),
             Run.finished_at.label("last_run_finished_at"),
             Run.pages_total.label("last_run_pages_total"),
@@ -483,6 +484,7 @@ def list_project_sites_summary(
             else {
                 "id": row.last_run_id,
                 "status": row.last_run_status,
+                "crawl_runtime": row.last_run_crawl_runtime,
                 "started_at": row.last_run_started_at,
                 "finished_at": row.last_run_finished_at,
                 "pages_total": int(row.last_run_pages_total or 0),

@@ -95,6 +95,7 @@ def _serialize_run(run: Run, persona: CrawlPersona | None = None) -> dict:
             }
         ),
         "status": run.status,
+        "crawl_runtime": run.crawl_runtime,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
         "pages_total": run.pages_total,
@@ -194,6 +195,11 @@ def _persona_browser_state_for_run(persona: CrawlPersona | None, *, document_url
             },
         ) from exc
     return build_browser_persona_state(bundle, document_url=document_url)
+
+
+def _persona_crawl_runtime(persona: CrawlPersona | None, *, document_url: str) -> str:
+    browser_state = _persona_browser_state_for_run(persona, document_url=document_url)
+    return "browser" if browser_state_requires_runtime(browser_state) else "http"
 
 
 def _persona_session_status(persona: CrawlPersona | None) -> dict[str, Any]:
@@ -491,6 +497,7 @@ def _emit_run_completion_event(
             "persona_key": persona.key if persona else None,
             "persona_label": persona.label if persona else None,
             "status": run.status,
+            "crawl_runtime": run.crawl_runtime,
             "pages_total": run.pages_total,
             "pages_changed": run.pages_changed,
             "failure_code": run.failure_code,
@@ -517,6 +524,7 @@ def _execute_site_run(
         project_id=site.project_id,
         project_site_id=site.id,
         crawl_persona_id=persona.id,
+        crawl_runtime=_persona_crawl_runtime(persona, document_url=site.start_url),
         status="RUNNING",
         started_at=datetime.utcnow(),
         pages_discovered=1,
@@ -855,6 +863,7 @@ def start_site_run(
         "run_id": run.id,
         "project_site_id": site.id,
         "crawl_persona_id": run.crawl_persona_id,
+        "crawl_runtime": run.crawl_runtime,
         "persona": _persona_payload(persona),
         "persona_label": persona.label if persona else None,
         "persona_key": persona.key if persona else None,
@@ -914,6 +923,7 @@ def start_project_sites(
                     "site_name": site.name,
                     "run_id": run.id,
                     "crawl_persona_id": run.crawl_persona_id,
+                    "crawl_runtime": run.crawl_runtime,
                     "status": run.status,
                     "failure_code": run.failure_code,
                     "failure_message": run.failure_message,
