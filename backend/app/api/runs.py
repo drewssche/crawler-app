@@ -179,6 +179,71 @@ def _persona_http_state(persona: CrawlPersona | None) -> tuple[dict[str, str], l
     return _session_headers_from_bundle(bundle), _session_cookies_from_bundle(bundle)
 
 
+def _persona_session_status(persona: CrawlPersona | None) -> dict[str, Any]:
+    if persona is None:
+        return {
+            "session_required": False,
+            "session_status": "missing_persona",
+            "message": "Контекст просмотра не найден.",
+        }
+    if persona.kind == "guest":
+        return {
+            "session_required": False,
+            "session_status": "not_required",
+            "message": "Гость запускается без cookies и авторизации.",
+        }
+    if not persona.has_secrets or not persona.encrypted_session_bundle:
+        return {
+            "session_required": True,
+            "session_status": "missing",
+            "message": f"Для контекста «{persona.label}» не подключена сессия.",
+        }
+    expires_at = persona.session_bundle_expires_at
+    if expires_at is not None:
+        now = datetime.now(expires_at.tzinfo) if expires_at.tzinfo else datetime.utcnow()
+        if expires_at <= now:
+            return {
+                "session_required": True,
+                "session_status": "expired",
+                "message": f"Сессия контекста «{persona.label}» истекла. Подключите её заново.",
+            }
+    try:
+        decrypt_session_bundle(persona.encrypted_session_bundle)
+    except ValueError:
+        return {
+            "session_required": True,
+            "session_status": "unavailable",
+            "message": f"Сессию контекста «{persona.label}» не удалось расшифровать. Подключите её заново.",
+        }
+    return {
+        "session_required": True,
+        "session_status": "connected",
+        "message": f"Контекст «{persona.label}» будет запущен с подключённой сессией.",
+    }
+
+
+def _persona_payload(persona: CrawlPersona | None) -> dict[str, Any] | None:
+    if persona is None:
+        return None
+    return {"id": persona.id, "key": persona.key, "label": persona.label, "kind": persona.kind}
+
+
+def _assert_persona_ready_for_run(persona: CrawlPersona) -> dict[str, Any]:
+    session = _persona_session_status(persona)
+    if session["session_required"] and session["session_status"] != "connected":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": f"persona_session_{session['session_status']}",
+                "message": session["message"],
+                "crawl_persona_id": persona.id,
+                "persona_label": persona.label,
+                "session_status": session["session_status"],
+            },
+        )
+    return session
+
+
 def _apply_session_cookies(client: httpx.Client, cookies: list[dict[str, str]]) -> None:
     jar = getattr(client, "cookies", None)
     if jar is None:
@@ -412,6 +477,7 @@ def _execute_site_run(
     actor_user_id: int | None = None,
 ) -> Run:
     persona = persona or get_default_persona(db, site)
+    _assert_persona_ready_for_run(persona)
     scope = canonicalize_site_scope(
         site.start_url,
         scope_mode=site.scope_mode,
@@ -729,12 +795,18 @@ def start_site_run(
             raise HTTPException(status_code=404, detail="Crawl persona not found")
     run = _execute_site_run(db, site, persona=persona, actor_user_id=current_user.id)
     persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
+    session = _persona_session_status(persona)
     return {
         "ok": True,
         "run_id": run.id,
         "project_site_id": site.id,
         "crawl_persona_id": run.crawl_persona_id,
-        "persona": None if persona is None else {"id": persona.id, "key": persona.key, "label": persona.label, "kind": persona.kind},
+        "persona": _persona_payload(persona),
+        "persona_label": persona.label if persona else None,
+        "persona_key": persona.key if persona else None,
+        "session_required": session["session_required"],
+        "session_status": session["session_status"],
+        "session_message": session["message"],
     }
 
 
@@ -764,16 +836,30 @@ def start_project_sites(
 
     results = []
     for site in sites:
+        persona = get_default_persona(db, site)
+        session = _persona_session_status(persona)
+        base_result = {
+            "project_site_id": site.id,
+            "site_name": site.name,
+            "run_id": None,
+            "crawl_persona_id": persona.id,
+            "persona": _persona_payload(persona),
+            "persona_key": persona.key,
+            "persona_label": persona.label,
+            "session_required": session["session_required"],
+            "session_status": session["session_status"],
+            "session_message": session["message"],
+        }
         try:
             _assert_no_active_site_run(db, site)
-            run = _execute_site_run(db, site, actor_user_id=current_user.id)
+            run = _execute_site_run(db, site, persona=persona, actor_user_id=current_user.id)
             results.append(
                 {
+                    **base_result,
                     "project_site_id": site.id,
                     "site_name": site.name,
                     "run_id": run.id,
                     "crawl_persona_id": run.crawl_persona_id,
-                    "persona_label": (db.get(CrawlPersona, run.crawl_persona_id).label if run.crawl_persona_id else None),
                     "status": run.status,
                     "failure_code": run.failure_code,
                     "failure_message": run.failure_message,
@@ -792,6 +878,7 @@ def start_project_sites(
                 run_id = latest_run.id if latest_run else None
             results.append(
                 {
+                    **base_result,
                     "project_site_id": site.id,
                     "site_name": site.name,
                     "run_id": run_id,
@@ -810,6 +897,7 @@ def start_project_sites(
             )
             results.append(
                 {
+                    **base_result,
                     "project_site_id": site.id,
                     "site_name": site.name,
                     "run_id": latest_run.id if latest_run else None,

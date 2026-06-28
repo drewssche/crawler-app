@@ -1248,6 +1248,80 @@ def test_project_run_continues_after_one_site_fails(monkeypatch):
     engine.dispose()
 
 
+def test_project_run_skips_default_persona_without_session(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="project-persona-run@test.local", role="editor", is_approved=True))
+        project = Project(
+            name="Persona bulk",
+            start_url="https://persona-bulk.test",
+            allowed_domains_csv="persona-bulk.test",
+            max_pages=1,
+        )
+        db.add(project)
+        db.flush()
+        site = _add_primary_site(db, project)
+        guest = (
+            db.query(CrawlPersona)
+            .filter(CrawlPersona.project_site_id == site.id, CrawlPersona.key == "guest")
+            .one()
+        )
+        guest.is_default = False
+        partner = CrawlPersona(
+            project_site_id=site.id,
+            key="partner",
+            label="Партнёр",
+            kind="partner",
+            is_default=True,
+            is_enabled=True,
+            has_secrets=False,
+        )
+        db.add(partner)
+        db.commit()
+        project_id = project.id
+        site_id = site.id
+        partner_id = partner.id
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("crawler must not fetch when default persona session is missing")
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    response = client.post(
+        f"/runs/start-project/{project_id}",
+        headers=_auth_header("project-persona-run@test.local", role="editor"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sites_total"] == 1
+    assert payload["finished"] == 0
+    assert payload["skipped"] == 1
+    result = payload["results"][0]
+    assert result["project_site_id"] == site_id
+    assert result["crawl_persona_id"] == partner_id
+    assert result["persona_label"] == "Партнёр"
+    assert result["session_required"] is True
+    assert result["session_status"] == "missing"
+    assert result["status"] == "SKIPPED"
+    assert result["failure_code"] == "persona_session_missing"
+    assert "не подключена" in result["failure_message"]
+
+    with SessionLocal() as db:
+        assert db.query(Run).filter(Run.project_site_id == site_id).count() == 0
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_create_profile_rejects_duplicate_canonical_scope():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()

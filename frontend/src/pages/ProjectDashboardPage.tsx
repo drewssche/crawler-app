@@ -97,7 +97,17 @@ type ProjectRunResult = {
   site_name: string;
   run_id: number | null;
   crawl_persona_id?: number | null;
+  persona?: {
+    id: number;
+    key: string;
+    label: string;
+    kind: string;
+  } | null;
+  persona_key?: string | null;
   persona_label?: string | null;
+  session_required?: boolean;
+  session_status?: string;
+  session_message?: string;
   status: string;
   failure_code: string | null;
   failure_message: string | null;
@@ -455,7 +465,7 @@ export default function ProjectDashboardPage() {
       showRunToast({
         title: "Общий запуск завершён",
         body: `Успешно: ${result.finished}. С ошибкой: ${result.failed}. Пропущено: ${result.skipped}.`,
-        accent: result.failed > 0 ? "warning" : "success",
+        accent: result.failed > 0 || result.skipped > 0 ? "warning" : "success",
       });
       if (canViewEvents) void refreshEventCenterPollingNow().catch(() => undefined);
     } catch (e) {
@@ -912,17 +922,34 @@ export default function ProjectDashboardPage() {
                   <MetaText>
                     Успешно: {projectRunResult.finished} · с ошибкой: {projectRunResult.failed} · пропущено: {projectRunResult.skipped}
                   </MetaText>
-                  {projectRunResult.results
-                    .filter((result) => result.status !== "FINISHED")
-                    .map((result) => (
-                      <StatusText
-                        key={result.project_site_id}
-                        tone={result.status === "FAILED" ? "danger" : "warning"}
-                        style={{ fontSize: 12 }}
-                      >
-                        {result.site_name}: {result.failure_message || result.status}
-                      </StatusText>
-                    ))}
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {projectRunResult.results.map((result) => {
+                      const tone = result.status === "FAILED" ? "danger" : result.status === "SKIPPED" ? "warning" : "success";
+                      const personaLabel = result.persona_label || result.persona?.label || "Гость";
+                      const sessionText = result.session_message || (
+                        result.session_status === "not_required"
+                          ? "Сессия не нужна."
+                          : result.session_status === "connected"
+                            ? "Сессия подключена."
+                            : result.session_status ? `Сессия: ${result.session_status}.` : ""
+                      );
+                      return (
+                        <Card key={result.project_site_id} variant={tone === "success" ? "default" : "warning"} style={{ padding: 10, display: "grid", gap: 3 }}>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                            <StatusText tone={tone} style={{ fontSize: 12 }}>
+                              {result.status === "FINISHED" ? "Запущен и завершён" : result.status === "SKIPPED" ? "Пропущен" : "Ошибка"}
+                            </StatusText>
+                            <span style={{ fontWeight: 700 }}>{result.site_name}</span>
+                            <MetaText opacity={0.78}>Контекст: {personaLabel}</MetaText>
+                          </div>
+                          {sessionText && <MetaText opacity={0.72}>{sessionText}</MetaText>}
+                          {result.status !== "FINISHED" && (
+                            <MetaText opacity={0.78}>{result.failure_message || result.failure_code || result.status}</MetaText>
+                          )}
+                        </Card>
+                      );
+                    })}
+                  </div>
                 </Card>
               )}
             </div>
