@@ -335,7 +335,8 @@
   - 6. Continuous worker loop MVP готов: `python -m app.worker.crawler_worker` обрабатывает queued jobs в отдельном процессе до SIGTERM/SIGINT; `CRAWLER_WORKER_POLL_SECONDS` задаёт polling, `CRAWLER_WORKER_TICK_LIMIT` нужен для bounded/dev runs.
   - 7. Docker Compose worker service готов: dev stack поднимает `crawler_worker` вместе с backend/frontend; backend работает с `CRAWLER_WORKER_ENABLED=1`, поэтому site-runs попадают в очередь, а worker забирает их автоматически.
   - 8. Worker recovery/readiness MVP готов: readiness закрывает expired `RUNNING/CANCEL_REQUESTED` jobs с истёкшей lease, освобождает сайт для нового запуска, показывает `recovered_expired_jobs`, stale queued diagnostics и переводит статус в `degraded`, если очередь ждёт дольше `CRAWLER_JOB_STALE_QUEUED_SECONDS`.
-  - Следующее: более быстрый interrupt текущего fetch, UI-индикация queued/worker execution без ручного refresh, bounded retries/backoff для failed jobs/pages.
+  - 9. UI worker execution indication MVP готов: Project Dashboard больше не имитирует `RUNNING` сразу после клика; queued start-site/start-project показываются как `В очереди worker`, pending job хранится локально, runs/readiness polling продолжается до появления real run, live-блок различает этапы `очередь → worker взял → crawler обходит`.
+  - Следующее: более быстрый interrupt текущего fetch, bounded retries/backoff для failed jobs/pages, persistent job-status API для восстановления pending UI после reload.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -373,6 +374,12 @@
   - Что стало: `recover_expired_crawler_jobs` закрывает expired active jobs как `FAILED/CANCELLED`, синхронизирует связанный `Run`, очищает lease и освобождает сайт. `GET /crawler/readiness` показывает `jobs.diagnostics`: stale queued count/sample, oldest queued age, expired lease sample, `recovered_expired_jobs` и `issues`; при проблемах возвращает `ready=false/status=degraded`.
   - Как проверить: создать старую queued job и expired running job; вызвать `GET /crawler/readiness`; expired job станет terminal, linked run получит `crawler_job_lease_expired`, stale queued останется в очереди и будет видна в diagnostics.
   - Вклад в цели: worker-mode стал безопаснее для production-like эксплуатации: падение worker больше не создаёт вечную блокировку, а backlog отображается явно (`high` operations reliability/friendly admin UX).
+
+- [x] **P0/P1 Operations UX — queued/worker/run visual states**.
+  - Что было: после клика UI оптимистично добавлял fake `RUNNING` и затем показывал “завершено” сразу после ответа start API; в worker-mode это неверно, потому что backend только ставит job в очередь.
+  - Что стало: Project Dashboard различает этапы: отправка запуска, `QUEUED` job, ожидание worker, реальный `RUNNING` run и terminal run. Pending job отображается в верхнем блоке, блокирует конфликтующие кнопки, live-структура показывает `очередь → worker взял → crawler обходит → обновление структуры`, а общий запуск показывает queued jobs по сайтам.
+  - Как проверить: `docker compose up -d --build`; нажать `Запустить выбранный сайт`; увидеть `Сайт ожидает worker / Job #...`, затем live run после появления real run. Typecheck: `corepack pnpm --dir frontend exec tsc -b`.
+  - Вклад в цели: пользователь видит честное состояние worker execution и не принимает queued API response за завершённый crawl (`high` friendly UX/reliability).
 
 - [x] **P0/P1 Operations reliability — feature-flagged worker execution tick**.
   - Что было: durable job boundary уже был в DB, но start API всё равно всегда выполнял run синхронно.

@@ -97,6 +97,8 @@ type ProjectPage = {
 type ProjectRunResult = {
   project_site_id: number;
   site_name: string;
+  job_id?: number | null;
+  job_status?: string | null;
   run_id: number | null;
   crawl_persona_id?: number | null;
   persona?: {
@@ -124,6 +126,61 @@ type ProjectRunBatch = {
   failed: number;
   skipped: number;
   results: ProjectRunResult[];
+};
+
+type StartSiteRunResponse = {
+  ok: boolean;
+  queued?: boolean;
+  job_id?: number | null;
+  job_status?: string | null;
+  run_id: number | null;
+  project_site_id: number;
+  crawl_persona_id?: number | null;
+  crawl_runtime?: "http" | "browser" | string | null;
+  persona?: {
+    id: number;
+    key: string;
+    label: string;
+    kind: string;
+  } | null;
+  persona_label?: string | null;
+  persona_key?: string | null;
+  session_required?: boolean;
+  session_status?: string;
+  session_message?: string;
+  message?: string;
+};
+
+type PendingCrawlerJob = {
+  jobId: number;
+  siteId: number;
+  siteName: string;
+  status: string;
+  personaLabel: string;
+  queuedAt: string;
+  source: "site" | "project";
+};
+
+type CrawlerReadiness = {
+  ready: boolean;
+  status: "ok" | "degraded" | string;
+  mode: "worker" | "synchronous" | string;
+  jobs?: {
+    queued?: number;
+    running?: number;
+    cancel_requested?: number;
+    recovered_expired_jobs?: number;
+    diagnostics?: {
+      stale_queued?: number;
+      oldest_queued_age_seconds?: number | null;
+    };
+  };
+  issues?: Array<{
+    code: string;
+    severity: "warning" | "critical" | string;
+    message: string;
+    count?: number;
+  }>;
 };
 
 type ProjectTab = "main" | "history" | "settings";
@@ -204,6 +261,13 @@ function formatTimeAgo(raw?: string | null): string {
   return `${days} дн назад`;
 }
 
+function hasRunStartedAfter(run: ProjectRun, queuedAt: string): boolean {
+  const runStarted = Date.parse(run.started_at);
+  const queued = Date.parse(queuedAt);
+  if (!Number.isFinite(runStarted) || !Number.isFinite(queued)) return false;
+  return runStarted >= queued - 5000;
+}
+
 export default function ProjectDashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -252,6 +316,8 @@ export default function ProjectDashboardPage() {
   const [structureRetryNoticeTone, setStructureRetryNoticeTone] = useState<"success" | "warning">("success");
   const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
   const [runToasts, setRunToasts] = useState<ToastItem[]>([]);
+  const [pendingCrawlerJobs, setPendingCrawlerJobs] = useState<Record<number, PendingCrawlerJob>>({});
+  const [crawlerReadiness, setCrawlerReadiness] = useState<CrawlerReadiness | null>(null);
   const [sitePersonas, setSitePersonas] = useState<CrawlPersonaSummary[]>([]);
   const [sitePersonasLoading, setSitePersonasLoading] = useState(false);
   const [selectedRunPersonaId, setSelectedRunPersonaId] = useState<number | null>(null);
@@ -390,16 +456,48 @@ export default function ProjectDashboardPage() {
   useEffect(() => {
     if (selectedSiteId === null) return;
     const hasRunning = runs.some((r) => r.status === "RUNNING");
-    if (!hasRunning) return;
+    const hasPendingJob = Boolean(pendingCrawlerJobs[selectedSiteId]);
+    if (!hasRunning && !hasPendingJob) return;
     const timer = window.setInterval(() => {
       void loadRuns(selectedSiteId, true);
       if (project) void loadSiteSummaries(project.id, true);
+      apiGet<CrawlerReadiness>("/crawler/readiness")
+        .then(setCrawlerReadiness)
+        .catch(() => undefined);
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [selectedSiteId, runs, project, loadRuns, loadSiteSummaries]);
+  }, [selectedSiteId, runs, project, loadRuns, loadSiteSummaries, pendingCrawlerJobs]);
 
   useEffect(() => {
-    if (!runPending && !projectRunPending) {
+    if (selectedSiteId === null) return;
+    const pending = pendingCrawlerJobs[selectedSiteId];
+    if (!pending) return;
+    const matchingRun = runs.find((run) => run.id > 0 && run.project_site_id === selectedSiteId && hasRunStartedAfter(run, pending.queuedAt));
+    if (!matchingRun) return;
+    setPendingCrawlerJobs((current) => {
+      const next = { ...current };
+      delete next[selectedSiteId];
+      return next;
+    });
+    if (matchingRun.status === "RUNNING") {
+      showRunToast({
+        title: `Worker взял «${pending.siteName}» в работу`,
+        body: `Контекст: ${pending.personaLabel}. Структура начнёт обновляться по мере обхода страниц.`,
+        accent: "info",
+      });
+    } else {
+      showRunToast({
+        title: `Прогон «${pending.siteName}» завершён`,
+        body: matchingRun.status === "FINISHED"
+          ? "Новые результаты уже загружены. Можно открыть структуру и изменения."
+          : matchingRun.failure_message || "Задача вышла из очереди, но завершилась неуспешно.",
+        accent: matchingRun.status === "FINISHED" ? "success" : "warning",
+      });
+    }
+  }, [selectedSiteId, pendingCrawlerJobs, runs]);
+
+  useEffect(() => {
+    if (!runPending && !projectRunPending && Object.keys(pendingCrawlerJobs).length === 0) {
       setRunElapsedSeconds(0);
       return;
     }
@@ -409,7 +507,7 @@ export default function ProjectDashboardPage() {
       setRunElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [runPending, projectRunPending]);
+  }, [runPending, projectRunPending, pendingCrawlerJobs]);
 
   async function handleStartRun() {
     const selectedSite = sites.find((site) => site.id === selectedSiteId);
@@ -420,55 +518,56 @@ export default function ProjectDashboardPage() {
       { id: 0, key: "guest", label: "Гость", kind: "guest", has_secrets: false };
     setRunPending(true);
     setRunsError("");
-    setRuns((prev) => {
-      if (prev.some((r) => r.status === "RUNNING")) return prev;
-      return [
-        {
-          id: -Date.now(),
-          project_id: project.id,
-          project_site_id: selectedSite.id,
-          crawl_persona_id: selectedPersona.id || null,
-          persona: selectedPersona,
-          status: "RUNNING",
-          crawl_runtime: selectedPersona.session_bundle_summary?.browser_state_stored ? "browser" : "http",
-          started_at: new Date().toISOString(),
-          finished_at: null,
-          pages_total: 0,
-          pages_changed: 0,
-          pages_discovered: 1,
-          current_batch_no: 1,
-          current_url: selectedSite.start_url,
-          progress_updated_at: new Date().toISOString(),
-          failure_code: null,
-          failure_message: null,
-        },
-        ...prev,
-      ];
-    });
     showRunToast({
-      title: `Прогон «${selectedSite.name}» запущен`,
-      body: `Контекст: ${selectedPersona.label}. Результат и структура обновятся автоматически.`,
+      title: `Запуск «${selectedSite.name}» отправлен`,
+      body: `Контекст: ${selectedPersona.label}. Сейчас backend поставит задачу в очередь worker.`,
       accent: "info",
     });
     publishProjectRunLive({
       projectId: project.id,
-      status: "RUNNING",
+      status: "QUEUED",
       crawlRuntime: selectedPersona.session_bundle_summary?.browser_state_stored ? "browser" : "http",
       startedAt: new Date().toISOString(),
       pagesTotal: 0,
       pagesChanged: 0,
     });
     try {
-      await apiPost(`/runs/start-site/${selectedSite.id}`, selectedPersona.id ? { crawl_persona_id: selectedPersona.id } : {});
+      const result = await apiPost<StartSiteRunResponse>(
+        `/runs/start-site/${selectedSite.id}`,
+        selectedPersona.id ? { crawl_persona_id: selectedPersona.id } : {},
+      );
+      if (result.queued && result.job_id) {
+        const queuedAt = new Date().toISOString();
+        setPendingCrawlerJobs((current) => ({
+          ...current,
+          [selectedSite.id]: {
+            jobId: result.job_id!,
+            siteId: selectedSite.id,
+            siteName: selectedSite.name,
+            status: result.job_status || "QUEUED",
+            personaLabel: result.persona?.label || result.persona_label || selectedPersona.label,
+            queuedAt,
+            source: "site",
+          },
+        }));
+        showRunToast({
+          title: `«${selectedSite.name}» в очереди`,
+          body: `Job #${result.job_id}. Worker заберёт задачу автоматически; можно оставаться на странице.`,
+          accent: "info",
+        });
+        void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
+      }
       await Promise.all([
         loadRuns(selectedSite.id, true),
         loadSiteSummaries(project.id, true),
       ]);
-      showRunToast({
-        title: `Прогон «${selectedSite.name}» завершён`,
-        body: "Новые результаты уже загружены. Можно открыть структуру и изменения.",
-        accent: "success",
-      });
+      if (!result.queued) {
+        showRunToast({
+          title: `Прогон «${selectedSite.name}» завершён`,
+          body: "Новые результаты уже загружены. Можно открыть структуру и изменения.",
+          accent: "success",
+        });
+      }
       if (canViewEvents) void refreshEventCenterPollingNow().catch(() => undefined);
     } catch (e) {
       await Promise.all([
@@ -500,17 +599,39 @@ export default function ProjectDashboardPage() {
     setRunsError("");
     showRunToast({
       title: "Общий запуск начат",
-      body: `Crawler последовательно проверяет включённые сайты проекта «${project.name}».`,
+      body: `Backend поставит включённые сайты проекта «${project.name}» в очередь worker.`,
       accent: "info",
     });
     try {
       const result = await apiPost<ProjectRunBatch>(`/runs/start-project/${project.id}`, {});
       setProjectRunResult(result);
+      const queuedResults = result.results.filter((row) => row.status === "QUEUED" && row.job_id);
+      if (queuedResults.length > 0) {
+        const queuedAt = new Date().toISOString();
+        setPendingCrawlerJobs((current) => {
+          const next = { ...current };
+          for (const row of queuedResults) {
+            next[row.project_site_id] = {
+              jobId: row.job_id!,
+              siteId: row.project_site_id,
+              siteName: row.site_name,
+              status: row.job_status || row.status,
+              personaLabel: row.persona?.label || row.persona_label || "Гость",
+              queuedAt,
+              source: "project",
+            };
+          }
+          return next;
+        });
+        void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
+      }
       await loadSiteSummaries(project.id, true);
       if (selectedSiteId !== null) await loadRuns(selectedSiteId, true);
       showRunToast({
-        title: "Общий запуск завершён",
-        body: `Успешно: ${result.finished}. С ошибкой: ${result.failed}. Пропущено: ${result.skipped}.`,
+        title: queuedResults.length > 0 ? "Сайты поставлены в очередь" : "Общий запуск завершён",
+        body: queuedResults.length > 0
+          ? `В очереди worker: ${queuedResults.length}. Пропущено: ${result.skipped}.`
+          : `Успешно: ${result.finished}. С ошибкой: ${result.failed}. Пропущено: ${result.skipped}.`,
         accent: result.failed > 0 || result.skipped > 0 ? "warning" : "success",
       });
       if (canViewEvents) void refreshEventCenterPollingNow().catch(() => undefined);
@@ -667,7 +788,10 @@ export default function ProjectDashboardPage() {
   const structureIsLive = liveStructureRun !== null;
   const lastSuccessfulRun = runs.find((r) => r.status === "FINISHED" && Boolean(r.finished_at)) || null;
   const hasRunning = runs.some((r) => r.status === "RUNNING");
-  const structureUpdatePending = hasRunning || runPending || projectRunPending;
+  const selectedPendingJob = selectedSiteId !== null ? pendingCrawlerJobs[selectedSiteId] || null : null;
+  const pendingJobsCount = Object.keys(pendingCrawlerJobs).length;
+  const workerIssue = crawlerReadiness?.issues?.[0] || null;
+  const structureUpdatePending = hasRunning || Boolean(selectedPendingJob) || runPending || projectRunPending;
   const runsTotal = runs.length;
   const changedLast = lastRun?.pages_changed ?? 0;
   const pagesLast = lastRun?.pages_total ?? 0;
@@ -836,7 +960,7 @@ export default function ProjectDashboardPage() {
                 title={
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <div style={{ fontWeight: 800, fontSize: 20 }}>{project.name}</div>
-                    <ProjectRunBadge status={lastRun?.status} />
+                    <ProjectRunBadge status={selectedPendingJob ? "QUEUED" : lastRun?.status} />
                   </div>
                 }
                 actions={canRunCrawler ? (
@@ -854,7 +978,7 @@ export default function ProjectDashboardPage() {
                       <MetaText opacity={0.72}>Контекст запуска</MetaText>
                       <UiSelect
                         value={selectedRunPersonaId ?? ""}
-                        disabled={sitePersonasLoading || runPending || projectRunPending || hasRunning || !selectedSite?.is_enabled}
+                        disabled={sitePersonasLoading || runPending || projectRunPending || hasRunning || Boolean(selectedPendingJob) || !selectedSite?.is_enabled}
                         onChange={(event) => setSelectedRunPersonaId(Number(event.target.value) || null)}
                       >
                         {sitePersonasLoading && <option value="">Загрузка...</option>}
@@ -882,28 +1006,54 @@ export default function ProjectDashboardPage() {
                     <CardActionButton
                       variant="secondary"
                       onClick={() => void handleStartAllSites()}
-                      disabled={projectRunPending || runPending || sites.every((site) => !site.is_enabled)}
+                      disabled={projectRunPending || runPending || pendingJobsCount > 0 || sites.every((site) => !site.is_enabled)}
                       title={sites.every((site) => !site.is_enabled) ? "В проекте нет включённых сайтов." : undefined}
                     >
-                      {projectRunPending ? "Запуск всех..." : "Запустить все сайты"}
+                      {projectRunPending ? "Ставим в очередь..." : pendingJobsCount > 0 ? `В очереди: ${pendingJobsCount}` : "Запустить все сайты"}
                     </CardActionButton>
                     <CardActionButton
                       variant="primary"
                       onClick={() => {
                         void handleStartRun();
                       }}
-                      disabled={runPending || projectRunPending || hasRunning || !selectedSite?.is_enabled}
+                      disabled={runPending || projectRunPending || hasRunning || Boolean(selectedPendingJob) || !selectedSite?.is_enabled}
                       title={
                         !selectedSite?.is_enabled
                           ? "Включите выбранный сайт в настройках."
+                          : selectedPendingJob ? "Выбранный сайт уже ожидает worker."
                           : hasRunning ? "Выбранный сайт уже сканируется." : undefined
                       }
                     >
-                      {runPending ? "Запуск..." : hasRunning ? "Прогон выполняется" : "Запустить выбранный сайт"}
+                      {runPending ? "Ставим в очередь..." : selectedPendingJob ? "Ожидает worker" : hasRunning ? "Прогон выполняется" : "Запустить выбранный сайт"}
                     </CardActionButton>
                   </div>
                 ) : undefined}
               />
+              {(selectedPendingJob || workerIssue) && (
+                <Card variant={workerIssue ? "warning" : "hint"} style={{ padding: 10, display: "grid", gap: 6 }}>
+                  {selectedPendingJob && (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                        <StatusText tone="muted">Сайт ожидает worker</StatusText>
+                        <MetaText opacity={0.72}>Job #{selectedPendingJob.jobId} · {formatTimeAgo(selectedPendingJob.queuedAt)}</MetaText>
+                      </div>
+                      <MetaText opacity={0.82}>
+                        Задача поставлена в очередь как «{selectedPendingJob.personaLabel}». Когда worker возьмёт её в работу, здесь появится live-структура и текущий URL.
+                      </MetaText>
+                    </>
+                  )}
+                  {workerIssue && (
+                    <StatusText tone={workerIssue.severity === "critical" ? "danger" : "warning"}>
+                      {workerIssue.message}
+                    </StatusText>
+                  )}
+                  {crawlerReadiness?.jobs?.diagnostics?.oldest_queued_age_seconds != null && (
+                    <MetaText opacity={0.72}>
+                      Самая старая задача в очереди ждёт {crawlerReadiness.jobs.diagnostics.oldest_queued_age_seconds} сек.
+                    </MetaText>
+                  )}
+                </Card>
+              )}
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <MetaText opacity={0.86}>
                   Выберите сайт карточкой: показатели, структура, история и ручной запуск ниже относятся только к нему.
@@ -1010,13 +1160,15 @@ export default function ProjectDashboardPage() {
                   variant={projectRunResult.failed > 0 || projectRunResult.skipped > 0 ? "warning" : "hint"}
                   style={{ display: "grid", gap: 6 }}
                 >
-                  <div style={{ fontWeight: 700 }}>Общий запуск завершён</div>
+                  <div style={{ fontWeight: 700 }}>
+                    {projectRunResult.results.some((row) => row.status === "QUEUED") ? "Общий запуск поставлен в очередь" : "Общий запуск завершён"}
+                  </div>
                   <MetaText>
-                    Успешно: {projectRunResult.finished} · с ошибкой: {projectRunResult.failed} · пропущено: {projectRunResult.skipped}
+                    В очереди: {projectRunResult.results.filter((row) => row.status === "QUEUED").length} · успешно: {projectRunResult.finished} · с ошибкой: {projectRunResult.failed} · пропущено: {projectRunResult.skipped}
                   </MetaText>
                   <div style={{ display: "grid", gap: 6 }}>
                     {projectRunResult.results.map((result) => {
-                      const tone = result.status === "FAILED" ? "danger" : result.status === "SKIPPED" ? "warning" : "success";
+                      const tone = result.status === "FAILED" ? "danger" : result.status === "SKIPPED" ? "warning" : result.status === "QUEUED" ? "muted" : "success";
                       const personaLabel = result.persona_label || result.persona?.label || "Гость";
                       const sessionText = result.session_message || (
                         result.session_status === "not_required"
@@ -1029,14 +1181,22 @@ export default function ProjectDashboardPage() {
                         <Card key={result.project_site_id} variant={tone === "success" ? "default" : "warning"} style={{ padding: 10, display: "grid", gap: 3 }}>
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                             <StatusText tone={tone} style={{ fontSize: 12 }}>
-                              {result.status === "FINISHED" ? "Запущен и завершён" : result.status === "SKIPPED" ? "Пропущен" : "Ошибка"}
+                              {result.status === "FINISHED"
+                                ? "Запущен и завершён"
+                                : result.status === "QUEUED"
+                                  ? "В очереди worker"
+                                  : result.status === "SKIPPED" ? "Пропущен" : "Ошибка"}
                             </StatusText>
                             <span style={{ fontWeight: 700 }}>{result.site_name}</span>
+                            {result.job_id && <MetaText opacity={0.78}>Job #{result.job_id}</MetaText>}
                             <MetaText opacity={0.78}>Контекст: {personaLabel}</MetaText>
                             {result.status === "FINISHED" && <RunRuntimePill runtime={result.crawl_runtime} />}
                           </div>
                           {sessionText && <MetaText opacity={0.72}>{sessionText}</MetaText>}
-                          {result.status !== "FINISHED" && (
+                          {result.status === "QUEUED" && (
+                            <MetaText opacity={0.78}>Worker заберёт задачу автоматически. Прогресс выбранного сайта появится в live-блоке.</MetaText>
+                          )}
+                          {result.status !== "FINISHED" && result.status !== "QUEUED" && (
                             <MetaText opacity={0.78}>{result.failure_message || result.failure_code || result.status}</MetaText>
                           )}
                         </Card>
@@ -1306,7 +1466,11 @@ export default function ProjectDashboardPage() {
                           }}
                         />
                         <StatusText tone="success">
-                          {projectRunPending ? "Идёт общий запуск сайтов проекта" : "Идёт сканирование выбранного сайта"}
+                          {selectedPendingJob
+                            ? "Задача ожидает свободный worker"
+                            : projectRunPending
+                              ? "Сайты проекта ставятся в очередь"
+                              : "Идёт сканирование выбранного сайта"}
                         </StatusText>
                         </div>
                         <MetaText opacity={0.72}>Прошло: {runElapsedSeconds} сек.</MetaText>
@@ -1314,10 +1478,26 @@ export default function ProjectDashboardPage() {
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
                         <span style={{ color: "#8fd18f" }}>✓ Запуск принят</span>
                         <span style={{ opacity: 0.45 }}>→</span>
-                        <span className="project-run-live-stage">● Crawler обходит страницы</span>
+                        <span className={selectedPendingJob ? "project-run-live-stage" : undefined}>
+                          {selectedPendingJob ? "● В очереди worker" : "✓ Worker взял задачу"}
+                        </span>
+                        <span style={{ opacity: 0.45 }}>→</span>
+                        <span className={!selectedPendingJob ? "project-run-live-stage" : undefined} style={{ opacity: selectedPendingJob ? 0.62 : undefined }}>
+                          {!selectedPendingJob ? "● Crawler обходит страницы" : "Обход страниц"}
+                        </span>
                         <span style={{ opacity: 0.45 }}>→</span>
                         <span style={{ opacity: 0.62 }}>Обновление структуры</span>
                       </div>
+                      {selectedPendingJob && (
+                        <Card style={{ padding: 8, display: "grid", gap: 4 }}>
+                          <MetaText>
+                            В очереди: job #{selectedPendingJob.jobId} · контекст {selectedPendingJob.personaLabel}
+                          </MetaText>
+                          <MetaText opacity={0.72}>
+                            Это нормальный этап worker-mode. Если очередь зависнет, readiness покажет предупреждение.
+                          </MetaText>
+                        </Card>
+                      )}
                       {liveStructureRun?.current_url && (
                         <Card style={{ padding: 8, display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
                           <span

@@ -48,6 +48,34 @@ export function getProjectRunBadgeMeta(statusRaw?: string | null): Meta {
       rowActiveBorder: "rgba(120,166,255,0.39)",
     };
   }
+  if (status === "QUEUED") {
+    return {
+      label: "В очереди",
+      icon: "•",
+      tone: "info",
+      hint: "Задача поставлена в очередь и ждёт свободный crawler worker.",
+      rowBaseBg: "rgba(120,166,255,0.05)",
+      rowBaseBorder: "rgba(120,166,255,0.22)",
+      rowHoverBg: "rgba(120,166,255,0.12)",
+      rowHoverBorder: "rgba(120,166,255,0.46)",
+      rowActiveBg: "rgba(120,166,255,0.1)",
+      rowActiveBorder: "rgba(120,166,255,0.39)",
+    };
+  }
+  if (status === "CANCEL_REQUESTED") {
+    return {
+      label: "Останавливается",
+      icon: "…",
+      tone: "warning",
+      hint: "Остановка запрошена. Crawler завершит текущий шаг и остановится.",
+      rowBaseBg: "rgba(240,168,94,0.06)",
+      rowBaseBorder: "rgba(240,168,94,0.24)",
+      rowHoverBg: "rgba(240,168,94,0.13)",
+      rowHoverBorder: "rgba(240,168,94,0.44)",
+      rowActiveBg: "rgba(240,168,94,0.11)",
+      rowActiveBorder: "rgba(240,168,94,0.37)",
+    };
+  }
   if (status === "FINISHED") {
     return {
       label: "Прогон успешен",
