@@ -320,7 +320,24 @@ function ProjectSitePersonasPanel({
       setCaptureExpiresAtByPersonaId((current) => ({ ...current, [persona.id]: "" }));
       setMessage("Сеанс подключения создан. Откройте сайт, войдите нужной ролью и вставьте storageState JSON.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось начать подключение через браузер.");
+      const activeCapture =
+        err instanceof ApiError &&
+        err.code === "login_capture_already_active" &&
+        err.details &&
+        typeof err.details === "object" &&
+        "capture" in err.details
+          ? (err.details as { capture?: PersonaLoginCapture }).capture
+          : null;
+      if (activeCapture) {
+        setCaptureByPersonaId((current) => ({ ...current, [persona.id]: activeCapture }));
+        setCaptureJsonByPersonaId((current) => ({
+          ...current,
+          [persona.id]: current[persona.id] || "{\n  \"cookies\": [],\n  \"origins\": []\n}",
+        }));
+        setMessage("Для этой персоны уже есть активный сеанс подключения. Продолжите его или отмените.");
+      } else {
+        setError(err instanceof Error ? err.message : "Не удалось начать подключение через браузер.");
+      }
     } finally {
       setPending(null);
     }

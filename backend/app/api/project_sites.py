@@ -58,15 +58,43 @@ def _capture_payload(capture: CrawlPersonaLoginCapture) -> dict:
         "project_site_id": capture.project_site_id,
         "status": capture.status,
         "login_url": capture.login_url,
-        "expires_at": capture.expires_at,
-        "completed_at": capture.completed_at,
-        "cancelled_at": capture.cancelled_at,
-        "created_at": capture.created_at,
+        "expires_at": capture.expires_at.isoformat() if capture.expires_at else None,
+        "completed_at": capture.completed_at.isoformat() if capture.completed_at else None,
+        "cancelled_at": capture.cancelled_at.isoformat() if capture.cancelled_at else None,
+        "created_at": capture.created_at.isoformat() if capture.created_at else None,
         "instructions": (
             "Откройте login_url, войдите как нужная роль, затем сохраните browser storage state. "
             "Значения cookies/tokens не возвращаются в UI и после complete хранятся encrypted-at-rest."
         ),
     }
+
+
+def _expire_pending_login_captures(db: Session, *, persona_id: int | None = None) -> int:
+    query = db.query(CrawlPersonaLoginCapture).filter(
+        CrawlPersonaLoginCapture.status == "PENDING",
+        CrawlPersonaLoginCapture.expires_at <= datetime.utcnow(),
+    )
+    if persona_id is not None:
+        query = query.filter(CrawlPersonaLoginCapture.crawl_persona_id == persona_id)
+    rows = query.all()
+    for row in rows:
+        row.status = "EXPIRED"
+    if rows:
+        db.flush()
+    return len(rows)
+
+
+def _active_login_capture(db: Session, *, persona_id: int) -> CrawlPersonaLoginCapture | None:
+    _expire_pending_login_captures(db, persona_id=persona_id)
+    return (
+        db.query(CrawlPersonaLoginCapture)
+        .filter(
+            CrawlPersonaLoginCapture.crawl_persona_id == persona_id,
+            CrawlPersonaLoginCapture.status == "PENDING",
+        )
+        .order_by(CrawlPersonaLoginCapture.created_at.desc(), CrawlPersonaLoginCapture.id.desc())
+        .first()
+    )
 
 
 def _safe_login_url(site: ProjectSite, raw_url: str | None) -> str:
@@ -495,6 +523,17 @@ def create_project_site_persona_login_capture(
                 "message": "Гостевой контекст не должен содержать login/session state.",
             },
         )
+    active_capture = _active_login_capture(db, persona_id=persona.id)
+    if active_capture is not None:
+        db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "login_capture_already_active",
+                "message": "Для этой персоны уже открыт сеанс подключения. Завершите или отмените его перед новым запуском.",
+                "capture": _capture_payload(active_capture),
+            },
+        )
     capture = CrawlPersonaLoginCapture(
         crawl_persona_id=persona.id,
         project_site_id=site.id,
@@ -532,8 +571,8 @@ def get_project_site_persona_login_capture(
     )
     if capture is None:
         raise HTTPException(status_code=404, detail="Login capture not found")
-    if capture.status == "PENDING" and capture.expires_at <= datetime.utcnow():
-        capture.status = "EXPIRED"
+    if capture.status == "PENDING":
+        _expire_pending_login_captures(db, persona_id=persona_id)
         db.commit()
         db.refresh(capture)
     return success_response_payload(request, data=_capture_payload(capture))

@@ -820,6 +820,16 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     assert capture["login_url"] == "https://persona.test/login"
     assert "secret" not in str(capture).lower()
 
+    duplicate_capture = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/login-captures",
+        json={"login_url": "https://persona.test/login"},
+        headers=editor_headers,
+    )
+    assert duplicate_capture.status_code == 409
+    duplicate_payload = _extract_error_payload(duplicate_capture)
+    assert duplicate_payload["error"]["code"] == "login_capture_already_active"
+    assert duplicate_payload["error"]["details"]["capture"]["id"] == capture["id"]
+
     complete_response = client.post(
         f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/login-captures/{capture['id']}/complete",
         json={
