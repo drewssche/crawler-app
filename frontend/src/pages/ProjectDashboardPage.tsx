@@ -136,6 +136,10 @@ type StructureRow = {
   batchNo: number | null;
 };
 
+function getRetryPersonaLabel(result: RetryPagesResult, fallback?: string | null): string {
+  return result.persona?.label || result.persona_label || fallback || "Гость";
+}
+
 function parseDomains(csv: string): string[] {
   return (csv || "")
     .split(",")
@@ -527,13 +531,14 @@ export default function ProjectDashboardPage() {
     try {
       const result = await retryProblemPages(structureRunId, [pageContext.page.url]);
       const succeeded = result.succeeded > 0;
+      const personaLabel = getRetryPersonaLabel(result, pageContext.page.persona?.label);
       setPageRetrySucceeded(succeeded);
       setPageRetryMessage(
         succeeded
-          ? "Страница снова доступна. Исходный результат прогона сохранён."
+          ? `Повторено как «${personaLabel}»: страница снова доступна. Исходный результат прогона сохранён.`
           : result.skipped > 0
-            ? "Лимит повторных попыток исчерпан."
-            : "Повторная проверка завершена, но ошибка сохранилась.",
+            ? `Повторено как «${personaLabel}»: лимит повторных попыток исчерпан.`
+            : `Повторено как «${personaLabel}»: проверка завершена, но ошибка сохранилась.`,
       );
       setPageContext(await getPageContext(structureRunId, pageContext.page.url));
     } catch (e) {
@@ -574,14 +579,15 @@ export default function ProjectDashboardPage() {
       const result = await retryProblemPages(structureRunId, [url]);
       const row = result.results[0];
       const state = row?.status === "SUCCEEDED" ? "success" : row?.status === "FAILED" ? "failed" : "skipped";
+      const personaLabel = getRetryPersonaLabel(result, structureRun?.persona?.label);
       setStructureRetryResultByUrl((current) => ({ ...current, [url]: state }));
       setStructureRetryNoticeTone(state === "success" ? "success" : "warning");
       setStructureRetryNotice(
         state === "success"
-          ? "Страница снова доступна. Исходная ошибка сохранена в истории прогона."
+          ? `Повторено как «${personaLabel}»: страница снова доступна. Исходная ошибка сохранена в истории прогона.`
           : state === "failed"
-            ? "Страница проверена повторно, но ошибка сохранилась."
-            : row?.message || "Повторная проверка сейчас недоступна.",
+            ? `Повторено как «${personaLabel}»: ошибка сохранилась.`
+            : row?.message || `Повторено как «${personaLabel}»: повторная проверка сейчас недоступна.`,
       );
     } catch (e) {
       setStructureRetryResultByUrl((current) => ({ ...current, [url]: "failed" }));
@@ -1232,11 +1238,11 @@ export default function ProjectDashboardPage() {
                             title={
                               structureUpdatePending
                                 ? "Повторная проверка станет доступна после завершения текущего прогона."
-                                : "Повторно проверить проблемные страницы без изменения исходного результата."
+                                : `Повторно проверить проблемные страницы как «${structureRun?.persona?.label || "Гость"}» без изменения исходного результата.`
                             }
                             onClick={() => void handleRetryAllProblemPages()}
                           >
-                            {bulkRetryPending ? "Проверяем..." : `Повторить проблемные · ${problemPagesCount}`}
+                            {bulkRetryPending ? "Проверяем..." : `Повторить проблемные как ${structureRun?.persona?.label || "Гость"} · ${problemPagesCount}`}
                           </CardActionButton>
                         )}
                         <UiSelect
@@ -1335,6 +1341,7 @@ export default function ProjectDashboardPage() {
                             <MetaText opacity={0.68}>
                               {formatRunTitle(structureRun.started_at)} · {formatDuration(structureRun.started_at, structureRun.finished_at)}
                             </MetaText>
+                            <MetaText opacity={0.68}>Контекст проверки: {structureRun.persona?.label || "Гость"}</MetaText>
                           </div>
                         }
                         actions={<ProjectRunBadge status={structureRun.status} />}
@@ -1396,6 +1403,10 @@ export default function ProjectDashboardPage() {
                       <StatusText tone={bulkRetryResult.failed > 0 ? "warning" : "success"}>
                         Повторная проверка: доступно {bulkRetryResult.succeeded}, ошибка сохранилась {bulkRetryResult.failed}, пропущено {bulkRetryResult.skipped}.
                       </StatusText>
+                      <MetaText opacity={0.68}>
+                        Контекст: {getRetryPersonaLabel(bulkRetryResult, structureRun?.persona?.label)}.
+                        {bulkRetryResult.session_message ? ` ${bulkRetryResult.session_message}` : ""}
+                      </MetaText>
                       <MetaText opacity={0.68}>{bulkRetryResult.message}</MetaText>
                     </Card>
                   )}

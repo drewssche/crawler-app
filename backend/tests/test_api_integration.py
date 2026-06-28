@@ -1697,9 +1697,15 @@ def test_retry_problem_page_preserves_original_result_and_records_attempt(monkey
         db.add(project)
         db.flush()
         site = _add_primary_site(db, project)
+        guest = (
+            db.query(CrawlPersona)
+            .filter(CrawlPersona.project_site_id == site.id, CrawlPersona.key == "guest")
+            .one()
+        )
         run = Run(
             project_id=project.id,
             project_site_id=site.id,
+            crawl_persona_id=guest.id,
             status="FINISHED",
             started_at=datetime.utcnow(),
             finished_at=datetime.utcnow(),
@@ -1756,6 +1762,8 @@ def test_retry_problem_page_preserves_original_result_and_records_attempt(monkey
     result = response.json()
     assert result["succeeded"] == 1
     assert result["failed"] == 0
+    assert result["persona"]["key"] == "guest"
+    assert result["session_status"] == "not_required"
     assert result["results"][0]["attempt_no"] == 1
 
     with SessionLocal() as db:
@@ -1765,6 +1773,90 @@ def test_retry_problem_page_preserves_original_result_and_records_attempt(monkey
         assert original.final_status_code == 404
         assert attempt.status == "SUCCEEDED"
         assert attempt.final_status_code == 200
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_retry_problem_page_requires_active_persona_session(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="retry-persona@test.local", role="editor", is_approved=True))
+        project = Project(
+            name="Retry persona",
+            start_url="https://retry-persona.test/",
+            allowed_domains_csv="retry-persona.test",
+        )
+        db.add(project)
+        db.flush()
+        site = _add_primary_site(db, project)
+        partner = CrawlPersona(
+            project_site_id=site.id,
+            key="partner",
+            label="Партнёр",
+            kind="partner",
+            is_default=False,
+            is_enabled=True,
+            has_secrets=False,
+        )
+        db.add(partner)
+        db.flush()
+        run = Run(
+            project_id=project.id,
+            project_site_id=site.id,
+            crawl_persona_id=partner.id,
+            status="FINISHED",
+            started_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+            pages_total=1,
+            pages_changed=1,
+        )
+        db.add(run)
+        db.flush()
+        page = Page(
+            run_id=run.id,
+            url="https://retry-persona.test/partner-only",
+            status_code=403,
+            final_url="https://retry-persona.test/partner-only",
+            final_status_code=403,
+            content_type="text/html",
+            html="",
+            html_hash="",
+        )
+        db.add(page)
+        db.commit()
+        run_id = run.id
+        page_id = page.id
+        persona_id = partner.id
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("retry must not fetch when persona session is missing")
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    response = client.post(
+        f"/runs/{run_id}/retry-pages",
+        json={"urls": ["https://retry-persona.test/partner-only"]},
+        headers=_auth_header("retry-persona@test.local", role="editor"),
+    )
+
+    assert response.status_code == 409
+    payload = _extract_error_payload(response)
+    assert payload["error"]["code"] == "persona_session_missing"
+    assert payload["error"]["details"]["crawl_persona_id"] == persona_id
+    assert payload["error"]["details"]["persona_label"] == "Партнёр"
+    assert payload["error"]["details"]["session_status"] == "missing"
+
+    with SessionLocal() as db:
+        assert db.query(PageRetryAttempt).filter(PageRetryAttempt.page_id == page_id).count() == 0
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

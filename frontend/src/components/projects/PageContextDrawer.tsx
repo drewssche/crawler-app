@@ -39,6 +39,7 @@ export default function PageContextDrawer({
 }) {
   const recognizedScripts = context?.tracking.scripts.items.filter((script) => script.provider !== "Не определён") || [];
   const unknownScripts = context?.tracking.scripts.items.filter((script) => script.provider === "Не определён") || [];
+  const personaLabel = context?.page.persona?.label || "Гость";
 
   return (
     <SlidePanel open={open} width="min(620px, 94vw)" onClose={onClose}>
@@ -120,7 +121,7 @@ export default function PageContextDrawer({
                   title={<div style={{ fontWeight: 700 }}>Не удалось получить страницу</div>}
                   actions={canRetry && context.page.can_retry ? (
                     <Button variant="accent" size="sm" disabled={retryPending} onClick={onRetry}>
-                      {retryPending ? "Проверяем..." : "Повторить"}
+                      {retryPending ? "Проверяем..." : `Повторить как ${personaLabel}`}
                     </Button>
                   ) : undefined}
                 />
@@ -137,7 +138,7 @@ export default function PageContextDrawer({
                   title={<div style={{ fontWeight: 700 }}>HTTP {context.page.final_status_code}</div>}
                   actions={canRetry && context.page.can_retry ? (
                     <Button variant="accent" size="sm" disabled={retryPending} onClick={onRetry}>
-                      {retryPending ? "Проверяем..." : "Повторить"}
+                      {retryPending ? "Проверяем..." : `Повторить как ${personaLabel}`}
                     </Button>
                   ) : undefined}
                 />

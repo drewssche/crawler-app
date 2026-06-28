@@ -182,6 +182,17 @@ export type RetryPagesResult = {
   succeeded: number;
   failed: number;
   skipped: number;
+  crawl_persona_id?: number | null;
+  persona?: {
+    id: number;
+    key: string;
+    label: string;
+    kind: string;
+  } | null;
+  persona_label?: string | null;
+  session_required?: boolean;
+  session_status?: string;
+  session_message?: string;
   message: string;
   results: Array<{
     page_id: number;

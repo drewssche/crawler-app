@@ -1003,6 +1003,7 @@ def retry_problem_pages(
         latest_attempts.setdefault(attempt.page_id, attempt)
     results = []
     retry_persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
+    retry_session = _assert_persona_ready_for_run(retry_persona) if retry_persona else _persona_session_status(None)
     with _persona_http_client(retry_persona) as client:
         for page in problem_pages:
             previous_attempts = int(attempt_counts.get(page.id, 0))
@@ -1076,6 +1077,12 @@ def retry_problem_pages(
         "succeeded": sum(1 for row in results if row["status"] == "SUCCEEDED"),
         "failed": sum(1 for row in results if row["status"] == "FAILED"),
         "skipped": sum(1 for row in results if row["status"] == "SKIPPED"),
+        "crawl_persona_id": retry_persona.id if retry_persona else None,
+        "persona": _persona_payload(retry_persona),
+        "persona_label": retry_persona.label if retry_persona else None,
+        "session_required": retry_session["session_required"],
+        "session_status": retry_session["session_status"],
+        "session_message": retry_session["message"],
         "results": results,
         "message": "Исходные результаты прогона сохранены без изменений.",
     }
