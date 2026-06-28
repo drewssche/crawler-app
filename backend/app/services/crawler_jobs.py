@@ -13,6 +13,7 @@ from app.db.models.run import Run
 JOB_TERMINAL_STATUSES = {"SUCCEEDED", "FAILED", "CANCELLED"}
 JOB_ACTIVE_STATUSES = {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}
 SYNC_LEASE_OWNER = "sync-backend"
+WORKER_LEASE_OWNER = "crawler-worker"
 
 
 def crawler_worker_enabled() -> bool:
@@ -56,6 +57,44 @@ def enqueue_site_run_job(
     return job
 
 
+def find_active_site_job(db: Session, *, project_site_id: int) -> CrawlerRunJob | None:
+    return (
+        db.query(CrawlerRunJob)
+        .filter(
+            CrawlerRunJob.project_site_id == project_site_id,
+            CrawlerRunJob.status.in_(JOB_ACTIVE_STATUSES),
+        )
+        .order_by(CrawlerRunJob.id.desc())
+        .first()
+    )
+
+
+def claim_next_queued_job(
+    db: Session,
+    *,
+    lease_owner: str = WORKER_LEASE_OWNER,
+) -> CrawlerRunJob | None:
+    now = datetime.utcnow()
+    job = (
+        db.query(CrawlerRunJob)
+        .filter(CrawlerRunJob.status == "QUEUED", CrawlerRunJob.scheduled_at <= now)
+        .order_by(CrawlerRunJob.scheduled_at.asc(), CrawlerRunJob.id.asc())
+        .first()
+    )
+    if job is None:
+        return None
+    job.status = "RUNNING"
+    job.lease_owner = lease_owner
+    job.lease_expires_at = now + timedelta(seconds=crawler_job_lease_seconds())
+    job.attempts += 1
+    job.started_at = job.started_at or now
+    job.heartbeat_at = now
+    job.updated_at = now
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 def mark_job_running(
     db: Session,
     *,
@@ -66,9 +105,10 @@ def mark_job_running(
     now = datetime.utcnow()
     job.run_id = run.id
     job.status = "RUNNING"
-    job.lease_owner = lease_owner
+    job.lease_owner = job.lease_owner or lease_owner
     job.lease_expires_at = now + timedelta(seconds=crawler_job_lease_seconds())
-    job.attempts += 1
+    if job.attempts <= 0:
+        job.attempts += 1
     job.started_at = job.started_at or now
     job.heartbeat_at = now
     job.updated_at = now

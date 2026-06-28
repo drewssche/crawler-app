@@ -773,6 +773,100 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     engine.dispose()
 
 
+def test_worker_enabled_queues_and_tick_executes_site_run(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="worker-flow@test.local", role="admin", is_admin=True, is_approved=True))
+        project = Project(name="Worker", start_url="https://worker.test", allowed_domains_csv="worker.test", max_pages=1)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        site = _add_primary_site(db, project)
+        db.commit()
+        site_id = site.id
+
+    class FakeResponse:
+        def __init__(self, url: str):
+            self.url = url
+            self.status_code = 200
+            self.headers = {"content-type": "text/html; charset=utf-8"}
+            self.text = "<html><body><h1>worker ok</h1></body></html>"
+            self.history = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            return FakeResponse(url)
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    headers = _auth_header("worker-flow@test.local", role="admin")
+
+    disabled_tick = client.post("/runs/worker/tick", headers=headers)
+    assert disabled_tick.status_code == 409
+    assert _extract_error_payload(disabled_tick)["error"]["code"] == "crawler_worker_disabled"
+
+    monkeypatch.setenv("CRAWLER_WORKER_ENABLED", "1")
+    queued = client.post(f"/runs/start-site/{site_id}", headers=headers)
+    assert queued.status_code == 200
+    queued_payload = queued.json()
+    assert queued_payload["queued"] is True
+    assert queued_payload["run_id"] is None
+    assert queued_payload["job_status"] == "QUEUED"
+    job_id = queued_payload["job_id"]
+
+    readiness = _extract_success_data(client.get("/crawler/readiness", headers=headers))
+    assert readiness["mode"] == "worker"
+    assert readiness["worker"]["enabled"] is True
+    assert readiness["jobs"]["queued"] == 1
+    assert readiness["jobs"]["sample"][0]["job_id"] == job_id
+
+    blocked = client.post(f"/runs/start-site/{site_id}", headers=headers)
+    assert blocked.status_code == 409
+    assert _extract_error_payload(blocked)["error"]["code"] == "site_run_already_active"
+
+    tick = client.post("/runs/worker/tick", headers=headers)
+    assert tick.status_code == 200
+    tick_payload = tick.json()
+    assert tick_payload["processed"] is True
+    assert tick_payload["job_id"] == job_id
+    assert tick_payload["status"] == "SUCCEEDED"
+    assert tick_payload["run_status"] == "FINISHED"
+    assert tick_payload["run_id"] is not None
+
+    with SessionLocal() as db:
+        job = db.get(CrawlerRunJob, job_id)
+        assert job.status == "SUCCEEDED"
+        assert job.run_id == tick_payload["run_id"]
+        assert job.lease_owner == "crawler-worker"
+        assert job.lease_expires_at is None
+        run = db.get(Run, tick_payload["run_id"])
+        assert run.status == "FINISHED"
+        assert run.project_site_id == site_id
+
+    empty_tick = client.post("/runs/worker/tick", headers=headers)
+    assert empty_tick.status_code == 200
+    assert empty_tick.json()["processed"] is False
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeypatch):
     from app.api import project_sites as project_sites_api
     from app.api import runs as runs_api

@@ -331,7 +331,8 @@
   - 2. Cancel API MVP готов: `POST /runs/{run_id}/cancel` переводит активный run в `CANCEL_REQUESTED`; crawler проверяет флаг между страницами и завершает run как `CANCELLED`. До финального `CANCELLED` сайт считается занятым, retry недоступен.
   - 3. Crawler readiness MVP готов: `GET /crawler/readiness` показывает sync-mode, worker disabled, active/cancel-requested runs, stale recovery threshold/recovered count и sample активных runs для admin/root-admin.
   - 4. Durable job/lease boundary foundation готов: `crawler_run_jobs` фиксирует site-run jobs, sync runner берёт lease `sync-backend`, пишет heartbeat и закрывает job как `SUCCEEDED/FAILED/CANCELLED`; readiness показывает job counters/sample. Execution пока остаётся synchronous.
-  - Следующее: worker execution loop за feature flag, более быстрый interrupt текущего fetch, readiness для реального worker/lease expiry.
+  - 5. Worker execution tick MVP готов: при `CRAWLER_WORKER_ENABLED=1` start API ставит jobs в `QUEUED`, `POST /runs/worker/tick` claim-ит одну queued job, берёт lease `crawler-worker` и выполняет её через общий runner. Это manual tick, ещё не continuous daemon.
+  - Следующее: continuous worker process/loop, более быстрый interrupt текущего fetch, readiness для lease expiry/stale queued jobs.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -351,6 +352,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P0/P1 Operations reliability — feature-flagged worker execution tick**.
+  - Что было: durable job boundary уже был в DB, но start API всё равно всегда выполнял run синхронно.
+  - Что стало: при `CRAWLER_WORKER_ENABLED=1` `POST /runs/start-site/{site_id}` возвращает queued job без немедленного crawl; `POST /runs/worker/tick` claim-ит одну job, ставит lease `crawler-worker` и выполняет общий `_execute_site_run`. Readiness в этом режиме показывает `mode=worker`, queued jobs и active job sample. Повторный start того же сайта блокируется active job.
+  - Как проверить: включить `CRAWLER_WORKER_ENABLED=1`, запустить сайт → получить `queued=true/job_id`; вызвать `POST /runs/worker/tick` → получить `processed=true`, `run_status=FINISHED`, job `SUCCEEDED`.
+  - Вклад в цели: execution впервые отделён от start request контрактом очереди и lease (`high` operations architecture), но без риска постоянного фонового процесса на этом шаге.
 
 - [x] **P0/P1 Operations reliability — durable crawler job boundary foundation**.
   - Что было: crawler run жил только как строка `runs`; без отдельной job/lease сущности нельзя безопасно вынести execution из request lifecycle.

@@ -36,8 +36,11 @@ from app.core.events import (
 )
 from app.services.crawl_personas import get_default_persona
 from app.services.crawler_jobs import (
+    claim_next_queued_job,
+    crawler_worker_enabled,
     enqueue_site_run_job,
     fail_job,
+    find_active_site_job,
     finish_job_from_run,
     heartbeat_job,
     mark_job_running,
@@ -471,6 +474,18 @@ def _retry_page(
 
 def _assert_no_active_site_run(db: Session, site: ProjectSite) -> None:
     mark_stale_running_runs_failed(db, project_site_id=site.id)
+    active_job = find_active_site_job(db, project_site_id=site.id)
+    if active_job is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "site_run_already_active",
+                "message": f"Для сайта «{site.name}» уже есть активная задача crawler.",
+                "job_id": active_job.id,
+                "run_id": active_job.run_id,
+                "project_site_id": site.id,
+            },
+        )
     active_run = (
         db.query(Run)
         .filter(Run.project_site_id == site.id, Run.status.in_(["RUNNING", "CANCEL_REQUESTED"]))
@@ -491,6 +506,32 @@ def _assert_no_active_site_run(db: Session, site: ProjectSite) -> None:
 
 class RunCancelled(Exception):
     pass
+
+
+def _queued_run_response(
+    *,
+    job: CrawlerRunJob,
+    site: ProjectSite,
+    persona: CrawlPersona | None,
+    session: dict[str, Any],
+) -> dict:
+    return {
+        "ok": True,
+        "queued": True,
+        "job_id": job.id,
+        "job_status": job.status,
+        "run_id": None,
+        "project_site_id": site.id,
+        "crawl_persona_id": persona.id if persona else None,
+        "crawl_runtime": None,
+        "persona": _persona_payload(persona),
+        "persona_label": persona.label if persona else None,
+        "persona_key": persona.key if persona else None,
+        "session_required": session["session_required"],
+        "session_status": session["session_status"],
+        "session_message": session["message"],
+        "message": "Задача поставлена в очередь crawler worker.",
+    }
 
 
 def _emit_run_completion_event(
@@ -973,6 +1014,9 @@ def start_site_run(
     run_persona = persona or get_default_persona(db, site)
     _assert_persona_ready_for_run(run_persona)
     job = enqueue_site_run_job(db, site=site, persona=run_persona, actor_user_id=current_user.id)
+    session = _persona_session_status(run_persona)
+    if crawler_worker_enabled():
+        return _queued_run_response(job=job, site=site, persona=run_persona, session=session)
     try:
         run = _execute_site_run(db, site, persona=run_persona, actor_user_id=current_user.id, job=job)
     except Exception:
@@ -1044,6 +1088,21 @@ def start_project_sites(
             _assert_no_active_site_run(db, site)
             _assert_persona_ready_for_run(persona)
             job = enqueue_site_run_job(db, site=site, persona=persona, actor_user_id=current_user.id)
+            if crawler_worker_enabled():
+                results.append(
+                    {
+                        **base_result,
+                        "project_site_id": site.id,
+                        "site_name": site.name,
+                        "job_id": job.id,
+                        "job_status": job.status,
+                        "run_id": None,
+                        "status": "QUEUED",
+                        "failure_code": None,
+                        "failure_message": None,
+                    }
+                )
+                continue
             try:
                 run = _execute_site_run(db, site, persona=persona, actor_user_id=current_user.id, job=job)
             except Exception:
@@ -1115,8 +1174,77 @@ def start_project_sites(
         "sites_total": len(sites),
         "finished": sum(1 for row in results if row["status"] == "FINISHED"),
         "failed": sum(1 for row in results if row["status"] == "FAILED"),
+        "queued": sum(1 for row in results if row["status"] == "QUEUED"),
         "skipped": sum(1 for row in results if row["status"] == "SKIPPED"),
         "results": results,
+    }
+
+
+@router.post("/worker/tick")
+def run_worker_tick(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("crawler.run")),
+):
+    if not crawler_worker_enabled():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "crawler_worker_disabled",
+                "message": "Crawler worker execution выключен. Установите CRAWLER_WORKER_ENABLED=1 для обработки queued jobs.",
+            },
+        )
+    job = claim_next_queued_job(db)
+    if job is None:
+        return {
+            "ok": True,
+            "processed": False,
+            "message": "В очереди crawler нет задач.",
+        }
+
+    site = db.get(ProjectSite, job.project_site_id)
+    if site is None or not site.is_enabled:
+        fail_job(
+            db,
+            job=job,
+            failure_code="project_site_unavailable",
+            failure_message="Сайт задачи недоступен или отключён.",
+        )
+        return {
+            "ok": True,
+            "processed": True,
+            "job_id": job.id,
+            "run_id": None,
+            "status": "FAILED",
+            "failure_code": "project_site_unavailable",
+        }
+    persona = db.get(CrawlPersona, job.crawl_persona_id) if job.crawl_persona_id else get_default_persona(db, site)
+    try:
+        _assert_persona_ready_for_run(persona)
+        run = _execute_site_run(db, site, persona=persona, actor_user_id=job.created_by_user_id, job=job)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        fail_job(
+            db,
+            job=job,
+            failure_code=detail.get("code") or f"http_{exc.status_code}",
+            failure_message=detail.get("message") or str(exc.detail),
+        )
+        raise
+    except Exception as exc:
+        failure_code, failure_message = _classify_fetch_failure(exc)
+        fail_job(db, job=job, failure_code=failure_code, failure_message=failure_message)
+        raise
+
+    return {
+        "ok": True,
+        "processed": True,
+        "job_id": job.id,
+        "run_id": run.id,
+        "project_site_id": site.id,
+        "status": job.status,
+        "run_status": run.status,
+        "failure_code": run.failure_code,
+        "failure_message": run.failure_message,
     }
 
 

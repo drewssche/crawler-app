@@ -78,7 +78,16 @@ docker compose up -d --build backend
 
 Операционная диагностика crawler доступна admin/root-admin через `GET /crawler/readiness`: режим исполнения, активные runs, ожидание отмены, stale recovery и порог `CRAWL_STALE_RUNNING_SECONDS`.
 
-Каждый запуск сайта теперь создаёт durable job-запись `crawler_run_jobs`. Пока execution остаётся синхронным (`mode=synchronous`), но readiness уже показывает job counters и lease-состояние. `CRAWLER_WORKER_ENABLED` зарезервирован для следующего шага worker execution; включать его сейчас не требуется.
+Каждый запуск сайта теперь создаёт durable job-запись `crawler_run_jobs`. По умолчанию execution остаётся синхронным (`mode=synchronous`), но readiness уже показывает job counters и lease-состояние.
+
+Для проверки worker-boundary можно включить:
+
+```env
+CRAWLER_WORKER_ENABLED=1
+CRAWLER_JOB_LEASE_SECONDS=300
+```
+
+В этом режиме `POST /runs/start-site/{site_id}` ставит задачу в очередь, а `POST /runs/worker/tick` забирает и выполняет одну queued job. Это ещё не continuous daemon: постоянный worker process будет следующим этапом.
 
 ## Метрики
 

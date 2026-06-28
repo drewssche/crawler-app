@@ -29,16 +29,17 @@ def build_crawler_readiness(db: Session) -> dict:
         .all()
     )
     job_counts = crawler_job_status_counts(db)
+    worker_enabled = crawler_worker_enabled()
 
     return {
         "ready": True,
         "status": "ok",
-        "mode": "synchronous",
+        "mode": "worker" if worker_enabled else "synchronous",
         "worker": {
-            "enabled": crawler_worker_enabled(),
+            "enabled": worker_enabled,
             "message": (
                 "Durable worker включён через CRAWLER_WORKER_ENABLED."
-                if crawler_worker_enabled()
+                if worker_enabled
                 else "Durable job boundary уже пишет crawler_run_jobs, но execution пока выполняется в backend request lifecycle."
             ),
         },
