@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   cancelProjectSitePersonaLoginCapture,
+  captureProjectSitePersonaManagedLoginState,
   completeProjectSitePersonaLoginCapture,
   createProjectSitePersona,
   createProjectSitePersonaLoginCapture,
@@ -380,6 +381,36 @@ function ProjectSitePersonasPanel({
     }
   }
 
+  async function handleManagedLoginCapture(persona: CrawlPersonaSummary, capture: PersonaLoginCapture) {
+    setPending(persona.id);
+    setError("");
+    setMessage("");
+    try {
+      const expiresAt = captureExpiresAtByPersonaId[persona.id]
+        ? new Date(captureExpiresAtByPersonaId[persona.id]).toISOString()
+        : null;
+      const result = await captureProjectSitePersonaManagedLoginState(projectId, site.id, persona.id, capture.id, {
+        wait_seconds: 0,
+        expires_at: expiresAt,
+      });
+      setPersonas((current) => current.map((row) => row.id === result.persona.id ? result.persona : row));
+      setCaptureByPersonaId((current) => {
+        const next = { ...current };
+        delete next[persona.id];
+        return next;
+      });
+      setMessage("Browser-сессия автоматически захвачена и сохранена encrypted-at-rest. Значения cookies/tokens скрыты.");
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "managed_login_capture_unavailable") {
+        setError("Автоматический захват ещё не включён на backend. Используйте ручную вставку Playwright storageState.");
+      } else {
+        setError(err instanceof Error ? err.message : "Не удалось автоматически захватить browser-сессию.");
+      }
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function handleCancelLoginCapture(persona: CrawlPersonaSummary, capture: PersonaLoginCapture) {
     setPending(persona.id);
     setError("");
@@ -616,8 +647,17 @@ function ProjectSitePersonasPanel({
                           Как получить storageState: откройте сайт, войдите нужной ролью и экспортируйте Playwright storageState из браузерного сценария. После сохранения crawler сможет применять cookies/localStorage/sessionStorage server-side, а секретные значения останутся скрытыми.
                         </MetaText>
                         <CardFooterActions>
+                          {capture.managed_browser_available && (
+                            <CardActionButton
+                              variant="primary"
+                              disabled={pending === persona.id}
+                              onClick={() => void handleManagedLoginCapture(persona, capture)}
+                            >
+                              {pending === persona.id ? "Захват..." : "Захватить автоматически"}
+                            </CardActionButton>
+                          )}
                           <CardActionButton
-                            variant="primary"
+                            variant={capture.managed_browser_available ? "secondary" : "primary"}
                             disabled={pending === persona.id}
                             onClick={() => void handleCompleteLoginCapture(persona, capture)}
                           >

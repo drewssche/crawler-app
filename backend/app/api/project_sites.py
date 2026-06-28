@@ -9,6 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.core.api_response import success_response_payload
 from app.core.security import require_permission
+from app.crawler.login_capture import (
+    ManagedLoginCaptureUnavailable,
+    capture_managed_login_state,
+    managed_login_capture_available,
+)
 from app.db.models.project import Project
 from app.db.models.crawl_persona import CrawlPersona
 from app.db.models.crawl_persona_login_capture import CrawlPersonaLoginCapture
@@ -51,15 +56,21 @@ class PersonaLoginCaptureComplete(BaseModel):
     expires_at: datetime | None = None
 
 
+class PersonaLoginCaptureManagedComplete(BaseModel):
+    wait_seconds: int = Field(default=0, ge=0, le=120)
+    expires_at: datetime | None = None
+
+
 def _capture_payload(capture: CrawlPersonaLoginCapture) -> dict:
+    managed_available = managed_login_capture_available()
     return {
         "id": capture.id,
         "crawl_persona_id": capture.crawl_persona_id,
         "project_site_id": capture.project_site_id,
         "status": capture.status,
-        "mode": "manual_storage_state",
-        "managed_browser_available": False,
-        "managed_browser_status": "planned",
+        "mode": "managed_browser" if managed_available else "manual_storage_state",
+        "managed_browser_available": managed_available,
+        "managed_browser_status": "available" if managed_available else "planned",
         "login_url": capture.login_url,
         "expires_at": capture.expires_at.isoformat() if capture.expires_at else None,
         "completed_at": capture.completed_at.isoformat() if capture.completed_at else None,
@@ -137,6 +148,21 @@ def _browser_capture_bundle(payload: PersonaLoginCaptureComplete) -> dict:
         bundle["sessionStorage"] = payload.session_storage
     if payload.extra_http_headers:
         bundle["headers"] = payload.extra_http_headers
+    return bundle
+
+
+def _managed_browser_capture_bundle(storage_state: dict, *, result: dict | None = None) -> dict:
+    state = storage_state or {}
+    cookies = state.get("cookies") if isinstance(state, dict) else []
+    origins = state.get("origins") if isinstance(state, dict) else []
+    bundle = {
+        "source": "managed_browser_login_capture",
+        "captured_at": datetime.utcnow().isoformat(),
+        "cookies": cookies if isinstance(cookies, list) else [],
+        "origins": origins if isinstance(origins, list) else [],
+    }
+    if result:
+        bundle["capture_metadata"] = result
     return bundle
 
 
@@ -218,6 +244,67 @@ def _get_site_or_404(db: Session, project_id: int, site_id: int) -> ProjectSite:
     if not site:
         raise HTTPException(status_code=404, detail="Project site not found")
     return site
+
+
+def _pending_login_capture_or_404(
+    db: Session,
+    *,
+    site_id: int,
+    persona_id: int,
+    capture_id: int,
+) -> CrawlPersonaLoginCapture:
+    capture = (
+        db.query(CrawlPersonaLoginCapture)
+        .filter(
+            CrawlPersonaLoginCapture.id == capture_id,
+            CrawlPersonaLoginCapture.project_site_id == site_id,
+            CrawlPersonaLoginCapture.crawl_persona_id == persona_id,
+        )
+        .first()
+    )
+    if capture is None:
+        raise HTTPException(status_code=404, detail="Login capture not found")
+    if capture.status != "PENDING":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "login_capture_not_pending",
+                "message": "Этот сеанс подключения уже завершён, отменён или истёк.",
+            },
+        )
+    if capture.expires_at <= datetime.utcnow():
+        capture.status = "EXPIRED"
+        db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "login_capture_expired",
+                "message": "Сеанс подключения истёк. Запустите подключение сессии заново.",
+            },
+        )
+    return capture
+
+
+def _complete_login_capture_with_bundle(
+    db: Session,
+    *,
+    capture: CrawlPersonaLoginCapture,
+    persona: CrawlPersona,
+    bundle: dict,
+    expires_at: datetime | None,
+) -> None:
+    try:
+        encrypted, fingerprint = encrypt_session_bundle(bundle)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    persona.encrypted_session_bundle = encrypted
+    persona.session_bundle_fingerprint = fingerprint
+    persona.session_bundle_updated_at = datetime.utcnow()
+    persona.session_bundle_expires_at = expires_at
+    persona.secret_version = int(persona.secret_version or 0) + 1
+    persona.has_secrets = True
+    capture.status = "COMPLETED"
+    capture.completed_at = datetime.utcnow()
 
 
 def _scope_conflict() -> HTTPException:
@@ -595,50 +682,72 @@ def complete_project_site_persona_login_capture(
     _current_user: User = Depends(require_permission("projects.edit")),
 ):
     _get_site_or_404(db, project_id, site_id)
-    capture = (
-        db.query(CrawlPersonaLoginCapture)
-        .filter(
-            CrawlPersonaLoginCapture.id == capture_id,
-            CrawlPersonaLoginCapture.project_site_id == site_id,
-            CrawlPersonaLoginCapture.crawl_persona_id == persona_id,
-        )
-        .first()
+    capture = _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
+    persona = db.get(CrawlPersona, persona_id)
+    if persona is None or persona.project_site_id != site_id:
+        raise HTTPException(status_code=404, detail="Crawl persona not found")
+    _complete_login_capture_with_bundle(
+        db,
+        capture=capture,
+        persona=persona,
+        bundle=_browser_capture_bundle(payload),
+        expires_at=payload.expires_at,
     )
-    if capture is None:
-        raise HTTPException(status_code=404, detail="Login capture not found")
-    if capture.status != "PENDING":
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "login_capture_not_pending",
-                "message": "Этот сеанс подключения уже завершён, отменён или истёк.",
-            },
-        )
-    if capture.expires_at <= datetime.utcnow():
-        capture.status = "EXPIRED"
-        db.commit()
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "login_capture_expired",
-                "message": "Сеанс подключения истёк. Запустите подключение сессии заново.",
-            },
-        )
+    db.commit()
+    db.refresh(persona)
+    db.refresh(capture)
+    return success_response_payload(
+        request,
+        data={
+            "capture": _capture_payload(capture),
+            "persona": _persona_payload(persona),
+        },
+    )
+
+
+@router.post("/{site_id}/personas/{persona_id}/login-captures/{capture_id}/capture-managed")
+def capture_project_site_persona_login_managed_state(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    capture_id: int,
+    payload: PersonaLoginCaptureManagedComplete,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    capture = _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
     persona = db.get(CrawlPersona, persona_id)
     if persona is None or persona.project_site_id != site_id:
         raise HTTPException(status_code=404, detail="Crawl persona not found")
     try:
-        encrypted, fingerprint = encrypt_session_bundle(_browser_capture_bundle(payload))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    persona.encrypted_session_bundle = encrypted
-    persona.session_bundle_fingerprint = fingerprint
-    persona.session_bundle_updated_at = datetime.utcnow()
-    persona.session_bundle_expires_at = payload.expires_at
-    persona.secret_version = int(persona.secret_version or 0) + 1
-    persona.has_secrets = True
-    capture.status = "COMPLETED"
-    capture.completed_at = datetime.utcnow()
+        result = capture_managed_login_state(capture.login_url, wait_seconds=payload.wait_seconds)
+    except ManagedLoginCaptureUnavailable as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "managed_login_capture_unavailable",
+                "message": (
+                    "Автоматический захват сессии из управляемого браузера ещё не включён. "
+                    "Используйте ручную вставку Playwright storageState или включите managed capture на backend."
+                ),
+            },
+        ) from exc
+    _complete_login_capture_with_bundle(
+        db,
+        capture=capture,
+        persona=persona,
+        bundle=_managed_browser_capture_bundle(
+            result.storage_state,
+            result={
+                "final_url": result.final_url,
+                "page_title": result.page_title,
+                "values_exposed": False,
+            },
+        ),
+        expires_at=payload.expires_at,
+    )
     db.commit()
     db.refresh(persona)
     db.refresh(capture)

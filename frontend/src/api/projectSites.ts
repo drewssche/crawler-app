@@ -232,6 +232,22 @@ export function completeProjectSitePersonaLoginCapture(
   );
 }
 
+export function captureProjectSitePersonaManagedLoginState(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+  captureId: number,
+  input: {
+    wait_seconds?: number;
+    expires_at?: string | null;
+  } = {},
+): Promise<PersonaLoginCaptureCompleteResult> {
+  return apiPost<PersonaLoginCaptureCompleteResult>(
+    `/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures/${captureId}/capture-managed`,
+    input,
+  );
+}
+
 export function cancelProjectSitePersonaLoginCapture(
   projectId: number,
   siteId: number,

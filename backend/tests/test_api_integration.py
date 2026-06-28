@@ -3,6 +3,7 @@ import os
 import tempfile
 from collections.abc import Generator
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import httpx
 from fastapi.testclient import TestClient
@@ -680,6 +681,7 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
 
 
 def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeypatch):
+    from app.api import project_sites as project_sites_api
     from app.api import runs as runs_api
 
     engine, SessionLocal = _get_session_factory()
@@ -818,6 +820,8 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     capture = _extract_success_data(capture_response)
     assert capture["status"] == "PENDING"
     assert capture["login_url"] == "https://persona.test/login"
+    assert capture["mode"] == "manual_storage_state"
+    assert capture["managed_browser_available"] is False
     assert "secret" not in str(capture).lower()
 
     duplicate_capture = client.post(
@@ -829,6 +833,15 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     duplicate_payload = _extract_error_payload(duplicate_capture)
     assert duplicate_payload["error"]["code"] == "login_capture_already_active"
     assert duplicate_payload["error"]["details"]["capture"]["id"] == capture["id"]
+
+    managed_unavailable = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/login-captures/{capture['id']}/capture-managed",
+        json={"wait_seconds": 0},
+        headers=editor_headers,
+    )
+    assert managed_unavailable.status_code == 409
+    managed_unavailable_payload = _extract_error_payload(managed_unavailable)
+    assert managed_unavailable_payload["error"]["code"] == "managed_login_capture_unavailable"
 
     complete_response = client.post(
         f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/login-captures/{capture['id']}/complete",
@@ -873,6 +886,52 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     deleted = _extract_success_data(delete_response)
     assert deleted["has_secrets"] is False
     assert deleted["session_bundle_summary"]["status"] == "missing"
+
+    managed_persona_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas",
+        json={"key": "managed", "label": "Managed user", "kind": "authenticated"},
+        headers=editor_headers,
+    )
+    assert managed_persona_response.status_code == 200
+    managed_persona = _extract_success_data(managed_persona_response)
+    managed_capture_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{managed_persona['id']}/login-captures",
+        json={"login_url": "https://persona.test/login"},
+        headers=editor_headers,
+    )
+    assert managed_capture_response.status_code == 200
+    managed_capture = _extract_success_data(managed_capture_response)
+
+    monkeypatch.setattr(
+        project_sites_api,
+        "capture_managed_login_state",
+        lambda login_url, wait_seconds=0: SimpleNamespace(
+            storage_state={
+                "cookies": [{"name": "managed_sid", "value": "managed-secret", "domain": "persona.test", "path": "/"}],
+                "origins": [
+                    {
+                        "origin": "https://persona.test",
+                        "localStorage": [{"name": "role", "value": "managed-role-secret"}],
+                    }
+                ],
+            },
+            final_url=login_url,
+            page_title="Managed login",
+        ),
+    )
+    managed_complete_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{managed_persona['id']}/login-captures/{managed_capture['id']}/capture-managed",
+        json={"wait_seconds": 0},
+        headers=editor_headers,
+    )
+    assert managed_complete_response.status_code == 200
+    managed_completed = _extract_success_data(managed_complete_response)
+    assert managed_completed["capture"]["status"] == "COMPLETED"
+    assert managed_completed["persona"]["has_secrets"] is True
+    assert managed_completed["persona"]["session_bundle_summary"]["cookies_count"] == 1
+    assert managed_completed["persona"]["session_bundle_summary"]["local_storage_count"] == 1
+    assert "managed-secret" not in str(managed_completed)
+    assert "managed-role-secret" not in str(managed_completed)
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
