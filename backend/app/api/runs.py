@@ -36,6 +36,7 @@ from app.services.crawl_personas import get_default_persona
 from app.services.page_context import build_page_context
 from app.services.persona_secrets import decrypt_session_bundle
 from app.services.persona_browser_state import build_browser_persona_state
+from app.crawler.browser_fetcher import BrowserPersonaClient, browser_state_requires_runtime
 from app.crawler.renderer import (
     get_rendered_snapshot_metadata,
     render_page_snapshot,
@@ -179,6 +180,22 @@ def _persona_http_state(persona: CrawlPersona | None) -> tuple[dict[str, str], l
     return _session_headers_from_bundle(bundle), _session_cookies_from_bundle(bundle)
 
 
+def _persona_browser_state_for_run(persona: CrawlPersona | None, *, document_url: str) -> dict[str, Any] | None:
+    if persona is None or not persona.has_secrets or not persona.encrypted_session_bundle:
+        return None
+    try:
+        bundle = decrypt_session_bundle(persona.encrypted_session_bundle)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "persona_session_unavailable",
+                "message": "Сессию выбранной персоны не удалось расшифровать. Подключите session bundle заново.",
+            },
+        ) from exc
+    return build_browser_persona_state(bundle, document_url=document_url)
+
+
 def _persona_session_status(persona: CrawlPersona | None) -> dict[str, Any]:
     if persona is None:
         return {
@@ -262,6 +279,17 @@ def _persona_http_client(persona: CrawlPersona | None):
     headers, cookies = _persona_http_state(persona)
     with httpx.Client(follow_redirects=True, timeout=20, headers=headers) as client:
         _apply_session_cookies(client, cookies)
+        yield client
+
+
+@contextmanager
+def _persona_crawl_client(persona: CrawlPersona | None, *, document_url: str):
+    browser_state = _persona_browser_state_for_run(persona, document_url=document_url)
+    if browser_state_requires_runtime(browser_state):
+        with BrowserPersonaClient(browser_state or {}) as client:
+            yield client
+        return
+    with _persona_http_client(persona) as client:
         yield client
 
 
@@ -501,7 +529,7 @@ def _execute_site_run(
     max_pages = max(1, min(int(site.max_pages or 1), 10_000))
 
     try:
-        with _persona_http_client(persona) as client:
+        with _persona_crawl_client(persona, document_url=site.start_url) as client:
             queue: deque[str] = deque([site.start_url])
             queued: set[str] = set(queue)
             visited: set[str] = set()

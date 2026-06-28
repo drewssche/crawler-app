@@ -1336,6 +1336,96 @@ def test_project_run_skips_default_persona_without_session(monkeypatch):
     engine.dispose()
 
 
+def test_project_run_uses_browser_client_for_persona_browser_storage(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="browser-persona@test.local", role="editor", is_approved=True))
+        project = Project(name="Browser persona", start_url="https://browser-persona.test", allowed_domains_csv="browser-persona.test")
+        db.add(project)
+        db.flush()
+        site = _add_primary_site(db, project)
+        db.commit()
+        project_id = project.id
+        site_id = site.id
+
+    class ForbiddenHttpClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("HTTP-only crawler must not be used when persona has browser storage")
+
+    browser_states = []
+
+    class FakeBrowserResponse:
+        url = "https://browser-persona.test/account"
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = "<html><body>browser persona account</body></html>"
+        history = []
+
+    class FakeBrowserClient:
+        def __init__(self, persona_browser_state, *args, **kwargs):
+            browser_states.append(persona_browser_state)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            assert url in {"https://browser-persona.test", "https://browser-persona.test/"}
+            return FakeBrowserResponse()
+
+    monkeypatch.setattr(runs_api.httpx, "Client", ForbiddenHttpClient)
+    monkeypatch.setattr(runs_api, "BrowserPersonaClient", FakeBrowserClient)
+
+    client = TestClient(app)
+    editor_headers = _auth_header("browser-persona@test.local", role="editor")
+    create_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas",
+        json={"key": "auth", "label": "Авторизованный", "kind": "authenticated"},
+        headers=editor_headers,
+    )
+    assert create_response.status_code == 200
+    persona = _extract_success_data(create_response)
+
+    save_response = client.put(
+        f"/projects/{project_id}/sites/{site_id}/personas/{persona['id']}/session-bundle",
+        json={
+            "bundle": {
+                "cookies": [{"name": "sid", "value": "secret", "domain": "browser-persona.test", "path": "/"}],
+                "localStorage": {"role": "partner"},
+                "sessionStorage": {"tab": "private"},
+            },
+            "expires_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+        },
+        headers=editor_headers,
+    )
+    assert save_response.status_code == 200
+
+    run_response = client.post(
+        f"/runs/start-site/{site_id}",
+        json={"crawl_persona_id": persona["id"]},
+        headers=editor_headers,
+    )
+
+    assert run_response.status_code == 200
+    assert run_response.json()["persona"]["key"] == "auth"
+    assert browser_states
+    assert browser_states[0]["summary"]["local_storage_count"] == 1
+    assert browser_states[0]["summary"]["session_storage_count"] == 1
+    assert browser_states[0]["summary"]["values_exposed"] is False
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_create_profile_rejects_duplicate_canonical_scope():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()
