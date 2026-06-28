@@ -1426,6 +1426,85 @@ def test_project_run_uses_browser_client_for_persona_browser_storage(monkeypatch
     engine.dispose()
 
 
+def test_project_run_reports_browser_runtime_unavailable(monkeypatch):
+    from app.api import runs as runs_api
+    from app.crawler.browser_fetcher import BrowserCrawlerError
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="browser-runtime@test.local", role="editor", is_approved=True))
+        project = Project(name="Browser runtime", start_url="https://browser-runtime.test", allowed_domains_csv="browser-runtime.test")
+        db.add(project)
+        db.flush()
+        site = _add_primary_site(db, project)
+        db.commit()
+        project_id = project.id
+        site_id = site.id
+
+    class BrokenBrowserClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            raise BrowserCrawlerError(
+                "browser_runtime_unavailable",
+                "Не удалось запустить browser runtime для авторизованного обхода.",
+                technical_message="chromium executable missing",
+            )
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(runs_api, "BrowserPersonaClient", BrokenBrowserClient)
+
+    client = TestClient(app)
+    editor_headers = _auth_header("browser-runtime@test.local", role="editor")
+    create_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas",
+        json={"key": "auth", "label": "Авторизованный", "kind": "authenticated"},
+        headers=editor_headers,
+    )
+    assert create_response.status_code == 200
+    persona = _extract_success_data(create_response)
+
+    save_response = client.put(
+        f"/projects/{project_id}/sites/{site_id}/personas/{persona['id']}/session-bundle",
+        json={
+            "bundle": {"localStorage": {"role": "partner"}},
+            "expires_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+        },
+        headers=editor_headers,
+    )
+    assert save_response.status_code == 200
+
+    response = client.post(
+        f"/runs/start-site/{site_id}",
+        json={"crawl_persona_id": persona["id"]},
+        headers=editor_headers,
+    )
+
+    assert response.status_code == 502
+    payload = _extract_error_payload(response)
+    assert payload["error"]["code"] == "browser_runtime_unavailable"
+    assert payload["error"]["details"]["runtime"] == "browser"
+    assert "browser runtime" in payload["error"]["message"]
+    assert "chromium executable missing" not in str(payload)
+
+    with SessionLocal() as db:
+        run = db.query(Run).filter(Run.project_site_id == site_id).one()
+        assert run.status == "FAILED"
+        assert run.failure_code == "browser_runtime_unavailable"
+        assert "browser runtime" in run.failure_message
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_create_profile_rejects_duplicate_canonical_scope():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()

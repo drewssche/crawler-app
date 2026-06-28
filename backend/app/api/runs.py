@@ -36,7 +36,7 @@ from app.services.crawl_personas import get_default_persona
 from app.services.page_context import build_page_context
 from app.services.persona_secrets import decrypt_session_bundle
 from app.services.persona_browser_state import build_browser_persona_state
-from app.crawler.browser_fetcher import BrowserPersonaClient, browser_state_requires_runtime
+from app.crawler.browser_fetcher import BrowserCrawlerError, BrowserPersonaClient, browser_state_requires_runtime
 from app.crawler.renderer import (
     get_rendered_snapshot_metadata,
     render_page_snapshot,
@@ -294,6 +294,8 @@ def _persona_crawl_client(persona: CrawlPersona | None, *, document_url: str):
 
 
 def _classify_fetch_failure(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, BrowserCrawlerError):
+        return exc.code, exc.user_message
     message = str(exc).lower()
     if isinstance(exc, httpx.TimeoutException):
         return "timeout", "Сайт не ответил за отведенное время."
@@ -768,6 +770,30 @@ def _execute_site_run(
             )
             db.commit()
         raise
+    except BrowserCrawlerError as exc:
+        run.status = "FAILED"
+        run.failure_code = exc.code
+        run.failure_message = exc.user_message
+        run.finished_at = datetime.utcnow()
+        run.current_url = None
+        run.progress_updated_at = run.finished_at
+        _emit_run_completion_event(
+            db,
+            run=run,
+            site=site,
+            persona=persona,
+            actor_user_id=actor_user_id,
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": exc.code,
+                "message": exc.user_message,
+                "runtime": "browser",
+                "run_id": run.id,
+            },
+        ) from exc
     except Exception as exc:
         failure_code, failure_message = _classify_fetch_failure(exc)
         run.status = "FAILED"

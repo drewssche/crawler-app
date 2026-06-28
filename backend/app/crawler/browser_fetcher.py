@@ -3,7 +3,17 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
+
+
+class BrowserCrawlerError(RuntimeError):
+    def __init__(self, code: str, user_message: str, *, technical_message: str = ""):
+        super().__init__(technical_message or user_message)
+        self.code = code
+        self.user_message = user_message
+        self.technical_message = technical_message or user_message
 
 
 def _session_storage_init_script(session_storage: dict[str, list[dict[str, str]]]) -> str:
@@ -50,19 +60,30 @@ class BrowserPersonaClient:
 
     def __enter__(self):
         state = self.persona_browser_state or {}
-        self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.launch(headless=True)
-        self.context = self.browser.new_context(
-            viewport={"width": 1440, "height": 1000},
-            java_script_enabled=True,
-            ignore_https_errors=True,
-            storage_state=state.get("storage_state"),
-            extra_http_headers=state.get("extra_http_headers") or None,
-        )
-        session_script = _session_storage_init_script(state.get("session_storage") or {})
-        if session_script:
-            self.context.add_init_script(session_script)
-        return self
+        try:
+            self.playwright = sync_playwright().start()
+            self.browser = self.playwright.chromium.launch(headless=True)
+            self.context = self.browser.new_context(
+                viewport={"width": 1440, "height": 1000},
+                java_script_enabled=True,
+                ignore_https_errors=True,
+                storage_state=state.get("storage_state"),
+                extra_http_headers=state.get("extra_http_headers") or None,
+            )
+            session_script = _session_storage_init_script(state.get("session_storage") or {})
+            if session_script:
+                self.context.add_init_script(session_script)
+            return self
+        except Exception as exc:
+            self.__exit__(type(exc), exc, getattr(exc, "__traceback__", None))
+            raise BrowserCrawlerError(
+                "browser_runtime_unavailable",
+                (
+                    "Не удалось запустить browser runtime для авторизованного обхода. "
+                    "Проверьте Chromium/Playwright в backend-контейнере и пересоберите backend."
+                ),
+                technical_message=str(exc),
+            ) from exc
 
     def __exit__(self, exc_type, exc, tb):
         for resource in (self.context, self.browser):
@@ -84,7 +105,20 @@ class BrowserPersonaClient:
             raise RuntimeError("BrowserPersonaClient must be used as a context manager.")
         page = self.context.new_page()
         try:
-            response = page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+            try:
+                response = page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+            except PlaywrightTimeoutError as exc:
+                raise BrowserCrawlerError(
+                    "browser_navigation_timeout",
+                    "Browser-crawler не дождался загрузки страницы. Попробуйте повторить позже или проверьте скорость сайта.",
+                    technical_message=str(exc),
+                ) from exc
+            except PlaywrightError as exc:
+                raise BrowserCrawlerError(
+                    "browser_navigation_error",
+                    "Browser-crawler не смог открыть страницу в авторизованном контексте.",
+                    technical_message=str(exc),
+                ) from exc
             try:
                 page.wait_for_load_state("networkidle", timeout=3_000)
             except Exception:
