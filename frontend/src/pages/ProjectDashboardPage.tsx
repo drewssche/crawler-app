@@ -491,16 +491,45 @@ export default function ProjectDashboardPage() {
       apiGet<CrawlerReadiness>("/crawler/readiness")
         .then(setCrawlerReadiness)
         .catch(() => undefined);
+      if (hasPendingJob) {
+        apiGet<ActiveSiteJobResponse>(`/runs/active-job/by-site/${selectedSiteId}`)
+          .then((payload) => {
+            if (payload.active && payload.job?.status === "QUEUED") {
+              const job = payload.job;
+              const currentSite = sites.find((site) => site.id === selectedSiteId) || null;
+              setPendingCrawlerJobs((current) => ({
+                ...current,
+                [selectedSiteId]: {
+                  jobId: job.id,
+                  siteId: selectedSiteId,
+                  siteName: job.site?.name || currentSite?.name || "Сайт",
+                  status: job.status,
+                  personaLabel: job.persona?.label || currentSite?.default_persona?.label || "Гость",
+                  queuedAt: job.scheduled_at,
+                  source: "site",
+                },
+              }));
+            } else if (!payload.active) {
+              setPendingCrawlerJobs((current) => {
+                if (!current[selectedSiteId]) return current;
+                const next = { ...current };
+                delete next[selectedSiteId];
+                return next;
+              });
+            }
+          })
+          .catch(() => undefined);
+      }
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [selectedSiteId, runs, project, loadRuns, loadSiteSummaries, pendingCrawlerJobs]);
+  }, [selectedSiteId, runs, project, loadRuns, loadSiteSummaries, pendingCrawlerJobs, sites]);
 
   useEffect(() => {
     if (selectedSiteId === null) return;
     const pending = pendingCrawlerJobs[selectedSiteId];
     if (!pending) return;
     const matchingRun = runs.find((run) => run.id > 0 && run.project_site_id === selectedSiteId && hasRunStartedAfter(run, pending.queuedAt));
-    if (!matchingRun) return;
+    if (!matchingRun || (matchingRun.status !== "RUNNING" && matchingRun.status !== "FINISHED")) return;
     setPendingCrawlerJobs((current) => {
       const next = { ...current };
       delete next[selectedSiteId];

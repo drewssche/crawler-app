@@ -969,6 +969,103 @@ def test_crawler_readiness_recovers_expired_jobs_and_reports_stale_queue(monkeyp
     engine.dispose()
 
 
+def test_worker_retries_transient_job_failure_with_backoff(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    monkeypatch.setenv("CRAWLER_WORKER_ENABLED", "1")
+    monkeypatch.setenv("CRAWLER_JOB_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("CRAWLER_JOB_RETRY_BACKOFF_SECONDS", "0")
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="worker-retry@test.local", role="admin", is_admin=True, is_approved=True))
+        project = Project(name="Worker retry", start_url="https://worker-retry.test", allowed_domains_csv="worker-retry.test", max_pages=1)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        site = _add_primary_site(db, project)
+        db.commit()
+        site_id = site.id
+
+    calls = {"count": 0}
+
+    class FakeResponse:
+        def __init__(self, url: str):
+            self.url = url
+            self.status_code = 200
+            self.headers = {"content-type": "text/html; charset=utf-8"}
+            self.text = "<html><body><h1>retry ok</h1></body></html>"
+            self.history = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise httpx.TimeoutException("temporary timeout")
+            return FakeResponse(url)
+
+    monkeypatch.setattr(runs_api.httpx, "Client", FakeClient)
+    client = TestClient(app)
+    headers = _auth_header("worker-retry@test.local", role="admin")
+
+    queued = client.post(f"/runs/start-site/{site_id}", headers=headers)
+    assert queued.status_code == 200
+    job_id = queued.json()["job_id"]
+
+    first_tick = client.post("/runs/worker/tick", headers=headers)
+    assert first_tick.status_code == 200
+    first_payload = first_tick.json()
+    assert first_payload["processed"] is True
+    assert first_payload["job_id"] == job_id
+    assert first_payload["status"] == "QUEUED"
+    assert first_payload["failure_code"] == "timeout"
+    assert first_payload["retry"]["scheduled"] is True
+    assert first_payload["retry"]["attempts"] == 1
+    assert first_payload["retry"]["max_attempts"] == 2
+
+    with SessionLocal() as db:
+        job = db.get(CrawlerRunJob, job_id)
+        assert job.status == "QUEUED"
+        assert job.attempts == 1
+        assert job.failure_code == "timeout"
+        assert job.lease_expires_at is None
+        failed_run = db.get(Run, first_payload["run_id"])
+        assert failed_run.status == "FAILED"
+        assert failed_run.failure_code == "timeout"
+
+    second_tick = client.post("/runs/worker/tick", headers=headers)
+    assert second_tick.status_code == 200
+    second_payload = second_tick.json()
+    assert second_payload["processed"] is True
+    assert second_payload["job_id"] == job_id
+    assert second_payload["status"] == "SUCCEEDED"
+    assert second_payload["run_status"] == "FINISHED"
+
+    with SessionLocal() as db:
+        job = db.get(CrawlerRunJob, job_id)
+        assert job.status == "SUCCEEDED"
+        assert job.attempts == 2
+        assert job.run_id == second_payload["run_id"]
+        run = db.get(Run, second_payload["run_id"])
+        assert run.status == "FINISHED"
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeypatch):
     from app.api import project_sites as project_sites_api
     from app.api import runs as runs_api

@@ -92,11 +92,15 @@ Worker включён в `docker-compose.yml` явно:
 CRAWLER_WORKER_ENABLED=1
 CRAWLER_JOB_LEASE_SECONDS=300
 CRAWLER_JOB_STALE_QUEUED_SECONDS=600
+CRAWLER_JOB_MAX_ATTEMPTS=3
+CRAWLER_JOB_RETRY_BACKOFF_SECONDS=10,30,120
 ```
 
 В этом режиме `POST /runs/start-site/{site_id}` ставит задачу в очередь. Постоянный `worker` service автоматически забирает queued jobs. Ручной `POST /runs/worker/tick` остаётся debug/admin-инструментом для проверки одного шага worker execution.
 
 Для восстановления UI после перезагрузки страницы доступен `GET /runs/active-job/by-site/{site_id}`: он возвращает текущую active job сайта или `active=false`, если очередь/worker уже завершили работу.
+
+Worker автоматически переоткладывает transient job failures (`timeout`, `connection_error`, `request_error`, `http_error`, browser navigation/runtime errors) до лимита `CRAWLER_JOB_MAX_ATTEMPTS`. Ошибки настроек, сессии persona, scope и отключённого сайта не ретраятся автоматически.
 
 Dev stack с worker запускается обычной командой:
 

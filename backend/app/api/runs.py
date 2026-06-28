@@ -44,6 +44,7 @@ from app.services.crawler_jobs import (
     finish_job_from_run,
     heartbeat_job,
     mark_job_running,
+    reschedule_job_retry,
 )
 from app.services.page_context import build_page_context
 from app.services.persona_secrets import decrypt_session_bundle
@@ -391,6 +392,18 @@ def _classify_fetch_failure(exc: Exception) -> tuple[str, str]:
     if isinstance(exc, httpx.RequestError):
         return "request_error", "Не удалось получить ответ от сайта."
     return "unknown_error", "Во время прогона произошла непредвиденная ошибка."
+
+
+def _is_retryable_job_failure(failure_code: str | None) -> bool:
+    return (failure_code or "") in {
+        "timeout",
+        "connection_error",
+        "request_error",
+        "http_error",
+        "browser_navigation_timeout",
+        "browser_navigation_error",
+        "browser_runtime_unavailable",
+    }
 
 
 def _parse_allowed_domains(site: ProjectSite) -> set[str]:
@@ -1262,17 +1275,83 @@ def process_next_worker_job(db: Session) -> dict:
         run = _execute_site_run(db, site, persona=persona, actor_user_id=job.created_by_user_id, job=job)
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, dict) else {}
+        failure_code = detail.get("code") or f"http_{exc.status_code}"
+        failure_message = detail.get("message") or str(exc.detail)
         fail_job(
             db,
             job=job,
-            failure_code=detail.get("code") or f"http_{exc.status_code}",
-            failure_message=detail.get("message") or str(exc.detail),
+            failure_code=failure_code,
+            failure_message=failure_message,
         )
-        raise
+        retry_job = (
+            reschedule_job_retry(db, job=job, failure_code=failure_code, failure_message=failure_message)
+            if _is_retryable_job_failure(failure_code)
+            else None
+        )
+        if retry_job is not None:
+            return {
+                "ok": True,
+                "processed": True,
+                "job_id": retry_job.id,
+                "run_id": retry_job.run_id,
+                "project_site_id": site.id,
+                "status": retry_job.status,
+                "failure_code": retry_job.failure_code,
+                "failure_message": retry_job.failure_message,
+                "retry": {
+                    "scheduled": True,
+                    "attempts": retry_job.attempts,
+                    "max_attempts": retry_job.max_attempts,
+                    "scheduled_at": retry_job.scheduled_at.isoformat() if retry_job.scheduled_at else None,
+                },
+            }
+        return {
+            "ok": True,
+            "processed": True,
+            "job_id": job.id,
+            "run_id": job.run_id,
+            "project_site_id": site.id,
+            "status": job.status,
+            "failure_code": failure_code,
+            "failure_message": failure_message,
+            "retry": {"scheduled": False, "attempts": job.attempts, "max_attempts": job.max_attempts},
+        }
     except Exception as exc:
         failure_code, failure_message = _classify_fetch_failure(exc)
         fail_job(db, job=job, failure_code=failure_code, failure_message=failure_message)
-        raise
+        retry_job = (
+            reschedule_job_retry(db, job=job, failure_code=failure_code, failure_message=failure_message)
+            if _is_retryable_job_failure(failure_code)
+            else None
+        )
+        if retry_job is not None:
+            return {
+                "ok": True,
+                "processed": True,
+                "job_id": retry_job.id,
+                "run_id": retry_job.run_id,
+                "project_site_id": site.id,
+                "status": retry_job.status,
+                "failure_code": retry_job.failure_code,
+                "failure_message": retry_job.failure_message,
+                "retry": {
+                    "scheduled": True,
+                    "attempts": retry_job.attempts,
+                    "max_attempts": retry_job.max_attempts,
+                    "scheduled_at": retry_job.scheduled_at.isoformat() if retry_job.scheduled_at else None,
+                },
+            }
+        return {
+            "ok": True,
+            "processed": True,
+            "job_id": job.id,
+            "run_id": job.run_id,
+            "project_site_id": site.id,
+            "status": job.status,
+            "failure_code": failure_code,
+            "failure_message": failure_message,
+            "retry": {"scheduled": False, "attempts": job.attempts, "max_attempts": job.max_attempts},
+        }
 
     return {
         "ok": True,

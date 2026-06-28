@@ -17,6 +17,10 @@ WORKER_LEASE_OWNER = "crawler-worker"
 STALE_QUEUED_JOB_DEFAULT_SECONDS = 10 * 60
 STALE_QUEUED_JOB_MIN_SECONDS = 60
 STALE_QUEUED_JOB_MAX_SECONDS = 24 * 60 * 60
+JOB_MAX_ATTEMPTS_DEFAULT = 3
+JOB_MAX_ATTEMPTS_MIN = 1
+JOB_MAX_ATTEMPTS_MAX = 10
+JOB_RETRY_BACKOFF_DEFAULT_SECONDS = (10, 30, 120)
 
 
 def crawler_worker_enabled() -> bool:
@@ -45,6 +49,32 @@ def stale_queued_job_seconds() -> int:
     return max(STALE_QUEUED_JOB_MIN_SECONDS, min(value, STALE_QUEUED_JOB_MAX_SECONDS))
 
 
+def crawler_job_max_attempts() -> int:
+    raw = os.getenv("CRAWLER_JOB_MAX_ATTEMPTS", "").strip()
+    if not raw:
+        return JOB_MAX_ATTEMPTS_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        return JOB_MAX_ATTEMPTS_DEFAULT
+    return max(JOB_MAX_ATTEMPTS_MIN, min(value, JOB_MAX_ATTEMPTS_MAX))
+
+
+def crawler_job_retry_backoff_seconds(attempts_used: int) -> int:
+    raw = os.getenv("CRAWLER_JOB_RETRY_BACKOFF_SECONDS", "").strip()
+    values = []
+    if raw:
+        for item in raw.split(","):
+            try:
+                values.append(max(0, min(int(item.strip()), 24 * 60 * 60)))
+            except ValueError:
+                continue
+    if not values:
+        values = list(JOB_RETRY_BACKOFF_DEFAULT_SECONDS)
+    index = max(0, min(attempts_used - 1, len(values) - 1))
+    return values[index]
+
+
 def enqueue_site_run_job(
     db: Session,
     *,
@@ -61,6 +91,7 @@ def enqueue_site_run_job(
         created_by_user_id=actor_user_id,
         kind="site_run",
         status=status,
+        max_attempts=crawler_job_max_attempts(),
         scheduled_at=now,
         created_at=now,
         updated_at=now,
@@ -180,6 +211,35 @@ def fail_job(
     job.lease_expires_at = None
     job.updated_at = now
     db.commit()
+
+
+def reschedule_job_retry(
+    db: Session,
+    *,
+    job: CrawlerRunJob | None,
+    failure_code: str,
+    failure_message: str,
+    now: datetime | None = None,
+) -> CrawlerRunJob | None:
+    if job is None or job.status == "CANCELLED" or job.status == "SUCCEEDED":
+        return None
+    max_attempts = max(1, int(job.max_attempts or crawler_job_max_attempts()))
+    if int(job.attempts or 0) >= max_attempts:
+        return None
+    current_time = now or datetime.utcnow()
+    backoff_seconds = crawler_job_retry_backoff_seconds(int(job.attempts or 0))
+    job.status = "QUEUED"
+    job.failure_code = failure_code
+    job.failure_message = failure_message
+    job.scheduled_at = current_time + timedelta(seconds=backoff_seconds)
+    job.lease_owner = None
+    job.lease_expires_at = None
+    job.finished_at = None
+    job.heartbeat_at = current_time
+    job.updated_at = current_time
+    db.commit()
+    db.refresh(job)
+    return job
 
 
 def recover_expired_crawler_jobs(
