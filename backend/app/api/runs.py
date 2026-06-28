@@ -1660,6 +1660,36 @@ def list_runs(
     )
 
 
+@router.get("/active-jobs/by-project/{project_id}")
+def list_active_project_jobs(
+    project_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("data.view")),
+):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    sites = (
+        db.query(ProjectSite)
+        .filter(ProjectSite.project_id == project_id)
+        .order_by(ProjectSite.sort_order.asc(), ProjectSite.id.asc())
+        .all()
+    )
+    jobs = []
+    for site in sites:
+        job = find_active_site_job(db, project_site_id=site.id)
+        if job is None:
+            continue
+        persona = db.get(CrawlPersona, job.crawl_persona_id) if job.crawl_persona_id else None
+        jobs.append(_serialize_crawler_job(job, site=site, persona=persona))
+    return {
+        "active": len(jobs) > 0,
+        "project_id": project_id,
+        "total": len(jobs),
+        "jobs": jobs,
+    }
+
+
 @router.get("/by-site/{site_id}")
 def list_site_runs(
     site_id: int,

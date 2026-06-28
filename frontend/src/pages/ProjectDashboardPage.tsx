@@ -210,6 +210,13 @@ type ActiveSiteJobResponse = {
   };
 };
 
+type ActiveProjectJobsResponse = {
+  active: boolean;
+  project_id: number;
+  total: number;
+  jobs: NonNullable<ActiveSiteJobResponse["job"]>[];
+};
+
 type ProjectTab = "main" | "history" | "settings";
 type StructureViewFilter = "all" | "added" | "error";
 
@@ -293,6 +300,28 @@ function hasRunStartedAfter(run: ProjectRun, queuedAt: string): boolean {
   const queued = Date.parse(queuedAt);
   if (!Number.isFinite(runStarted) || !Number.isFinite(queued)) return false;
   return runStarted >= queued - 5000;
+}
+
+function pendingJobsFromActiveProjectJobs(
+  payload: ActiveProjectJobsResponse,
+  sites: ProjectSiteSummary[],
+): Record<number, PendingCrawlerJob> {
+  const sitesById = new Map(sites.map((site) => [site.id, site]));
+  const next: Record<number, PendingCrawlerJob> = {};
+  for (const job of payload.jobs || []) {
+    if (job.status !== "QUEUED") continue;
+    const site = sitesById.get(job.project_site_id);
+    next[job.project_site_id] = {
+      jobId: job.id,
+      siteId: job.project_site_id,
+      siteName: job.site?.name || site?.name || "Сайт",
+      status: job.status,
+      personaLabel: job.persona?.label || site?.default_persona?.label || "Гость",
+      queuedAt: job.scheduled_at,
+      source: "project",
+    };
+  }
+  return next;
 }
 
 export default function ProjectDashboardPage() {
@@ -416,11 +445,13 @@ export default function ProjectDashboardPage() {
     Promise.all([
       apiGet<ProjectDetails>(`/projects/${id}`),
       listProjectSiteSummaries(Number(id)),
+      apiGet<ActiveProjectJobsResponse>(`/runs/active-jobs/by-project/${id}`),
     ])
-      .then(([nextProject, nextSites]) => {
+      .then(([nextProject, nextSites, activeJobs]) => {
         setProject(nextProject);
         setSites(nextSites);
         setSelectedSiteId(nextSites.find((site) => site.is_enabled)?.id ?? nextSites[0]?.id ?? null);
+        setPendingCrawlerJobs(pendingJobsFromActiveProjectJobs(activeJobs, nextSites));
       })
       .catch((e) => setError(String(e)))
       .finally(() => {

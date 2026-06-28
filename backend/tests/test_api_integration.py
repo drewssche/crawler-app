@@ -1066,6 +1066,66 @@ def test_worker_retries_transient_job_failure_with_backoff(monkeypatch):
     engine.dispose()
 
 
+def test_project_active_jobs_lists_all_site_jobs(monkeypatch):
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    monkeypatch.setenv("CRAWLER_WORKER_ENABLED", "1")
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="project-jobs@test.local", role="admin", is_admin=True, is_approved=True))
+        project = Project(name="Project jobs", start_url="https://project-jobs-a.test", allowed_domains_csv="project-jobs-a.test", max_pages=1)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        first_site = _add_primary_site(db, project)
+        second_site = build_project_site(
+            project_id=project.id,
+            name="Second",
+            start_url="https://project-jobs-b.test/",
+            scope_mode="whole_site",
+            path_prefix="/",
+            role="peer",
+            allowed_domains_csv="project-jobs-b.test",
+            exclude_paths_csv="",
+            exclude_ext_csv="",
+            respect_robots=True,
+            max_pages=1,
+            concurrency=1,
+            is_enabled=True,
+            sort_order=1,
+        )
+        db.add(second_site)
+        db.commit()
+        project_id = project.id
+        first_site_id = first_site.id
+        second_site_id = second_site.id
+
+    client = TestClient(app)
+    headers = _auth_header("project-jobs@test.local", role="admin")
+
+    first = client.post(f"/runs/start-site/{first_site_id}", headers=headers)
+    second = client.post(f"/runs/start-site/{second_site_id}", headers=headers)
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    active = client.get(f"/runs/active-jobs/by-project/{project_id}", headers=headers)
+    assert active.status_code == 200
+    payload = active.json()
+    assert payload["active"] is True
+    assert payload["project_id"] == project_id
+    assert payload["total"] == 2
+    assert {job["project_site_id"] for job in payload["jobs"]} == {first_site_id, second_site_id}
+    assert {job["status"] for job in payload["jobs"]} == {"QUEUED"}
+    assert all(job["site"]["name"] for job in payload["jobs"])
+    assert all(job["persona"]["label"] == "Гость" for job in payload["jobs"])
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeypatch):
     from app.api import project_sites as project_sites_api
     from app.api import runs as runs_api

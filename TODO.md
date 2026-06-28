@@ -338,7 +338,8 @@
   - 9. UI worker execution indication MVP готов: Project Dashboard больше не имитирует `RUNNING` сразу после клика; queued start-site/start-project показываются как `В очереди worker`, pending job хранится локально, runs/readiness polling продолжается до появления real run, live-блок различает этапы `очередь → worker взял → crawler обходит`.
   - 10. Persistent active job status MVP готов: `GET /runs/active-job/by-site/{site_id}` возвращает active crawler job сайта с site/persona metadata или `active=false`; Project Dashboard восстанавливает queued pending-блок после reload без ожидания нового run.
   - 11. Bounded job retries/backoff MVP готов: worker не падает процессом на retryable job failure; transient failures переоткладываются в `QUEUED` до `CRAWLER_JOB_MAX_ATTEMPTS` с `CRAWLER_JOB_RETRY_BACKOFF_SECONDS`, non-retryable настройки/session/scope failures остаются terminal. Page retry/backoff уже был реализован отдельно.
-  - Следующее: более быстрый interrupt текущего fetch, project-level active jobs endpoint для восстановления очереди всех сайтов сразу, UI-пояснение retry attempt/backoff в pending-блоке.
+  - 12. Project-level active jobs recovery MVP готов: `GET /runs/active-jobs/by-project/{project_id}` возвращает все active jobs проекта с site/persona metadata; Project Dashboard восстанавливает queued pending jobs всех сайтов после reload, включая сценарий `Запустить все сайты`.
+  - Следующее: более быстрый interrupt текущего fetch, UI-пояснение retry attempt/backoff в pending-блоке, lightweight operations panel для worker/readiness.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -394,6 +395,12 @@
   - Что стало: `CrawlerRunJob` получает `max_attempts` из `CRAWLER_JOB_MAX_ATTEMPTS` (default 3), worker переоткладывает retryable failures в `QUEUED` с `CRAWLER_JOB_RETRY_BACKOFF_SECONDS` (default `10,30,120`) и продолжает работать. Retryable: timeout/connect/request/http_error/browser navigation/runtime. Non-retryable: persona session, scope, disabled site, no HTML/settings failures.
   - Как проверить: `pytest -q tests/test_api_integration.py::test_worker_retries_transient_job_failure_with_backoff`; первый tick возвращает `status=QUEUED/retry.scheduled=true`, второй tick завершает job успешно при backoff `0`.
   - Вклад в цели: transient сбой больше не требует ручного вмешательства и не валит worker process; retry остаётся ограниченным, чтобы не создавать лишнюю нагрузку на сайт (`high` operations reliability).
+
+- [x] **P0/P1 Operations UX/API — project-level active jobs restore**.
+  - Что было: `GET /runs/active-job/by-site/{site_id}` восстанавливал pending UI только для выбранного сайта; после reload при `Запустить все сайты` остальные queued jobs были видны backend, но не восстанавливались в Dashboard как pending.
+  - Что стало: добавлен `GET /runs/active-jobs/by-project/{project_id}` под `data.view`. Endpoint проходит по сайтам проекта, применяет active-job recovery, возвращает все active jobs с site/persona metadata. Project Dashboard на initial load восстанавливает queued pending jobs всех сайтов одним запросом.
+  - Как проверить: в worker-mode поставить два сайта в очередь, обновить проект; кнопка общего запуска показывает `В очереди: 2`, выбранный сайт показывает `Сайт ожидает worker / Job #...`. Backend targeted: `pytest -q tests/test_api_integration.py::test_project_active_jobs_lists_all_site_jobs`; frontend: `corepack pnpm --dir frontend exec tsc -b`.
+  - Вклад в цели: multi-site queue state стал устойчивым к reload и пригодным для production-like общего запуска (`high` friendly operations UX).
 
 - [x] **P0/P1 Operations reliability — feature-flagged worker execution tick**.
   - Что было: durable job boundary уже был в DB, но start API всё равно всегда выполнял run синхронно.
