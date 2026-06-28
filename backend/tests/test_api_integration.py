@@ -1507,6 +1507,95 @@ def test_project_run_reports_browser_runtime_unavailable(monkeypatch):
     engine.dispose()
 
 
+def test_browser_crawl_respects_browser_page_limit(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    monkeypatch.setenv("CRAWL_BROWSER_MAX_PAGES", "1")
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="browser-limit@test.local", role="editor", is_approved=True))
+        project = Project(
+            name="Browser limit",
+            start_url="https://browser-limit.test",
+            allowed_domains_csv="browser-limit.test",
+            max_pages=10,
+        )
+        db.add(project)
+        db.flush()
+        site = _add_primary_site(db, project)
+        db.commit()
+        project_id = project.id
+        site_id = site.id
+
+    class ForbiddenHttpClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("HTTP-only crawler must not be used when persona has browser storage")
+
+    class FakeBrowserResponse:
+        url = "https://browser-limit.test/"
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = '<html><body><a href="/a">A</a><a href="/b">B</a></body></html>'
+        history = []
+
+    class FakeBrowserClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            return FakeBrowserResponse()
+
+    monkeypatch.setattr(runs_api.httpx, "Client", ForbiddenHttpClient)
+    monkeypatch.setattr(runs_api, "BrowserPersonaClient", FakeBrowserClient)
+
+    client = TestClient(app)
+    editor_headers = _auth_header("browser-limit@test.local", role="editor")
+    create_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas",
+        json={"key": "auth", "label": "Авторизованный", "kind": "authenticated"},
+        headers=editor_headers,
+    )
+    assert create_response.status_code == 200
+    persona = _extract_success_data(create_response)
+    save_response = client.put(
+        f"/projects/{project_id}/sites/{site_id}/personas/{persona['id']}/session-bundle",
+        json={
+            "bundle": {"localStorage": {"role": "auth"}},
+            "expires_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+        },
+        headers=editor_headers,
+    )
+    assert save_response.status_code == 200
+
+    response = client.post(
+        f"/runs/start-site/{site_id}",
+        json={"crawl_persona_id": persona["id"]},
+        headers=editor_headers,
+    )
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        run = db.query(Run).filter(Run.project_site_id == site_id).one()
+        pages = db.query(Page).filter(Page.run_id == run.id).all()
+        assert run.crawl_runtime == "browser"
+        assert run.pages_total == 1
+        assert len(pages) == 1
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_create_profile_rejects_duplicate_canonical_scope():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()
@@ -2051,6 +2140,128 @@ def test_retry_problem_page_requires_active_persona_session(monkeypatch):
 
     with SessionLocal() as db:
         assert db.query(PageRetryAttempt).filter(PageRetryAttempt.page_id == page_id).count() == 0
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_retry_problem_page_uses_browser_runtime_for_browser_persona(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="retry-browser@test.local", role="editor", is_approved=True))
+        project = Project(
+            name="Retry browser",
+            start_url="https://retry-browser.test/",
+            allowed_domains_csv="retry-browser.test",
+        )
+        db.add(project)
+        db.flush()
+        site = _add_primary_site(db, project)
+        db.commit()
+        project_id = project.id
+        site_id = site.id
+
+    class ForbiddenHttpClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("retry must use browser client when persona has browser storage")
+
+    browser_urls = []
+
+    class FakeBrowserResponse:
+        url = "https://retry-browser.test/private"
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = "<html><body>restored in browser</body></html>"
+        history = []
+
+    class FakeBrowserClient:
+        def __init__(self, persona_browser_state, *args, **kwargs):
+            assert persona_browser_state["summary"]["local_storage_count"] == 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url: str):
+            browser_urls.append(url)
+            return FakeBrowserResponse()
+
+    monkeypatch.setattr(runs_api.httpx, "Client", ForbiddenHttpClient)
+    monkeypatch.setattr(runs_api, "BrowserPersonaClient", FakeBrowserClient)
+
+    client = TestClient(app)
+    editor_headers = _auth_header("retry-browser@test.local", role="editor")
+    create_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas",
+        json={"key": "auth", "label": "Авторизованный", "kind": "authenticated"},
+        headers=editor_headers,
+    )
+    assert create_response.status_code == 200
+    persona = _extract_success_data(create_response)
+    save_response = client.put(
+        f"/projects/{project_id}/sites/{site_id}/personas/{persona['id']}/session-bundle",
+        json={
+            "bundle": {"localStorage": {"role": "auth"}},
+            "expires_at": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+        },
+        headers=editor_headers,
+    )
+    assert save_response.status_code == 200
+
+    with SessionLocal() as db:
+        run = Run(
+            project_id=project_id,
+            project_site_id=site_id,
+            crawl_persona_id=persona["id"],
+            crawl_runtime="browser",
+            status="FINISHED",
+            started_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+            pages_total=1,
+            pages_changed=1,
+        )
+        db.add(run)
+        db.flush()
+        page = Page(
+            run_id=run.id,
+            url="https://retry-browser.test/private",
+            status_code=500,
+            final_url="https://retry-browser.test/private",
+            final_status_code=500,
+            content_type="text/html",
+            html="",
+            html_hash="",
+        )
+        db.add(page)
+        db.commit()
+        run_id = run.id
+        page_id = page.id
+
+    response = client.post(
+        f"/runs/{run_id}/retry-pages",
+        json={"urls": ["https://retry-browser.test/private"]},
+        headers=editor_headers,
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["crawl_runtime"] == "browser"
+    assert result["succeeded"] == 1
+    assert browser_urls == ["https://retry-browser.test/private"]
+
+    with SessionLocal() as db:
+        attempt = db.query(PageRetryAttempt).filter(PageRetryAttempt.page_id == page_id).one()
+        assert attempt.status == "SUCCEEDED"
+        assert attempt.final_status_code == 200
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

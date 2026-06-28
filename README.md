@@ -57,6 +57,8 @@ docker compose up -d --build backend frontend
 ```env
 CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_ENABLED=1
 CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS=0
+CRAWL_BROWSER_MAX_PAGES=500
+CRAWL_BROWSER_MAX_SECONDS=600
 ```
 
 Затем перезапустите backend:
@@ -66,6 +68,8 @@ docker compose up -d --build backend
 ```
 
 Если backend запущен в Docker без GUI/DISPLAY, видимое окно может не открыться. UI покажет это явно и предложит fallback: ручной импорт Playwright `storageState`.
+
+`CRAWL_BROWSER_MAX_PAGES` и `CRAWL_BROWSER_MAX_SECONDS` ограничивают дорогие browser-runs. Обычный HTTP-crawler продолжает использовать лимит сайта.
 
 ## Метрики
 

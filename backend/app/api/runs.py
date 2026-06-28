@@ -1,5 +1,6 @@
 import hashlib
 import math
+import os
 import time
 from collections import deque
 from contextlib import contextmanager
@@ -50,6 +51,8 @@ MAX_RETRY_PAGES = 50
 MAX_RETRY_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = (0, 5, 15)
 CRAWL_PROGRESS_BATCH_SIZE = 5
+BROWSER_CRAWL_MAX_PAGES_DEFAULT = 500
+BROWSER_CRAWL_MAX_SECONDS_DEFAULT = 600
 SESSION_HEADER_BLOCKLIST = {
     "connection",
     "content-length",
@@ -58,6 +61,17 @@ SESSION_HEADER_BLOCKLIST = {
     "transfer-encoding",
     "upgrade",
 }
+
+
+def _bounded_int_env(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(value, maximum))
 
 
 class RetryPagesIn(BaseModel):
@@ -536,7 +550,21 @@ def _execute_site_run(
 
     allowed_domains = _parse_allowed_domains(site)
     excluded_ext = _parse_excluded_ext(site)
-    max_pages = max(1, min(int(site.max_pages or 1), 10_000))
+    browser_max_pages = _bounded_int_env(
+        "CRAWL_BROWSER_MAX_PAGES",
+        default=BROWSER_CRAWL_MAX_PAGES_DEFAULT,
+        minimum=1,
+        maximum=10_000,
+    )
+    browser_max_seconds = _bounded_int_env(
+        "CRAWL_BROWSER_MAX_SECONDS",
+        default=BROWSER_CRAWL_MAX_SECONDS_DEFAULT,
+        minimum=30,
+        maximum=86_400,
+    )
+    requested_max_pages = max(1, min(int(site.max_pages or 1), 10_000))
+    max_pages = min(requested_max_pages, browser_max_pages) if run.crawl_runtime == "browser" else requested_max_pages
+    run_deadline = time.monotonic() + browser_max_seconds if run.crawl_runtime == "browser" else None
 
     try:
         with _persona_crawl_client(persona, document_url=site.start_url) as client:
@@ -547,6 +575,13 @@ def _execute_site_run(
             first_failure: tuple[str, str] | None = None
 
             while queue and len(pages) < max_pages:
+                if run_deadline is not None and time.monotonic() >= run_deadline:
+                    if first_failure is None:
+                        first_failure = (
+                            "browser_run_time_limit",
+                            "Browser-runtime достиг лимита времени для одного прогона. Уменьшите область сайта или запустите повторно позже.",
+                        )
+                    break
                 current = queue.popleft()
                 if current in visited:
                     continue
@@ -1068,70 +1103,81 @@ def retry_problem_pages(
     results = []
     retry_persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
     retry_session = _assert_persona_ready_for_run(retry_persona) if retry_persona else _persona_session_status(None)
-    with _persona_http_client(retry_persona) as client:
-        for page in problem_pages:
-            previous_attempts = int(attempt_counts.get(page.id, 0))
-            latest_attempt = latest_attempts.get(page.id)
-            if latest_attempt is not None and latest_attempt.status == "SUCCEEDED":
-                results.append(
-                    {
-                        "page_id": page.id,
-                        "url": page.url,
-                        "status": "SKIPPED",
-                        "attempt_no": previous_attempts,
-                        "message": "Последняя повторная проверка уже была успешной.",
-                    }
-                )
-                continue
-            if latest_attempt is not None:
-                backoff_seconds = RETRY_BACKOFF_SECONDS[min(previous_attempts, len(RETRY_BACKOFF_SECONDS) - 1)]
-                elapsed_seconds = (datetime.utcnow() - latest_attempt.finished_at).total_seconds()
-                if elapsed_seconds < backoff_seconds:
-                    wait_seconds = max(1, math.ceil(backoff_seconds - elapsed_seconds))
+    try:
+        with _persona_crawl_client(retry_persona, document_url=site.start_url) as client:
+            for page in problem_pages:
+                previous_attempts = int(attempt_counts.get(page.id, 0))
+                latest_attempt = latest_attempts.get(page.id)
+                if latest_attempt is not None and latest_attempt.status == "SUCCEEDED":
                     results.append(
                         {
                             "page_id": page.id,
                             "url": page.url,
                             "status": "SKIPPED",
                             "attempt_no": previous_attempts,
-                            "message": f"Повторите через {wait_seconds} сек., чтобы не создавать лишнюю нагрузку.",
+                            "message": "Последняя повторная проверка уже была успешной.",
                         }
                     )
                     continue
-            if previous_attempts >= MAX_RETRY_ATTEMPTS:
+                if latest_attempt is not None:
+                    backoff_seconds = RETRY_BACKOFF_SECONDS[min(previous_attempts, len(RETRY_BACKOFF_SECONDS) - 1)]
+                    elapsed_seconds = (datetime.utcnow() - latest_attempt.finished_at).total_seconds()
+                    if elapsed_seconds < backoff_seconds:
+                        wait_seconds = max(1, math.ceil(backoff_seconds - elapsed_seconds))
+                        results.append(
+                            {
+                                "page_id": page.id,
+                                "url": page.url,
+                                "status": "SKIPPED",
+                                "attempt_no": previous_attempts,
+                                "message": f"Повторите через {wait_seconds} сек., чтобы не создавать лишнюю нагрузку.",
+                            }
+                        )
+                        continue
+                if previous_attempts >= MAX_RETRY_ATTEMPTS:
+                    results.append(
+                        {
+                            "page_id": page.id,
+                            "url": page.url,
+                            "status": "SKIPPED",
+                            "attempt_no": previous_attempts,
+                            "message": "Достигнут лимит из 3 повторных попыток.",
+                        }
+                    )
+                    continue
+                attempt = _retry_page(
+                    client,
+                    run=run,
+                    page=page,
+                    site=site,
+                    attempt_no=previous_attempts + 1,
+                )
+                db.add(attempt)
+                db.flush()
                 results.append(
                     {
                         "page_id": page.id,
                         "url": page.url,
-                        "status": "SKIPPED",
-                        "attempt_no": previous_attempts,
-                        "message": "Достигнут лимит из 3 повторных попыток.",
+                        "status": attempt.status,
+                        "attempt_no": attempt.attempt_no,
+                        "status_code": attempt.status_code,
+                        "final_url": attempt.final_url,
+                        "final_status_code": attempt.final_status_code,
+                        "fetch_error_code": attempt.fetch_error_code,
+                        "fetch_error_message": attempt.fetch_error_message,
+                        "response_time_ms": attempt.response_time_ms,
                     }
                 )
-                continue
-            attempt = _retry_page(
-                client,
-                run=run,
-                page=page,
-                site=site,
-                attempt_no=previous_attempts + 1,
-            )
-            db.add(attempt)
-            db.flush()
-            results.append(
-                {
-                    "page_id": page.id,
-                    "url": page.url,
-                    "status": attempt.status,
-                    "attempt_no": attempt.attempt_no,
-                    "status_code": attempt.status_code,
-                    "final_url": attempt.final_url,
-                    "final_status_code": attempt.final_status_code,
-                    "fetch_error_code": attempt.fetch_error_code,
-                    "fetch_error_message": attempt.fetch_error_message,
-                    "response_time_ms": attempt.response_time_ms,
-                }
-            )
+    except BrowserCrawlerError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": exc.code,
+                "message": exc.user_message,
+                "runtime": "browser",
+                "run_id": run.id,
+            },
+        ) from exc
     db.commit()
 
     return {
@@ -1142,6 +1188,7 @@ def retry_problem_pages(
         "failed": sum(1 for row in results if row["status"] == "FAILED"),
         "skipped": sum(1 for row in results if row["status"] == "SKIPPED"),
         "crawl_persona_id": retry_persona.id if retry_persona else None,
+        "crawl_runtime": run.crawl_runtime,
         "persona": _persona_payload(retry_persona),
         "persona_label": retry_persona.label if retry_persona else None,
         "session_required": retry_session["session_required"],

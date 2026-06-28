@@ -183,6 +183,7 @@ export type RetryPagesResult = {
   failed: number;
   skipped: number;
   crawl_persona_id?: number | null;
+  crawl_runtime?: "http" | "browser" | string;
   persona?: {
     id: number;
     key: string;
