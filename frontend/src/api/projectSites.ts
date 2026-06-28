@@ -180,6 +180,9 @@ export type PersonaLoginCapture = {
   crawl_persona_id: number;
   project_site_id: number;
   status: "PENDING" | "COMPLETED" | "CANCELLED" | "EXPIRED" | string;
+  mode?: "manual_storage_state" | "managed_browser" | string;
+  managed_browser_available?: boolean;
+  managed_browser_status?: "planned" | "available" | "unavailable" | string;
   login_url: string;
   expires_at: string;
   completed_at: string | null;

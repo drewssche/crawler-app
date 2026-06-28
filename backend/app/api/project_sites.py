@@ -57,14 +57,19 @@ def _capture_payload(capture: CrawlPersonaLoginCapture) -> dict:
         "crawl_persona_id": capture.crawl_persona_id,
         "project_site_id": capture.project_site_id,
         "status": capture.status,
+        "mode": "manual_storage_state",
+        "managed_browser_available": False,
+        "managed_browser_status": "planned",
         "login_url": capture.login_url,
         "expires_at": capture.expires_at.isoformat() if capture.expires_at else None,
         "completed_at": capture.completed_at.isoformat() if capture.completed_at else None,
         "cancelled_at": capture.cancelled_at.isoformat() if capture.cancelled_at else None,
         "created_at": capture.created_at.isoformat() if capture.created_at else None,
         "instructions": (
-            "Откройте login_url, войдите как нужная роль, затем сохраните browser storage state. "
-            "Значения cookies/tokens не возвращаются в UI и после complete хранятся encrypted-at-rest."
+            "Сейчас доступен ручной безопасный режим: откройте login_url, войдите как нужная роль, "
+            "экспортируйте Playwright storageState и вставьте JSON. Автоматический захват из управляемого "
+            "браузера будет подключён следующим этапом. Значения cookies/tokens не возвращаются в UI и "
+            "после complete хранятся encrypted-at-rest."
         ),
     }
 

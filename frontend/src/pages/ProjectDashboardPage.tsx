@@ -587,6 +587,9 @@ export default function ProjectDashboardPage() {
     sitePersonas.find((persona) => persona.id === selectedRunPersonaId) ||
     selectedSite?.default_persona ||
     null;
+  const effectiveRunPersona =
+    selectedRunPersona ||
+    { id: 0, key: "guest", label: "Гость", kind: "guest", has_secrets: false };
   const domains = useMemo(
     () => parseDomains(selectedSite?.allowed_domains_csv || ""),
     [selectedSite?.allowed_domains_csv],
@@ -851,6 +854,14 @@ export default function ProjectDashboardPage() {
                       : ""}
                   </MetaText>
                 )}
+                <MetaText opacity={0.72}>
+                  Если ничего не менять, crawler пойдёт как {effectiveRunPersona.label}
+                  {effectiveRunPersona.kind === "guest"
+                    ? ": без cookies и авторизации."
+                    : effectiveRunPersona.has_secrets
+                      ? ": с подключённой сессией этой роли."
+                      : ": роль выбрана, но сессия ещё не подключена."}
+                </MetaText>
               </div>
               {hasRunning && (
                 <MetaText opacity={0.72}>

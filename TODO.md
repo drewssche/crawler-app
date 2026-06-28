@@ -216,9 +216,10 @@
   - staged implementation:
     1. guest context и статические безопасные headers — готово;
     2. encrypted cookie/session bundle с masked UI, expiry-status и запретом viewer читать secrets — backend + первый UI готовы; HTTP-crawler применяет cookies/headers из session bundle; `localStorage/sessionStorage` применяются на следующем browser-based crawler этапе;
-    3. browser-based login scenario для CSRF/dynamic forms — foundation готов: Playwright runtime умеет применять persona browser state (`cookies/localStorage/sessionStorage/headers`) в runtime consent audit; login capture API contract готов (`start/status/complete/cancel`, duplicate guard, auto-expire, без хранения secrets в capture-row); UI wizard MVP готов: `Открыть сайт и войти` + ручная вставка Playwright storageState; следующий шаг — автоматический захват storageState из управляемого браузера;
+    3. browser-based login scenario для CSRF/dynamic forms — foundation готов: Playwright runtime умеет применять persona browser state (`cookies/localStorage/sessionStorage/headers`) в runtime consent audit; login capture API contract готов (`start/status/complete/cancel`, duplicate guard, auto-expire, без хранения secrets в capture-row); UI wizard MVP готов: ручной режим `Открыть сайт для входа` + вставка Playwright storageState, API отдаёт capability-флаг `managed_browser_available=false`, UI честно объясняет, что автоматический захват ещё не включён; следующий шаг — автоматический захват storageState из управляемого браузера;
     4. MFA/manual checkpoint только как явный управляемый workflow;
   - согласованный UX:
+    - по умолчанию выбран `Гость`: crawler идёт без cookies и авторизации, пока пользователь явно не выбрал другую персону;
     - пользователь заранее создаёт персону в настройках сайта: `Гость`, `Авторизованный пользователь`, `Партнёр`, `Другая роль`;
     - для негостевой персоны подключает сессию один раз: MVP — ручная вставка cookies/localStorage/session JSON; позже — friendly flow `Открыть сайт и войти`, где пользователь логинится руками/проходит 2FA и сохраняет сессию;
     - при запуске сайта выбирает одну персону; bulk-run по нескольким персонам добавлять только после стабильного одиночного запуска;

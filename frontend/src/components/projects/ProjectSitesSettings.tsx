@@ -318,7 +318,7 @@ function ProjectSitePersonasPanel({
         [persona.id]: "{\n  \"cookies\": [],\n  \"origins\": []\n}",
       }));
       setCaptureExpiresAtByPersonaId((current) => ({ ...current, [persona.id]: "" }));
-      setMessage("Сеанс подключения создан. Откройте сайт, войдите нужной ролью и вставьте storageState JSON.");
+      setMessage("Сеанс подключения создан в ручном режиме: откройте сайт, войдите нужной ролью и вставьте Playwright storageState JSON.");
     } catch (err) {
       const activeCapture =
         err instanceof ApiError &&
@@ -427,7 +427,7 @@ function ProjectSitePersonasPanel({
 
       <Card variant="default" style={{ padding: 10 }}>
         <MetaText opacity={0.72}>
-          MVP: session bundle вставляется вручную JSON-объектом. Текущий HTTP-crawler применяет cookies/headers; localStorage/sessionStorage сохраняются для следующего browser-crawler этапа. Значения cookies и tokens не показываются после сохранения.
+          По умолчанию crawler запускается как Гость. Для роли с авторизацией подключите сессию: сейчас доступен ручной импорт JSON/storageState, а автоматический захват из управляемого браузера готовится следующим этапом. Значения cookies и tokens не показываются после сохранения.
         </MetaText>
       </Card>
 
@@ -569,20 +569,25 @@ function ProjectSitePersonasPanel({
                             <div>
                               <div style={{ fontWeight: 700 }}>Подключение через браузер</div>
                               <MetaText opacity={0.72}>
-                                Сеанс активен до {formatOperationalDateTime(capture.expires_at)}. Значения cookies/tokens не показываются после сохранения.
+                                Сеанс активен до {formatOperationalDateTime(capture.expires_at)}. Текущий режим — ручной импорт storageState.
                               </MetaText>
                             </div>
                           }
                           actions={<AccentPill tone="warning">{capture.status}</AccentPill>}
                         />
                         <MetaText opacity={0.74}>{capture.instructions}</MetaText>
+                        {!capture.managed_browser_available && (
+                          <StatusText tone="warning">
+                            Автоматический захват из управляемого браузера ещё не включён. Эта кнопка открывает сайт для входа, но сохранить сессию можно после ручной вставки Playwright storageState.
+                          </StatusText>
+                        )}
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <CardActionButton
                             variant="secondary"
                             compact
                             onClick={() => window.open(capture.login_url, "_blank", "noopener,noreferrer")}
                           >
-                            Открыть сайт и войти
+                            Открыть сайт для входа
                           </CardActionButton>
                           <MetaText opacity={0.7} style={{ wordBreak: "break-word" }}>
                             {capture.login_url}
@@ -608,7 +613,7 @@ function ProjectSitePersonasPanel({
                           />
                         </label>
                         <MetaText opacity={0.68}>
-                          MVP: после входа вставьте Playwright storageState. Полностью автоматический захват из встроенного браузера будет следующим расширением.
+                          Как получить storageState: откройте сайт, войдите нужной ролью и экспортируйте Playwright storageState из браузерного сценария. После сохранения crawler сможет применять cookies/localStorage/sessionStorage server-side, а секретные значения останутся скрытыми.
                         </MetaText>
                         <CardFooterActions>
                           <CardActionButton
@@ -650,7 +655,7 @@ function ProjectSitePersonasPanel({
                         onClick={() => void handleStartLoginCapture(persona)}
                         title={capture ? "Сначала завершите или отмените текущий сеанс подключения." : undefined}
                       >
-                        Открыть сайт и войти
+                        Подключить через браузер
                       </CardActionButton>
                       {persona.has_secrets && (
                       <CardActionButton
