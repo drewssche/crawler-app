@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
+from sqlalchemy.orm import Session
 
 from app.core.api_response import get_request_id, success_response_payload
 from app.core.export_utils import csv_attachment_response, xlsx_attachment_response
@@ -8,6 +9,8 @@ from app.core.metrics_export import flatten_metric_rows
 from app.core.monitoring_cache import get_metrics_snapshot_ttl_seconds, get_or_set_cached
 from app.core.security import require_permission
 from app.db.models.user import User
+from app.db.session import get_db
+from app.services.crawler_readiness import build_crawler_readiness
 
 router = APIRouter(tags=["system"])
 
@@ -15,6 +18,15 @@ router = APIRouter(tags=["system"])
 @router.get("/health")
 def health(request: Request):
     return {"ok": True, "status": "ok", "request_id": get_request_id(request)}
+
+
+@router.get("/crawler/readiness")
+def crawler_readiness(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("audit.view")),
+):
+    return success_response_payload(request, data=build_crawler_readiness(db))
 
 
 @router.get("/metrics")

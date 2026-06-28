@@ -329,7 +329,8 @@
   Celery boundary, lease/heartbeat, bounded retries/backoff, timeout/cancel, health/readiness; Telegram digest только после достоверных signals.
   - 1. Stale recovery MVP готов: `RUNNING` run без progress heartbeat дольше `CRAWL_STALE_RUNNING_SECONDS` автоматически помечается `FAILED/stale_run_recovered` при чтении истории или перед новым запуском сайта/проекта; это снимает вечную блокировку site-run после падения процесса.
   - 2. Cancel API MVP готов: `POST /runs/{run_id}/cancel` переводит активный run в `CANCEL_REQUESTED`; crawler проверяет флаг между страницами и завершает run как `CANCELLED`. До финального `CANCELLED` сайт считается занятым, retry недоступен.
-  - Следующее: durable worker/lease boundary, более быстрый interrupt текущего fetch, health/readiness для очереди.
+  - 3. Crawler readiness MVP готов: `GET /crawler/readiness` показывает sync-mode, worker disabled, active/cancel-requested runs, stale recovery threshold/recovered count и sample активных runs для admin/root-admin.
+  - Следующее: durable worker/lease boundary, более быстрый interrupt текущего fetch, readiness для очереди/worker после появления worker.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -349,6 +350,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P0/P1 Operations reliability — crawler readiness endpoint MVP**.
+  - Что было: оператор видел общий `/health`, но не видел состояние crawler: есть ли активные runs, отменяемые runs, stale recovery и какой режим исполнения включён.
+  - Что стало: добавлен `GET /crawler/readiness` под `audit.view`. Endpoint возвращает `ready/status`, текущий mode `synchronous`, worker disabled с пояснением, active counts/sample и stale recovery threshold/recovered count. При чтении readiness stale runs восстанавливаются тем же server-first механизмом.
+  - Как проверить: admin/root-admin вызывает `/crawler/readiness`; viewer получает `403`; старый `RUNNING` run становится `FAILED/stale_run_recovered`, свежий active run остаётся в sample.
+  - Вклад в цели: появился операционный источник истины перед worker-boundary (`high` operations value), без ложного утверждения, что очередь уже существует.
 
 - [x] **P0/P1 Operations reliability — cancel active run API MVP**.
   - Что было: пользователь/оператор не мог явно остановить активный crawler run; приходилось ждать завершения или stale recovery.

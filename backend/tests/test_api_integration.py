@@ -490,6 +490,83 @@ def test_http_errors_metric_includes_404_status():
     engine.dispose()
 
 
+def test_crawler_readiness_reports_active_runs_and_recovers_stale(monkeypatch):
+    monkeypatch.setenv("CRAWL_STALE_RUNNING_SECONDS", "60")
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                _make_user(email="crawler-ready-admin@test.local", role="admin", is_admin=True, is_approved=True),
+                _make_user(email="crawler-ready-viewer@test.local", role="viewer", is_approved=True),
+            ]
+        )
+        fresh_project = Project(name="Fresh", start_url="https://fresh.test", allowed_domains_csv="fresh.test")
+        stale_project = Project(name="Stale readiness", start_url="https://stale-ready.test", allowed_domains_csv="stale-ready.test")
+        db.add_all([fresh_project, stale_project])
+        db.commit()
+        db.refresh(fresh_project)
+        db.refresh(stale_project)
+        fresh_site = _add_primary_site(db, fresh_project)
+        stale_site = _add_primary_site(db, stale_project)
+        fresh_run = Run(
+            project_id=fresh_project.id,
+            project_site_id=fresh_site.id,
+            status="RUNNING",
+            started_at=datetime.utcnow(),
+            progress_updated_at=datetime.utcnow(),
+            current_url="https://fresh.test/",
+        )
+        stale_run = Run(
+            project_id=stale_project.id,
+            project_site_id=stale_site.id,
+            status="RUNNING",
+            started_at=datetime.utcnow() - timedelta(hours=2),
+            progress_updated_at=datetime.utcnow() - timedelta(hours=2),
+            current_url="https://stale-ready.test/hanging",
+        )
+        db.add_all([fresh_run, stale_run])
+        db.commit()
+        fresh_run_id = fresh_run.id
+        stale_run_id = stale_run.id
+
+    client = TestClient(app)
+    viewer = client.get(
+        "/crawler/readiness",
+        headers=_auth_header("crawler-ready-viewer@test.local", role="viewer"),
+    )
+    assert viewer.status_code == 403
+
+    admin = client.get(
+        "/crawler/readiness",
+        headers=_auth_header("crawler-ready-admin@test.local", role="admin"),
+    )
+    assert admin.status_code == 200
+    data = _extract_success_data(admin)
+    assert data["ready"] is True
+    assert data["mode"] == "synchronous"
+    assert data["worker"]["enabled"] is False
+    assert data["stale_recovery"]["threshold_seconds"] == 60
+    assert data["stale_recovery"]["recovered_runs"] == 1
+    assert data["active"]["running"] == 1
+    assert data["active"]["cancel_requested"] == 0
+    assert [row["run_id"] for row in data["active"]["sample"]] == [fresh_run_id]
+    assert data["active"]["sample"][0]["current_url"] == "https://fresh.test/"
+
+    with SessionLocal() as db:
+        recovered = db.get(Run, stale_run_id)
+        assert recovered.status == "FAILED"
+        assert recovered.failure_code == "stale_run_recovered"
+        assert recovered.current_url is None
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_projects_summary_returns_last_run_and_totals():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()

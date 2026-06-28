@@ -76,6 +76,8 @@ docker compose up -d --build backend
 
 Активный прогон можно остановить через `POST /runs/{run_id}/cancel`. В текущей синхронной архитектуре это не прерывает уже начатый HTTP-запрос мгновенно: backend ставит `CANCEL_REQUESTED`, а crawler завершает текущую страницу и переводит run в `CANCELLED` перед следующим шагом.
 
+Операционная диагностика crawler доступна admin/root-admin через `GET /crawler/readiness`: режим исполнения, активные runs, ожидание отмены, stale recovery и порог `CRAWL_STALE_RUNNING_SECONDS`.
+
 ## Метрики
 
 - JSON метрики backend: `GET /metrics`
