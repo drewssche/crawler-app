@@ -87,7 +87,22 @@ CRAWLER_WORKER_ENABLED=1
 CRAWLER_JOB_LEASE_SECONDS=300
 ```
 
-В этом режиме `POST /runs/start-site/{site_id}` ставит задачу в очередь, а `POST /runs/worker/tick` забирает и выполняет одну queued job. Это ещё не continuous daemon: постоянный worker process будет следующим этапом.
+В этом режиме `POST /runs/start-site/{site_id}` ставит задачу в очередь, а `POST /runs/worker/tick` забирает и выполняет одну queued job.
+
+Для постоянной обработки очереди запустите отдельный worker process:
+
+```bash
+docker compose exec backend env CRAWLER_WORKER_ENABLED=1 PYTHONPATH=/app python -m app.worker.crawler_worker
+```
+
+Опционально:
+
+```env
+CRAWLER_WORKER_POLL_SECONDS=2
+CRAWLER_WORKER_TICK_LIMIT=0
+```
+
+`CRAWLER_WORKER_TICK_LIMIT=0` означает работать до SIGTERM/SIGINT.
 
 ## Метрики
 

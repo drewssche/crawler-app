@@ -1180,19 +1180,7 @@ def start_project_sites(
     }
 
 
-@router.post("/worker/tick")
-def run_worker_tick(
-    db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("crawler.run")),
-):
-    if not crawler_worker_enabled():
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "crawler_worker_disabled",
-                "message": "Crawler worker execution выключен. Установите CRAWLER_WORKER_ENABLED=1 для обработки queued jobs.",
-            },
-        )
+def process_next_worker_job(db: Session) -> dict:
     job = claim_next_queued_job(db)
     if job is None:
         return {
@@ -1246,6 +1234,22 @@ def run_worker_tick(
         "failure_code": run.failure_code,
         "failure_message": run.failure_message,
     }
+
+
+@router.post("/worker/tick")
+def run_worker_tick(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("crawler.run")),
+):
+    if not crawler_worker_enabled():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "crawler_worker_disabled",
+                "message": "Crawler worker execution выключен. Установите CRAWLER_WORKER_ENABLED=1 для обработки queued jobs.",
+            },
+        )
+    return process_next_worker_job(db)
 
 
 @router.post("/{run_id}/retry-pages")

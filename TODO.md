@@ -332,7 +332,8 @@
   - 3. Crawler readiness MVP готов: `GET /crawler/readiness` показывает sync-mode, worker disabled, active/cancel-requested runs, stale recovery threshold/recovered count и sample активных runs для admin/root-admin.
   - 4. Durable job/lease boundary foundation готов: `crawler_run_jobs` фиксирует site-run jobs, sync runner берёт lease `sync-backend`, пишет heartbeat и закрывает job как `SUCCEEDED/FAILED/CANCELLED`; readiness показывает job counters/sample. Execution пока остаётся synchronous.
   - 5. Worker execution tick MVP готов: при `CRAWLER_WORKER_ENABLED=1` start API ставит jobs в `QUEUED`, `POST /runs/worker/tick` claim-ит одну queued job, берёт lease `crawler-worker` и выполняет её через общий runner. Это manual tick, ещё не continuous daemon.
-  - Следующее: continuous worker process/loop, более быстрый interrupt текущего fetch, readiness для lease expiry/stale queued jobs.
+  - 6. Continuous worker loop MVP готов: `python -m app.worker.crawler_worker` обрабатывает queued jobs в отдельном процессе до SIGTERM/SIGINT; `CRAWLER_WORKER_POLL_SECONDS` задаёт polling, `CRAWLER_WORKER_TICK_LIMIT` нужен для bounded/dev runs.
+  - Следующее: docker-compose worker service, более быстрый interrupt текущего fetch, readiness для lease expiry/stale queued jobs.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -352,6 +353,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P0/P1 Operations reliability — continuous crawler worker loop MVP**.
+  - Что было: worker execution был доступен только как ручной `POST /runs/worker/tick`, то есть без постоянного обработчика очереди.
+  - Что стало: добавлен запускаемый процесс `python -m app.worker.crawler_worker`. Он требует `CRAWLER_WORKER_ENABLED=1`, claim-ит queued jobs через общий worker-step, логирует обработку, ждёт `CRAWLER_WORKER_POLL_SECONDS` при пустой очереди и корректно останавливается по SIGTERM/SIGINT. `CRAWLER_WORKER_TICK_LIMIT` позволяет bounded/dev запуск.
+  - Как проверить: `docker compose exec backend env CRAWLER_WORKER_ENABLED=1 CRAWLER_WORKER_TICK_LIMIT=1 PYTHONPATH=/app python -m app.worker.crawler_worker`.
+  - Вклад в цели: появился реальный long-running worker entrypoint без включения нового сервиса по умолчанию (`high` operations architecture).
 
 - [x] **P0/P1 Operations reliability — feature-flagged worker execution tick**.
   - Что было: durable job boundary уже был в DB, но start API всё равно всегда выполнял run синхронно.
