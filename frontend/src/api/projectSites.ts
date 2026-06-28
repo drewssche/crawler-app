@@ -196,6 +196,24 @@ export type PersonaLoginCaptureCompleteResult = {
   persona: CrawlPersonaSummary;
 };
 
+export type PersonaManagedLoginSession = {
+  session_id: string;
+  status: "OPENING" | "WAITING_FOR_LOGIN" | "CAPTURED" | "CANCELLED" | "EXPIRED" | "FAILED" | string;
+  login_url: string;
+  final_url: string | null;
+  page_title: string | null;
+  created_at: string;
+  expires_at: string;
+  error_message: string | null;
+  values_exposed: false;
+  instructions: string;
+};
+
+export type PersonaManagedLoginSessionStartResult = {
+  capture: PersonaLoginCapture;
+  session: PersonaManagedLoginSession;
+};
+
 export function createProjectSitePersonaLoginCapture(
   projectId: number,
   siteId: number,
@@ -245,6 +263,57 @@ export function captureProjectSitePersonaManagedLoginState(
   return apiPost<PersonaLoginCaptureCompleteResult>(
     `/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures/${captureId}/capture-managed`,
     input,
+  );
+}
+
+export function startProjectSitePersonaManagedLoginSession(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+  captureId: number,
+  input: { ttl_minutes?: number } = {},
+): Promise<PersonaManagedLoginSessionStartResult> {
+  return apiPost<PersonaManagedLoginSessionStartResult>(
+    `/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures/${captureId}/managed-session`,
+    input,
+  );
+}
+
+export function getProjectSitePersonaManagedLoginSession(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+  captureId: number,
+  sessionId: string,
+): Promise<PersonaManagedLoginSession> {
+  return apiGet<PersonaManagedLoginSession>(
+    `/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures/${captureId}/managed-session/${encodeURIComponent(sessionId)}`,
+  );
+}
+
+export function saveProjectSitePersonaManagedLoginSession(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+  captureId: number,
+  input: { session_id: string; expires_at?: string | null },
+): Promise<PersonaLoginCaptureCompleteResult> {
+  return apiPost<PersonaLoginCaptureCompleteResult>(
+    `/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures/${captureId}/managed-session/save`,
+    input,
+  );
+}
+
+export function cancelProjectSitePersonaManagedLoginSession(
+  projectId: number,
+  siteId: number,
+  personaId: number,
+  captureId: number,
+  sessionId: string,
+): Promise<PersonaManagedLoginSession> {
+  return apiPost<PersonaManagedLoginSession>(
+    `/projects/${projectId}/sites/${siteId}/personas/${personaId}/login-captures/${captureId}/managed-session/${encodeURIComponent(sessionId)}/cancel`,
+    {},
   );
 }
 

@@ -11,8 +11,12 @@ from app.core.api_response import success_response_payload
 from app.core.security import require_permission
 from app.crawler.login_capture import (
     ManagedLoginCaptureUnavailable,
+    cancel_managed_login_session,
+    capture_managed_login_session_state,
     capture_managed_login_state,
+    get_managed_login_session,
     managed_login_capture_available,
+    start_managed_login_session,
 )
 from app.db.models.project import Project
 from app.db.models.crawl_persona import CrawlPersona
@@ -61,6 +65,15 @@ class PersonaLoginCaptureManagedComplete(BaseModel):
     expires_at: datetime | None = None
 
 
+class PersonaLoginCaptureManagedSessionCreate(BaseModel):
+    ttl_minutes: int = Field(default=30, ge=5, le=180)
+
+
+class PersonaLoginCaptureManagedSessionSave(BaseModel):
+    session_id: str = Field(min_length=12, max_length=160)
+    expires_at: datetime | None = None
+
+
 def _capture_payload(capture: CrawlPersonaLoginCapture) -> dict:
     managed_available = managed_login_capture_available()
     return {
@@ -77,10 +90,10 @@ def _capture_payload(capture: CrawlPersonaLoginCapture) -> dict:
         "cancelled_at": capture.cancelled_at.isoformat() if capture.cancelled_at else None,
         "created_at": capture.created_at.isoformat() if capture.created_at else None,
         "instructions": (
-            "Сейчас доступен ручной безопасный режим: откройте login_url, войдите как нужная роль, "
-            "экспортируйте Playwright storageState и вставьте JSON. Автоматический захват из управляемого "
-            "браузера будет подключён следующим этапом. Значения cookies/tokens не возвращаются в UI и "
-            "после complete хранятся encrypted-at-rest."
+            "Откройте login_url, войдите как нужная роль и сохраните сессию. "
+            "Если managed browser включён, backend заберёт storageState из управляемой сессии; "
+            "иначе используйте ручную вставку Playwright storageState. Значения cookies/tokens не возвращаются в UI "
+            "и после complete хранятся encrypted-at-rest."
         ),
     }
 
@@ -305,6 +318,41 @@ def _complete_login_capture_with_bundle(
     persona.has_secrets = True
     capture.status = "COMPLETED"
     capture.completed_at = datetime.utcnow()
+
+
+def _managed_capture_complete_payload(
+    db: Session,
+    *,
+    request: Request,
+    capture: CrawlPersonaLoginCapture,
+    persona: CrawlPersona,
+    result,
+    expires_at: datetime | None,
+) -> dict:
+    _complete_login_capture_with_bundle(
+        db,
+        capture=capture,
+        persona=persona,
+        bundle=_managed_browser_capture_bundle(
+            result.storage_state,
+            result={
+                "final_url": result.final_url,
+                "page_title": result.page_title,
+                "values_exposed": False,
+            },
+        ),
+        expires_at=expires_at,
+    )
+    db.commit()
+    db.refresh(persona)
+    db.refresh(capture)
+    return success_response_payload(
+        request,
+        data={
+            "capture": _capture_payload(capture),
+            "persona": _persona_payload(persona),
+        },
+    )
 
 
 def _scope_conflict() -> HTTPException:
@@ -734,30 +782,147 @@ def capture_project_site_persona_login_managed_state(
                 ),
             },
         ) from exc
-    _complete_login_capture_with_bundle(
+    return _managed_capture_complete_payload(
         db,
+        request=request,
         capture=capture,
         persona=persona,
-        bundle=_managed_browser_capture_bundle(
-            result.storage_state,
-            result={
-                "final_url": result.final_url,
-                "page_title": result.page_title,
-                "values_exposed": False,
-            },
-        ),
+        result=result,
         expires_at=payload.expires_at,
     )
-    db.commit()
-    db.refresh(persona)
-    db.refresh(capture)
-    return success_response_payload(
-        request,
-        data={
-            "capture": _capture_payload(capture),
-            "persona": _persona_payload(persona),
-        },
+
+
+@router.post("/{site_id}/personas/{persona_id}/login-captures/{capture_id}/managed-session")
+def start_project_site_persona_login_managed_session(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    capture_id: int,
+    payload: PersonaLoginCaptureManagedSessionCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    capture = _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
+    try:
+        session = start_managed_login_session(capture.login_url, ttl_minutes=payload.ttl_minutes)
+    except ManagedLoginCaptureUnavailable as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "managed_login_capture_unavailable",
+                "message": (
+                    "Управляемая browser-сессия ещё не включена на backend. "
+                    "Используйте ручную вставку Playwright storageState."
+                ),
+            },
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "managed_login_session_failed",
+                "message": "Не удалось открыть управляемую browser-сессию для входа.",
+            },
+        ) from exc
+    return success_response_payload(request, data={"capture": _capture_payload(capture), "session": session})
+
+
+@router.get("/{site_id}/personas/{persona_id}/login-captures/{capture_id}/managed-session/{session_id}")
+def get_project_site_persona_login_managed_session(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    capture_id: int,
+    session_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
+    try:
+        session = get_managed_login_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "managed_login_session_not_found",
+                "message": "Управляемая browser-сессия не найдена или уже истекла.",
+            },
+        ) from exc
+    return success_response_payload(request, data=session)
+
+
+@router.post("/{site_id}/personas/{persona_id}/login-captures/{capture_id}/managed-session/save")
+def save_project_site_persona_login_managed_session(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    capture_id: int,
+    payload: PersonaLoginCaptureManagedSessionSave,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    capture = _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
+    persona = db.get(CrawlPersona, persona_id)
+    if persona is None or persona.project_site_id != site_id:
+        raise HTTPException(status_code=404, detail="Crawl persona not found")
+    try:
+        result = capture_managed_login_session_state(payload.session_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "managed_login_session_not_found",
+                "message": "Управляемая browser-сессия не найдена или уже истекла.",
+            },
+        ) from exc
+    except ManagedLoginCaptureUnavailable as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "managed_login_capture_unavailable",
+                "message": "Управляемая browser-сессия уже не активна. Запустите подключение заново.",
+            },
+        ) from exc
+    return _managed_capture_complete_payload(
+        db,
+        request=request,
+        capture=capture,
+        persona=persona,
+        result=result,
+        expires_at=payload.expires_at,
     )
+
+
+@router.post("/{site_id}/personas/{persona_id}/login-captures/{capture_id}/managed-session/{session_id}/cancel")
+def cancel_project_site_persona_login_managed_session(
+    project_id: int,
+    site_id: int,
+    persona_id: int,
+    capture_id: int,
+    session_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("projects.edit")),
+):
+    _get_site_or_404(db, project_id, site_id)
+    _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
+    try:
+        session = cancel_managed_login_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "managed_login_session_not_found",
+                "message": "Управляемая browser-сессия не найдена или уже истекла.",
+            },
+        ) from exc
+    return success_response_payload(request, data=session)
 
 
 @router.post("/{site_id}/personas/{persona_id}/login-captures/{capture_id}/cancel")

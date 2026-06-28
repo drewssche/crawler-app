@@ -933,6 +933,91 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     assert "managed-secret" not in str(managed_completed)
     assert "managed-role-secret" not in str(managed_completed)
 
+    interactive_persona_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas",
+        json={"key": "interactive", "label": "Interactive user", "kind": "authenticated"},
+        headers=editor_headers,
+    )
+    assert interactive_persona_response.status_code == 200
+    interactive_persona = _extract_success_data(interactive_persona_response)
+    interactive_capture_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{interactive_persona['id']}/login-captures",
+        json={"login_url": "https://persona.test/login"},
+        headers=editor_headers,
+    )
+    assert interactive_capture_response.status_code == 200
+    interactive_capture = _extract_success_data(interactive_capture_response)
+
+    interactive_unavailable = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{interactive_persona['id']}/login-captures/{interactive_capture['id']}/managed-session",
+        json={"ttl_minutes": 30},
+        headers=editor_headers,
+    )
+    assert interactive_unavailable.status_code == 409
+    assert _extract_error_payload(interactive_unavailable)["error"]["code"] == "managed_login_capture_unavailable"
+
+    fake_session = {
+        "session_id": "session_test_123456",
+        "status": "WAITING_FOR_LOGIN",
+        "login_url": "https://persona.test/login",
+        "final_url": "https://persona.test/account",
+        "page_title": "Account",
+        "created_at": datetime.utcnow().isoformat(),
+        "expires_at": (datetime.utcnow() + timedelta(minutes=30)).isoformat(),
+        "error_message": None,
+        "values_exposed": False,
+        "instructions": "Login manually.",
+    }
+    monkeypatch.setattr(project_sites_api, "start_managed_login_session", lambda login_url, ttl_minutes=30: fake_session)
+    monkeypatch.setattr(project_sites_api, "get_managed_login_session", lambda session_id: fake_session)
+    monkeypatch.setattr(
+        project_sites_api,
+        "capture_managed_login_session_state",
+        lambda session_id: SimpleNamespace(
+            storage_state={
+                "cookies": [{"name": "interactive_sid", "value": "interactive-secret", "domain": "persona.test", "path": "/"}],
+                "origins": [
+                    {
+                        "origin": "https://persona.test",
+                        "localStorage": [{"name": "role", "value": "interactive-role-secret"}],
+                    }
+                ],
+            },
+            final_url="https://persona.test/account",
+            page_title="Account",
+        ),
+    )
+    interactive_session_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{interactive_persona['id']}/login-captures/{interactive_capture['id']}/managed-session",
+        json={"ttl_minutes": 30},
+        headers=editor_headers,
+    )
+    assert interactive_session_response.status_code == 200
+    interactive_session = _extract_success_data(interactive_session_response)
+    assert interactive_session["session"]["session_id"] == "session_test_123456"
+    assert interactive_session["session"]["values_exposed"] is False
+
+    interactive_status_response = client.get(
+        f"/projects/{project_id}/sites/{site_id}/personas/{interactive_persona['id']}/login-captures/{interactive_capture['id']}/managed-session/session_test_123456",
+        headers=editor_headers,
+    )
+    assert interactive_status_response.status_code == 200
+    assert _extract_success_data(interactive_status_response)["status"] == "WAITING_FOR_LOGIN"
+
+    interactive_save_response = client.post(
+        f"/projects/{project_id}/sites/{site_id}/personas/{interactive_persona['id']}/login-captures/{interactive_capture['id']}/managed-session/save",
+        json={"session_id": "session_test_123456"},
+        headers=editor_headers,
+    )
+    assert interactive_save_response.status_code == 200
+    interactive_saved = _extract_success_data(interactive_save_response)
+    assert interactive_saved["capture"]["status"] == "COMPLETED"
+    assert interactive_saved["persona"]["has_secrets"] is True
+    assert interactive_saved["persona"]["session_bundle_summary"]["cookies_count"] == 1
+    assert interactive_saved["persona"]["session_bundle_summary"]["local_storage_count"] == 1
+    assert "interactive-secret" not in str(interactive_saved)
+    assert "interactive-role-secret" not in str(interactive_saved)
+
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
     engine.dispose()

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   cancelProjectSitePersonaLoginCapture,
+  cancelProjectSitePersonaManagedLoginSession,
   captureProjectSitePersonaManagedLoginState,
   completeProjectSitePersonaLoginCapture,
   createProjectSitePersona,
@@ -8,12 +9,16 @@ import {
   createProjectSite,
   deleteProjectSitePersonaSessionBundle,
   deleteProjectSite,
+  getProjectSitePersonaManagedLoginSession,
   listProjectSitePersonas,
   saveProjectSitePersonaSessionBundle,
+  saveProjectSitePersonaManagedLoginSession,
+  startProjectSitePersonaManagedLoginSession,
   listProjectSites,
   updateProjectSite,
   type CrawlPersonaSummary,
   type PersonaLoginCapture,
+  type PersonaManagedLoginSession,
   type ProjectSite,
   type SiteScopeMode,
 } from "../../api/projectSites";
@@ -208,6 +213,7 @@ function ProjectSitePersonasPanel({
   const [captureByPersonaId, setCaptureByPersonaId] = useState<Record<number, PersonaLoginCapture>>({});
   const [captureJsonByPersonaId, setCaptureJsonByPersonaId] = useState<Record<number, string>>({});
   const [captureExpiresAtByPersonaId, setCaptureExpiresAtByPersonaId] = useState<Record<number, string>>({});
+  const [managedSessionByPersonaId, setManagedSessionByPersonaId] = useState<Record<number, PersonaManagedLoginSession>>({});
   const [pending, setPending] = useState<number | "new" | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -227,6 +233,32 @@ function ProjectSitePersonasPanel({
   useEffect(() => {
     void loadPersonas();
   }, [loadPersonas]);
+
+  useEffect(() => {
+    const activeEntries = Object.entries(managedSessionByPersonaId).filter(([, session]) =>
+      ["OPENING", "WAITING_FOR_LOGIN"].includes(session.status),
+    );
+    if (!activeEntries.length) return undefined;
+    const timer = window.setInterval(() => {
+      activeEntries.forEach(([personaIdText, session]) => {
+        const personaId = Number(personaIdText);
+        const capture = captureByPersonaId[personaId];
+        if (!capture) return;
+        getProjectSitePersonaManagedLoginSession(projectId, site.id, personaId, capture.id, session.session_id)
+          .then((nextSession) => {
+            setManagedSessionByPersonaId((current) => ({ ...current, [personaId]: nextSession }));
+          })
+          .catch(() => {
+            setManagedSessionByPersonaId((current) => {
+              const next = { ...current };
+              delete next[personaId];
+              return next;
+            });
+          });
+      });
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [captureByPersonaId, managedSessionByPersonaId, projectId, site.id]);
 
   async function handleCreatePersona() {
     const label = draft.label.trim();
@@ -411,6 +443,86 @@ function ProjectSitePersonasPanel({
     }
   }
 
+  async function handleStartManagedLoginSession(persona: CrawlPersonaSummary, capture: PersonaLoginCapture) {
+    setPending(persona.id);
+    setError("");
+    setMessage("");
+    try {
+      const result = await startProjectSitePersonaManagedLoginSession(projectId, site.id, persona.id, capture.id, {
+        ttl_minutes: 30,
+      });
+      setCaptureByPersonaId((current) => ({ ...current, [persona.id]: result.capture }));
+      setManagedSessionByPersonaId((current) => ({ ...current, [persona.id]: result.session }));
+      setMessage("Управляемая browser-сессия открыта. Войдите на сайте, пройдите MFA и нажмите «Сохранить сессию».");
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "managed_login_capture_unavailable") {
+        setError("Управляемая browser-сессия ещё не включена на backend. Используйте ручную вставку Playwright storageState.");
+      } else {
+        setError(err instanceof Error ? err.message : "Не удалось открыть управляемую browser-сессию.");
+      }
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleSaveManagedLoginSession(
+    persona: CrawlPersonaSummary,
+    capture: PersonaLoginCapture,
+    session: PersonaManagedLoginSession,
+  ) {
+    setPending(persona.id);
+    setError("");
+    setMessage("");
+    try {
+      const expiresAt = captureExpiresAtByPersonaId[persona.id]
+        ? new Date(captureExpiresAtByPersonaId[persona.id]).toISOString()
+        : null;
+      const result = await saveProjectSitePersonaManagedLoginSession(projectId, site.id, persona.id, capture.id, {
+        session_id: session.session_id,
+        expires_at: expiresAt,
+      });
+      setPersonas((current) => current.map((row) => row.id === result.persona.id ? result.persona : row));
+      setCaptureByPersonaId((current) => {
+        const next = { ...current };
+        delete next[persona.id];
+        return next;
+      });
+      setManagedSessionByPersonaId((current) => {
+        const next = { ...current };
+        delete next[persona.id];
+        return next;
+      });
+      setMessage("Browser-сессия сохранена из управляемого окна. Значения cookies/tokens скрыты.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось сохранить управляемую browser-сессию.");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleCancelManagedLoginSession(
+    persona: CrawlPersonaSummary,
+    capture: PersonaLoginCapture,
+    session: PersonaManagedLoginSession,
+  ) {
+    setPending(persona.id);
+    setError("");
+    setMessage("");
+    try {
+      await cancelProjectSitePersonaManagedLoginSession(projectId, site.id, persona.id, capture.id, session.session_id);
+      setManagedSessionByPersonaId((current) => {
+        const next = { ...current };
+        delete next[persona.id];
+        return next;
+      });
+      setMessage("Управляемая browser-сессия закрыта. Сеанс подключения можно продолжить ручным режимом или отменить полностью.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось закрыть управляемую browser-сессию.");
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function handleCancelLoginCapture(persona: CrawlPersonaSummary, capture: PersonaLoginCapture) {
     setPending(persona.id);
     setError("");
@@ -418,6 +530,11 @@ function ProjectSitePersonasPanel({
     try {
       await cancelProjectSitePersonaLoginCapture(projectId, site.id, persona.id, capture.id);
       setCaptureByPersonaId((current) => {
+        const next = { ...current };
+        delete next[persona.id];
+        return next;
+      });
+      setManagedSessionByPersonaId((current) => {
         const next = { ...current };
         delete next[persona.id];
         return next;
@@ -528,6 +645,7 @@ function ProjectSitePersonasPanel({
         const secret = personaSecretLabel(persona);
         const editingSession = sessionPersonaId === persona.id;
         const capture = captureByPersonaId[persona.id];
+        const managedSession = managedSessionByPersonaId[persona.id];
         return (
           <Card key={persona.id} style={{ display: "grid", gap: 8 }}>
             <SectionHeaderRow
@@ -600,7 +718,7 @@ function ProjectSitePersonasPanel({
                             <div>
                               <div style={{ fontWeight: 700 }}>Подключение через браузер</div>
                               <MetaText opacity={0.72}>
-                                Сеанс активен до {formatOperationalDateTime(capture.expires_at)}. Текущий режим — ручной импорт storageState.
+                                Сеанс активен до {formatOperationalDateTime(capture.expires_at)}. Сначала попробуйте управляемую сессию, ручной storageState остаётся fallback.
                               </MetaText>
                             </div>
                           }
@@ -611,6 +729,70 @@ function ProjectSitePersonasPanel({
                           <StatusText tone="warning">
                             Автоматический захват из управляемого браузера ещё не включён. Эта кнопка открывает сайт для входа, но сохранить сессию можно после ручной вставки Playwright storageState.
                           </StatusText>
+                        )}
+                        {capture.managed_browser_available && (
+                          <Card variant="default" style={{ display: "grid", gap: 8 }}>
+                            <SectionHeaderRow
+                              title={
+                                <div>
+                                  <div style={{ fontWeight: 700 }}>Управляемая browser-сессия</div>
+                                  <MetaText opacity={0.72}>
+                                    Откройте сессию, войдите руками и нажмите «Сохранить из управляемого окна». Cookies/tokens не показываются в интерфейсе.
+                                  </MetaText>
+                                </div>
+                              }
+                              actions={
+                                managedSession
+                                  ? <AccentPill tone="info">{managedSession.status}</AccentPill>
+                                  : <AccentPill tone="neutral">Не открыта</AccentPill>
+                              }
+                            />
+                            {managedSession && (
+                              <>
+                                <MetaText opacity={0.72}>
+                                  Открыта до {formatOperationalDateTime(managedSession.expires_at)}
+                                  {managedSession.page_title ? ` · ${managedSession.page_title}` : ""}
+                                </MetaText>
+                                <MetaText opacity={0.68} style={{ wordBreak: "break-word" }}>
+                                  Сейчас: {managedSession.final_url || managedSession.login_url}
+                                </MetaText>
+                                {managedSession.error_message && (
+                                  <StatusText tone="danger">{managedSession.error_message}</StatusText>
+                                )}
+                              </>
+                            )}
+                            <CardFooterActions>
+                              {!managedSession ? (
+                                <CardActionButton
+                                  variant="primary"
+                                  compact
+                                  disabled={pending === persona.id}
+                                  onClick={() => void handleStartManagedLoginSession(persona, capture)}
+                                >
+                                  {pending === persona.id ? "Открытие..." : "Открыть управляемую сессию"}
+                                </CardActionButton>
+                              ) : (
+                                <>
+                                  <CardActionButton
+                                    variant="primary"
+                                    compact
+                                    disabled={pending === persona.id}
+                                    onClick={() => void handleSaveManagedLoginSession(persona, capture, managedSession)}
+                                  >
+                                    {pending === persona.id ? "Сохранение..." : "Сохранить из управляемого окна"}
+                                  </CardActionButton>
+                                  <CardActionButton
+                                    variant="ghost"
+                                    compact
+                                    disabled={pending === persona.id}
+                                    onClick={() => void handleCancelManagedLoginSession(persona, capture, managedSession)}
+                                  >
+                                    Закрыть управляемую сессию
+                                  </CardActionButton>
+                                </>
+                              )}
+                            </CardFooterActions>
+                          </Card>
                         )}
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <CardActionButton
@@ -647,14 +829,15 @@ function ProjectSitePersonasPanel({
                           Как получить storageState: откройте сайт, войдите нужной ролью и экспортируйте Playwright storageState из браузерного сценария. После сохранения crawler сможет применять cookies/localStorage/sessionStorage server-side, а секретные значения останутся скрытыми.
                         </MetaText>
                         <CardFooterActions>
-                          {capture.managed_browser_available && (
-                            <CardActionButton
-                              variant="primary"
-                              disabled={pending === persona.id}
-                              onClick={() => void handleManagedLoginCapture(persona, capture)}
-                            >
-                              {pending === persona.id ? "Захват..." : "Захватить автоматически"}
-                            </CardActionButton>
+                          {capture.managed_browser_available && !managedSession && (
+                          <CardActionButton
+                            variant="secondary"
+                            disabled={pending === persona.id}
+                            onClick={() => void handleManagedLoginCapture(persona, capture)}
+                            title="Технический shortcut: открывает страницу и сразу забирает storageState без ручного входа. Для настоящего логина используйте управляемую сессию выше."
+                          >
+                            {pending === persona.id ? "Захват..." : "Быстрый технический захват"}
+                          </CardActionButton>
                           )}
                           <CardActionButton
                             variant={capture.managed_browser_available ? "secondary" : "primary"}
