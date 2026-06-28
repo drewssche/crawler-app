@@ -65,7 +65,7 @@
 4. Export-ready shape:
 - выдавать достаточно полей для будущего UI `Визуальный/Код`.
 5. Project list summary endpoint:
-- единый `/profiles/summary` с полями `runs_total` + `last_run` для списков (sidebar/workspace) без `N+1`.
+- единый `/projects/summary` с полями `runs_total` + `last_run` для списков (sidebar/workspace) без `N+1`.
 6. Site-level contracts:
 - list/create/update `ProjectSite`;
 - отдельные status/pages/coverage/failure для каждого сайта;
@@ -77,7 +77,7 @@
 
 ## Этап 4. UI (Project Page MVP-1)
 
-1. На `ProfileDashboardPage`:
+1. На `ProjectDashboardPage`:
 - карточка состояния проекта (`не запускался / выполняется / успешно / ошибка`),
 - карточка последнего прогона (`started/finished/duration/pages/changed`),
 - таблица измененных страниц (из `page_diff_index`),

@@ -14,8 +14,6 @@ function normalizeProjectLabel(name: string | null | undefined, fallbackId?: num
   if (!raw) {
     return Number.isFinite(fallbackId) ? `Проект #${fallbackId}` : "Проект";
   }
-  const legacy = raw.match(/^профиль\s*#?\s*(\d+)$/i);
-  if (legacy) return `Проект #${legacy[1]}`;
   return raw;
 }
 

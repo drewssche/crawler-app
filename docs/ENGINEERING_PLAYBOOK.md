@@ -34,7 +34,7 @@ Shared-state хранится в DB/backend. Локальный frontend state �
 - Source of truth: `backend/app/core/permissions.py`.
 - Enforcement выполняется backend `require_permission`; скрытие frontend не является защитой.
 - Frontend: `hasPermission` + route guards + условный mount недоступных data surfaces.
-- Capability labels are not permissions. Any capability shown in the matrix (`data.view`, `crawler.run`, `profiles.edit`) must exist in backend/frontend permission sets and guard concrete endpoints.
+- Capability labels are not permissions. Any capability shown in the matrix (`data.view`, `crawler.run`, `projects.edit`) must exist in backend/frontend permission sets and guard concrete endpoints.
 - Target role contract:
   - viewer: read accessible project/site/run/page data;
   - editor: viewer + edit project/site and start/retry runs;
@@ -73,13 +73,13 @@ Monitoring использует shared loaders/config/chart components; тяжё
   - `whole_site`;
   - `path_prefix` with segment-boundary validation and redirect re-check.
 - Existing projects migrate to one primary site. Ambiguous legacy extra domains require user confirmation before becoming separate sites.
-- Compare is a full-width project route (`/profiles/:id/compare`), not a cramped card in Workspace.
+- Compare is a full-width project route (`/projects/:id/compare`), not a cramped card in Workspace.
   It supports arbitrary left/right site+page+version selection, visual/code/structure modes and responsive focus mode.
 - Single-site anomaly detection is independent from compare and requires a reliable per-site baseline.
 - Project information architecture: `Основная | История | Настройки`.
   - `Основная`: run state, decision-useful metrics and current structure.
   - `История`: persisted runs/diff history only.
-  - `Настройки`: real profile/scope/limits/schedule availability and danger zone.
+  - `Настройки`: real project/site scope, limits, schedule availability and danger zone.
   - Не показывать сохраняемые controls до появления реального backend API.
 - Workspace project rows показывают только достоверные summary-поля: domain scope, run status/time, pages, changes и runs count.
   Destructive actions не размещаются в списке; они находятся в `Проект → Настройки → Опасная зона`.
@@ -120,7 +120,7 @@ Monitoring использует shared loaders/config/chart components; тяжё
 
 | Domain | Canonical modules |
 |---|---|
-| API/cache | `api/client.ts`, `profileListCache`, catalog caches |
+| API/cache | `api/client.ts`, `projectListCache`, catalog caches |
 | Paging/scroll | `useIncrementalPager`, `useWorkspaceInfiniteScroll` |
 | Feed loaders | `useUsersList`, `useEventFeed`, `useActivityFeed` |
 | Async drawers | `useGuardedAsyncState`, `userContext` |

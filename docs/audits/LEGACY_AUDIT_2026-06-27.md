@@ -15,7 +15,7 @@
 
 | Legacy | Где найдено | Почему удалить | Безопасный следующий шаг |
 | --- | --- | --- | --- |
-| Legacy run listing `GET /runs/by-profile/{profile_id}` | `backend/app/api/runs.py` | История должна быть site-scoped (`/runs/by-site/{site_id}`) либо project aggregate, но не смешивать сайты проекта. | Заменено на `/runs/by-project/{project_id}` в route/API wave; следующий шаг — решить, нужен ли отдельный `/projects/{id}/runs` aggregate. |
+| — | — | Активных runtime compatibility endpoints по project/profile не осталось. | Новые находки добавлять отдельным audit-пунктом. |
 
 ### 2. Переименовать / перенести жёсткой волной
 
@@ -27,7 +27,6 @@
 | Legacy | Почему временно оставить | Deadline |
 | --- | --- | --- |
 | `Run.project_id` | Удобный project-container FK для aggregate/delete/events, но не должен определять crawl scope. | Оставить как denormalized aggregate FK, если project delete/events/history остаются project-level. |
-| API prefix `/profiles/{profile_id}/sites` | Семантически уже `ProjectSite`, но prefix устарел. | Заменено на `/projects/{project_id}/sites` в route/API wave. |
 | `allowed_domains_csv` on `ProjectSite` | Это уже не список сравниваемых сайтов, а технический allowlist. Само поле не legacy по смыслу, но имя формата `_csv` и UX-история сбивают. | Позже заменить на normalized array/table или `technical_allowlist` после стабилизации crawler scope. |
 
 ### 4. Оставить как есть
@@ -41,8 +40,8 @@
 
 ## Рекомендуемый порядок cleanup
 
-1. **Safe docs/contract cleanup**: README/TODO wording, audit doc, убрать упоминания “profiles” из пользовательских текстов, где это не API/path.
-2. **Remove obsolete compatibility endpoints**: `POST /runs/start/{profile_id}` удалён; `GET /runs/by-profile/{profile_id}` заменён на `/runs/by-project/{project_id}`.
+1. **Safe docs/contract cleanup**: README/TODO wording, audit doc, убрать упоминания “profiles” из пользовательских текстов, где это не API/path — закрыто.
+2. **Remove obsolete compatibility endpoints**: `POST /runs/start/{profile_id}` удалён; `GET /runs/by-profile/{profile_id}` заменён на `/runs/by-project/{project_id}` — закрыто.
 3. **Frontend terminology wave**: closed for page/component/cache names and frontend props/utils.
 4. **API route wave**: closed for `/profiles → /projects`, `/profiles/{id}/sites → /projects/{id}/sites`, permissions `profiles.edit → projects.edit`.
 5. **DB migration wave**: closed for `profiles → projects`, `profile_id → project_id`.
@@ -56,6 +55,9 @@
 
 - README wording “краулинг-профили” заменён на проекты мониторинга сайтов.
 - Compatibility endpoint `POST /runs/start/{profile_id}` удалён.
+- Compatibility endpoint `GET /runs/by-profile/{profile_id}` отсутствует; используется `/runs/by-project/{project_id}` и site-scoped `/runs/by-site/{site_id}`.
+- Live user-facing role hints use `редактирование проектов`, not `редактирование профилей`.
+- Breadcrumb legacy normalizer for names like `Профиль #1` removed from live frontend.
 - Backend tests переведены на `POST /runs/start-site/{site_id}`.
 - Frontend terminology wave закрыта: `ProjectDashboardPage`, `ProjectNewPage`, `projectListCache`, project-oriented live update and site settings props.
 - Route/API wave закрыта: `/projects/*`, `/projects/{project_id}/sites`, `/runs/by-project/{project_id}`, `projects.edit`, `ProjectOut`.

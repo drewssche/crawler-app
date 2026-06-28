@@ -308,15 +308,16 @@
 
 ## Reliability and Foundations
 
-- [ ] **P1 Legacy cleanup — Project terminology and compatibility removal** (`HIGH`, staged).
+- [x] **P1 Legacy cleanup — Project terminology and compatibility removal** (`HIGH`, staged).
   Цель: не строить target monitoring поверх старой profile-модели. Стадия разработки позволяет делать breaking cleanup, если оно снижает сложность.
   - Audit: [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md).
-  - 1. Safe cleanup: README/user-facing wording and obsolete compatibility endpoints.
-  - 2. Backend cleanup: `POST /runs/start/{profile_id}` удалён; `GET /runs/by-profile/{profile_id}` заменён на `/runs/by-project/{project_id}`.
+  - 1. Safe cleanup: README/user-facing wording and obsolete compatibility endpoints — закрыто; live role hints and breadcrumb fallback no longer use project/profile legacy wording.
+  - 2. Backend cleanup: `POST /runs/start/{profile_id}` удалён; `GET /runs/by-profile/{profile_id}` заменён на `/runs/by-project/{project_id}`; live scan confirms no active compatibility endpoint.
   - 3. Frontend terminology: `ProfileDashboardPage → ProjectDashboardPage`, `ProfileNewPage → ProjectNewPage`, `profileListCache → projectListCache` — закрыто.
   - 4. Route/API rename: `/profiles/* → /projects/*`, `/profiles/{id}/sites → /projects/{id}/sites`, `profiles.edit → projects.edit` — закрыто.
   - 5. DB rename wave: `profiles → projects`, `profile_id → project_id` — закрыто.
   - 6. Project container cleanup: duplicate site fields removed from `projects`; `ProjectSite` is now the source for URL/scope/limits/allowlist.
+  - Historical Alembic revisions/archive docs may still mention `profiles/profile_id`; keep them as migration/history records, not live product contract.
 
 - [ ] **P0 Stabilization gate** (`HIGH`, implementation mostly complete).
   Осталось ручное подтверждение project/run сценариев по отдельному запросу: два независимых запуска, immediate project visibility, FINISHED pages, duplicate conflict.

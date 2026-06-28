@@ -1596,7 +1596,7 @@ def test_browser_crawl_respects_browser_page_limit(monkeypatch):
     engine.dispose()
 
 
-def test_create_profile_rejects_duplicate_canonical_scope():
+def test_create_project_rejects_duplicate_canonical_scope():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()
     app.router.on_shutdown.clear()

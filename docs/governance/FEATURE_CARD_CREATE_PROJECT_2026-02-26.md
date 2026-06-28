@@ -1,10 +1,10 @@
 # Feature Card: Создать Проект
 
-Статус: iteration 1 implemented (create-only)
+Статус: historical feature card; current runtime contract uses `Project`, `/projects/*`, `ProjectNewPage`, and `ProjectSite`.
 
 ## 1) Ценность
 
-- Пользователь должен создавать новую сущность `Проект` (вместо текущего смысла/лейбла `Профиль`).
+- Пользователь должен создавать новую сущность `Проект`.
 - Цель: понятный входной сценарий создания и дальнейшего управления проектом.
 
 ## 2) Scope (итерация 1, согласовано)
@@ -26,7 +26,7 @@
 
 ## 4) Reuse First Check
 
-- Базовый routing/layout уже есть (`AppLayout`, `ProfileNewPage`, `Button`, `SectionHeaderRow`).
+- Базовый routing/layout уже есть (`AppLayout`, `ProjectNewPage`, `Button`, `SectionHeaderRow`).
 - Для UX-слоя использовать существующие паттерны из:
   - `REUSE_INDEX.md`
   - `docs/ui/UI_TAXONOMY_MATRIX.md`
@@ -49,7 +49,7 @@
 
 ## 6) Риски
 
-- Терминологический drift (`профиль` и `проект` одновременно в разных местах).
+- Терминологический drift (`профиль` и `проект` одновременно в разных местах) — закрыто в legacy cleanup.
 - Регресс навигации из-за переименований route labels.
 - Потеря обратной совместимости, если затронем API/модели без переходного слоя.
 
@@ -125,4 +125,4 @@
 - Форма создания проекта работает по правилам итерации 1 (create-only).
 - Отображение доменов разделено по контекстам:
   - в списках (`Workspace`/`SidebarLeft`) используется compact-summary `first-domain +N`;
-  - в карточке проекта (`/profiles/:id`) показывается `1 тег = 1 домен`.
+  - в карточке проекта (`/projects/:id`) показывается выбранный `ProjectSite` и его технический allowlist/scope.
