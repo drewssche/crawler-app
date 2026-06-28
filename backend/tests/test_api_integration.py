@@ -803,6 +803,20 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
     assert client_contexts[-1].cookies.rows == [
         {"name": "sid", "value": "super-secret", "domain": "persona.test", "path": "/"}
     ]
+    partner_runs_response = client.get(
+        f"/runs/by-site/{site_id}?crawl_persona_id={partner['id']}",
+        headers=editor_headers,
+    )
+    assert partner_runs_response.status_code == 200
+    partner_runs = partner_runs_response.json()
+    assert len(partner_runs) == 1
+    assert partner_runs[0]["crawl_persona_id"] == partner["id"]
+    guest_runs_response = client.get(
+        f"/runs/by-site/{site_id}?crawl_persona_id={personas[0]['id']}",
+        headers=editor_headers,
+    )
+    assert guest_runs_response.status_code == 200
+    assert guest_runs_response.json() == []
 
     denied_capture = client.post(
         f"/projects/{project_id}/sites/{site_id}/personas/{partner['id']}/login-captures",

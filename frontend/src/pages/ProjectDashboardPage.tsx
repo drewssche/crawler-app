@@ -228,6 +228,7 @@ export default function ProjectDashboardPage() {
   const [sitePersonas, setSitePersonas] = useState<CrawlPersonaSummary[]>([]);
   const [sitePersonasLoading, setSitePersonasLoading] = useState(false);
   const [selectedRunPersonaId, setSelectedRunPersonaId] = useState<number | null>(null);
+  const [selectedViewPersonaId, setSelectedViewPersonaId] = useState<number | "all">("all");
   const canRunCrawler = hasPermission(user?.role, "crawler.run");
   const canEditProject = hasPermission(user?.role, "projects.edit");
   const canViewEvents = hasPermission(user?.role, "events.view");
@@ -258,11 +259,12 @@ export default function ProjectDashboardPage() {
     }
   }, []);
 
-  const loadRuns = useCallback(async (siteId: number, silent = false) => {
+  const loadRuns = useCallback(async (siteId: number, silent = false, personaId: number | "all" = selectedViewPersonaId) => {
     if (!silent) setRunsLoading(true);
     setRunsError("");
     try {
-      const data = await apiGet<ProjectRun[]>(`/runs/by-site/${siteId}`);
+      const personaQuery = personaId === "all" ? "" : `?crawl_persona_id=${personaId}`;
+      const data = await apiGet<ProjectRun[]>(`/runs/by-site/${siteId}${personaQuery}`);
       const next = Array.isArray(data) ? data : [];
       setRuns(next);
       const first = next[0];
@@ -282,7 +284,7 @@ export default function ProjectDashboardPage() {
     } finally {
       if (!silent) setRunsLoading(false);
     }
-  }, [project]);
+  }, [project, selectedViewPersonaId]);
 
   useEffect(() => {
     if (!id) return;
@@ -311,10 +313,20 @@ export default function ProjectDashboardPage() {
       setRuns([]);
       setSitePersonas([]);
       setSelectedRunPersonaId(null);
+      setSelectedViewPersonaId("all");
       return;
     }
     void loadRuns(selectedSiteId);
   }, [selectedSiteId, loadRuns]);
+
+  useEffect(() => {
+    if (selectedSiteId === null) return;
+    setPagesError("");
+    setStructureSearch("");
+    setStructureViewFilter("all");
+    setPageContextOpen(false);
+    setDirectoryContext(null);
+  }, [selectedViewPersonaId, selectedSiteId]);
 
   useEffect(() => {
     if (!project || selectedSiteId === null) return;
@@ -324,6 +336,10 @@ export default function ProjectDashboardPage() {
       .then((rows) => {
         if (cancelled) return;
         setSitePersonas(rows);
+        setSelectedViewPersonaId((current) => {
+          if (current === "all") return current;
+          return rows.some((row) => row.id === current) ? current : "all";
+        });
         setSelectedRunPersonaId((current) => {
           if (current && rows.some((row) => row.id === current && row.is_enabled !== false)) return current;
           const defaultPersona = rows.find((row) => row.is_default && row.is_enabled !== false);
@@ -600,6 +616,10 @@ export default function ProjectDashboardPage() {
   const effectiveRunPersona =
     selectedRunPersona ||
     { id: 0, key: "guest", label: "Гость", kind: "guest", has_secrets: false };
+  const selectedViewPersona =
+    selectedViewPersonaId === "all"
+      ? null
+      : sitePersonas.find((persona) => persona.id === selectedViewPersonaId) || null;
   const domains = useMemo(
     () => parseDomains(selectedSite?.allowed_domains_csv || ""),
     [selectedSite?.allowed_domains_csv],
@@ -873,6 +893,46 @@ export default function ProjectDashboardPage() {
                       : ": роль выбрана, но сессия ещё не подключена."}
                 </MetaText>
               </div>
+              <Card variant="default" style={{ padding: 10, display: "grid", gap: 8 }}>
+                <SectionHeaderRow
+                  title={
+                    <div>
+                      <div style={{ fontWeight: 700 }}>Контекст просмотра структуры и истории</div>
+                      <MetaText opacity={0.68}>
+                        Контекст влияет на доступные страницы и содержимое. Сравнение Гость ↔ Партнёр — это сравнение доступов, а не обычная аномалия сайта.
+                      </MetaText>
+                    </div>
+                  }
+                  actions={
+                    <label style={{ display: "grid", gap: 3, minWidth: 220 }}>
+                      <MetaText opacity={0.72}>Показывать runs</MetaText>
+                      <UiSelect
+                        value={selectedViewPersonaId}
+                        disabled={sitePersonasLoading || runsLoading}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setSelectedViewPersonaId(value === "all" ? "all" : Number(value));
+                        }}
+                      >
+                        <option value="all">Все контексты</option>
+                        {sitePersonas
+                          .filter((persona) => persona.is_enabled !== false)
+                          .map((persona) => (
+                            <option key={persona.id} value={persona.id}>
+                              {persona.label}
+                            </option>
+                          ))}
+                      </UiSelect>
+                    </label>
+                  }
+                />
+                <MetaText opacity={0.72}>
+                  Сейчас открыт срез: {selectedViewPersona ? selectedViewPersona.label : "все контексты"}.
+                  {selectedViewPersona && selectedViewPersona.kind !== "guest" && !selectedViewPersona.has_secrets
+                    ? " У этой роли сессия не подключена, новые прогоны будут пропущены до подключения."
+                    : ""}
+                </MetaText>
+              </Card>
               {hasRunning && (
                 <MetaText opacity={0.72}>
                   Сейчас сканируется выбранный сайт. Остальные сайты проекта сохраняют независимую историю.
@@ -1023,7 +1083,11 @@ export default function ProjectDashboardPage() {
                   {runsError ? <StatusText tone="danger">{runsError}</StatusText> : null}
                   {!runsLoading && !lastRun && (
                     <div style={{ display: "grid", gap: 8 }}>
-                      <MetaText>Для выбранного сайта прогонов пока нет. Запустите первый сбор, чтобы получить структуру и метрики.</MetaText>
+                      <MetaText>
+                        {selectedViewPersona
+                          ? `Для контекста «${selectedViewPersona.label}» прогонов пока нет. Переключите фильтр на «Все контексты» или запустите сайт этой ролью.`
+                          : "Для выбранного сайта прогонов пока нет. Запустите первый сбор, чтобы получить структуру и метрики."}
+                      </MetaText>
                       {canRunCrawler && <div>
                         <CardActionButton
                           variant="primary"
@@ -1417,7 +1481,9 @@ export default function ProjectDashboardPage() {
                   title={
                     <div>
                       <div style={{ fontWeight: 700 }}>История прогонов</div>
-                      <MetaText opacity={0.68}>{selectedSite?.name || "Сайт не выбран"}</MetaText>
+                      <MetaText opacity={0.68}>
+                        {selectedSite?.name || "Сайт не выбран"} · {selectedViewPersona ? `контекст ${selectedViewPersona.label}` : "все контексты"}
+                      </MetaText>
                     </div>
                   }
                   actions={<ListTotalMeta label="Прогонов" total={runs.length} />}
@@ -1441,7 +1507,13 @@ export default function ProjectDashboardPage() {
                       </div>
                     </Card>
                   ))}
-                  {runs.length === 0 && <MetaText>История пока пуста.</MetaText>}
+                  {runs.length === 0 && (
+                    <MetaText>
+                      {selectedViewPersona
+                        ? `Для контекста «${selectedViewPersona.label}» история пока пуста.`
+                        : "История пока пуста."}
+                    </MetaText>
+                  )}
                 </div>
               </div>
             </Card>

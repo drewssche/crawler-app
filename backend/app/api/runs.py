@@ -1110,6 +1110,7 @@ def list_runs(
 @router.get("/by-site/{site_id}")
 def list_site_runs(
     site_id: int,
+    crawl_persona_id: int | None = None,
     page: int | None = None,
     page_size: int = 20,
     db: Session = Depends(get_db),
@@ -1123,6 +1124,8 @@ def list_site_runs(
         .filter(Run.project_site_id == site_id)
         .order_by(Run.id.desc())
     )
+    if crawl_persona_id is not None:
+        query = query.filter(Run.crawl_persona_id == crawl_persona_id)
     paged = paginate_query(query, page=page, page_size=page_size)
     if page is None:
         return [_serialize_run(run, persona) for run, persona in paged]
