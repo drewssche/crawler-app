@@ -1,10 +1,16 @@
+import { projectSiteSearchValues } from "./projectSitesSummary.ts";
+import type { ProjectListSite } from "./projectListCache.ts";
+
 export type ProjectSearchItem = {
   name: string;
+  sites?: ProjectListSite[] | null;
+  /** Compatibility fallback. Prefer sites[]. */
   start_url: string;
+  /** Compatibility fallback. Do not use as user-facing site list. */
   allowed_domains_csv?: string | null;
 };
 
-export type ProjectSearchField = "name" | "start_url" | "allowed_domain";
+export type ProjectSearchField = "name" | "site";
 
 export type ProjectSearchResult<T extends ProjectSearchItem> = {
   project: T;
@@ -84,19 +90,13 @@ function fieldCandidates(project: ProjectSearchItem): Array<{
   value: string;
   normalized: string;
 }> {
-  const domains = (project.allowed_domains_csv || "")
-    .split(",")
-    .map((domain) => domain.trim())
-    .filter(Boolean);
-
   return [
     { field: "name", value: project.name, normalized: normalizeProjectSearchText(project.name) },
-    ...domains.map((domain) => ({
-      field: "allowed_domain" as const,
-      value: domain,
-      normalized: normalizeUrlLike(domain),
+    ...projectSiteSearchValues(project).map((value) => ({
+      field: "site" as const,
+      value,
+      normalized: normalizeUrlLike(value),
     })),
-    { field: "start_url", value: project.start_url, normalized: normalizeUrlLike(project.start_url) },
   ];
 }
 

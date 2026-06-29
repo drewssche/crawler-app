@@ -88,7 +88,7 @@
   - DB/model/FK terminology wave закрыта: `Project/projects/project_id`;
   - route/API terminology `profiles → projects` закрыта для внешнего контракта;
   - frontend terminology wave закрыта: `ProjectDashboardPage/ProjectNewPage/projectListCache` и project-oriented props/utils без изменения backend API prefix;
-  - дублирующие site-поля из project container удалены; summary/search берут рабочий URL/allowlist из `ProjectSite` aggregate.
+  - дублирующие site-поля из project container удалены; summary/search берут пользовательский список `sites[]` из `ProjectSite` aggregate, а technical allowlist больше не отображается как сайты проекта.
 
 ## Working Rules
 

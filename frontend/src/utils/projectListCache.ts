@@ -3,8 +3,22 @@ import { apiGet } from "../api/client";
 export type ProjectListItem = {
   id: number;
   name: string;
+  sites?: ProjectListSite[];
+  site_count?: number;
+  /** Compatibility fallback. Prefer sites[]. */
   start_url: string;
+  /** Compatibility fallback. Prefer sites[]. */
   allowed_domains_csv?: string;
+};
+
+export type ProjectListSite = {
+  id: number;
+  name: string;
+  start_url: string;
+  scope_mode: "whole_site" | "path_prefix" | string;
+  path_prefix: string;
+  role: string;
+  is_enabled: boolean;
 };
 
 export type ProjectRunSummary = {
@@ -75,6 +89,8 @@ export async function getProjectsCached(force = false): Promise<ProjectListItem[
       projectsEntry.value = rows.map((row) => ({
         id: row.id,
         name: row.name,
+        sites: row.sites,
+        site_count: row.site_count,
         start_url: row.start_url,
         allowed_domains_csv: row.allowed_domains_csv,
       }));

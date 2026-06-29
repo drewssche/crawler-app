@@ -13,7 +13,7 @@ import { formatOperationalDateTime } from "../utils/datetime";
 import { getProjectsSummaryCached, type ProjectSummaryItem } from "../utils/projectListCache";
 import { applyProjectRunLiveUpdate, subscribeProjectRunLive } from "../utils/projectRunLiveStore";
 import { isMeaningfulProjectSearch, searchProjects, shouldShowProjectMatchHint } from "../utils/projectSearch";
-import { summarizeProjectDomains } from "../utils/projectDomains";
+import { summarizeProjectSites } from "../utils/projectSitesSummary";
 import { useAuth } from "../hooks/auth";
 import { hasPermission } from "../utils/permissions";
 
@@ -93,10 +93,10 @@ export default function WorkspaceHomePage() {
               {filtered.map((match) => {
                 const p = match.project;
                 const status = getProjectRunBadgeMeta(p.last_run?.status);
-                const domainSummary = summarizeProjectDomains(p.allowed_domains_csv, p.start_url);
+                const siteSummary = summarizeProjectSites(p);
                 const showMatchHint = shouldShowProjectMatchHint(match, [
                   p.name,
-                  domainSummary,
+                  siteSummary,
                 ]);
                 const openProject = () => navigate(`/projects/${p.id}`, { state: { projectName: p.name } });
                 return (
@@ -141,7 +141,7 @@ export default function WorkspaceHomePage() {
                           <HighlightedText value={p.name} query={match.highlightQuery} />
                         </div>
                         <MetaText opacity={0.7} style={{ marginTop: 3, wordBreak: "break-word" }}>
-                          <HighlightedText value={domainSummary} query={match.highlightQuery} />
+                          <HighlightedText value={siteSummary} query={match.highlightQuery} />
                         </MetaText>
                       </div>
                       <ProjectRunBadge status={p.last_run?.status} />

@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../hooks/auth";
 import { hasPermission } from "../../utils/permissions";
 import { getProjectsSummaryCached, type ProjectSummaryItem } from "../../utils/projectListCache";
-import { summarizeProjectDomains } from "../../utils/projectDomains";
+import { summarizeProjectSites } from "../../utils/projectSitesSummary";
 import { applyProjectRunLiveUpdate, subscribeProjectRunLive } from "../../utils/projectRunLiveStore";
 import { isMeaningfulProjectSearch, searchProjects, shouldShowProjectMatchHint } from "../../utils/projectSearch";
 import { resolveDisplayRole } from "../../utils/roles";
@@ -173,8 +173,8 @@ export default function SidebarLeft() {
           const p = match.project;
           const active = location.pathname === `/projects/${p.id}`;
           const statusMeta = getProjectRunBadgeMeta(p.last_run?.status);
-          const domainSummary = summarizeProjectDomains(p.allowed_domains_csv, p.start_url);
-          const showMatchHint = shouldShowProjectMatchHint(match, [p.name, domainSummary]);
+          const siteSummary = summarizeProjectSites(p);
+          const showMatchHint = shouldShowProjectMatchHint(match, [p.name, siteSummary]);
           return (
             <Card
               key={p.id}
@@ -223,7 +223,7 @@ export default function SidebarLeft() {
                 </div>
               </div>
               <div style={{ fontSize: 12, opacity: 0.7, wordBreak: "break-word" }}>
-                <HighlightedText value={domainSummary} query={match.highlightQuery} />
+                <HighlightedText value={siteSummary} query={match.highlightQuery} />
               </div>
               {showMatchHint && match.matchedValue && (
                 <div style={{ fontSize: 11, opacity: 0.68, wordBreak: "break-word" }}>

@@ -206,8 +206,14 @@ def list_projects_summary(
         db.query(
             Project.id.label("id"),
             Project.name.label("name"),
+            ProjectSite.id.label("site_id"),
+            ProjectSite.name.label("site_name"),
             ProjectSite.start_url.label("start_url"),
             ProjectSite.allowed_domains_csv.label("allowed_domains_csv"),
+            ProjectSite.scope_mode.label("site_scope_mode"),
+            ProjectSite.path_prefix.label("site_path_prefix"),
+            ProjectSite.role.label("site_role"),
+            ProjectSite.is_enabled.label("site_is_enabled"),
             Run.id.label("last_run_id"),
             Run.status.label("last_run_status"),
             Run.crawl_runtime.label("last_run_crawl_runtime"),
@@ -225,29 +231,47 @@ def list_projects_summary(
         .order_by(Project.id.desc(), ProjectSite.sort_order.asc(), ProjectSite.id.asc())
         .all()
     )
-    seen_projects: set[int] = set()
-    data = [
-        {
-            "id": row.id,
-            "name": row.name,
-            "start_url": row.start_url,
-            "allowed_domains_csv": row.allowed_domains_csv,
-            "runs_total": int(row.runs_total or 0),
-            "last_run": None
-            if row.last_run_id is None
-            else {
-                "id": row.last_run_id,
-                "status": row.last_run_status,
-                "crawl_runtime": row.last_run_crawl_runtime,
-                "started_at": row.last_run_started_at,
-                "finished_at": row.last_run_finished_at,
-                "pages_total": int(row.last_run_pages_total or 0),
-                "pages_changed": int(row.last_run_pages_changed or 0),
-            },
-        }
-        for row in rows
-        if row.id not in seen_projects and not seen_projects.add(row.id)
-    ]
+    project_items: dict[int, dict] = {}
+    data: list[dict] = []
+    for row in rows:
+        item = project_items.get(row.id)
+        if item is None:
+            item = {
+                "id": row.id,
+                "name": row.name,
+                # Compatibility fields for older clients. New UI should use sites[].
+                "start_url": row.start_url,
+                "allowed_domains_csv": row.allowed_domains_csv,
+                "sites": [],
+                "site_count": 0,
+                "runs_total": int(row.runs_total or 0),
+                "last_run": None
+                if row.last_run_id is None
+                else {
+                    "id": row.last_run_id,
+                    "status": row.last_run_status,
+                    "crawl_runtime": row.last_run_crawl_runtime,
+                    "started_at": row.last_run_started_at,
+                    "finished_at": row.last_run_finished_at,
+                    "pages_total": int(row.last_run_pages_total or 0),
+                    "pages_changed": int(row.last_run_pages_changed or 0),
+                },
+            }
+            project_items[row.id] = item
+            data.append(item)
+        if row.site_id is not None:
+            item["sites"].append(
+                {
+                    "id": row.site_id,
+                    "name": row.site_name,
+                    "start_url": row.start_url,
+                    "scope_mode": row.site_scope_mode,
+                    "path_prefix": row.site_path_prefix,
+                    "role": row.site_role,
+                    "is_enabled": bool(row.site_is_enabled),
+                }
+            )
+            item["site_count"] = len(item["sites"])
     return success_response_payload(request, data=data)
 
 

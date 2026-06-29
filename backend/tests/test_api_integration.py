@@ -749,6 +749,23 @@ def test_projects_summary_returns_last_run_and_totals():
         db.refresh(p1)
         db.refresh(p2)
         p1_site = _add_primary_site(db, p1)
+        p1_reference_site = build_project_site(
+            project_id=p1.id,
+            start_url="https://reference-a.test/",
+            name="Reference A",
+            scope_mode="whole_site",
+            path_prefix="/",
+            role="reference",
+            allowed_domains_csv="",
+            exclude_paths_csv="",
+            exclude_ext_csv="",
+            respect_robots=True,
+            max_pages=100,
+            concurrency=1,
+            is_enabled=True,
+            sort_order=1,
+        )
+        db.add(p1_reference_site)
         _add_primary_site(db, p2)
 
         db.add_all(
@@ -783,6 +800,11 @@ def test_projects_summary_returns_last_run_and_totals():
     assert by_name["A"]["runs_total"] == 2
     assert by_name["A"]["last_run"]["status"] == "RUNNING"
     assert by_name["A"]["last_run"]["pages_total"] == 7
+    assert by_name["A"]["site_count"] == 2
+    assert [site["start_url"] for site in by_name["A"]["sites"]] == [
+        "https://a.test/",
+        "https://reference-a.test/",
+    ]
     assert by_name["B"]["runs_total"] == 0
     assert by_name["B"]["last_run"] is None
 

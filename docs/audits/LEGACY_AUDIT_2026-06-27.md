@@ -46,6 +46,7 @@
 4. **API route wave**: closed for `/profiles → /projects`, `/profiles/{id}/sites → /projects/{id}/sites`, permissions `profiles.edit → projects.edit`.
 5. **DB migration wave**: closed for `profiles → projects`, `profile_id → project_id`.
 6. **Project container cleanup**: closed for duplicate site fields; `ProjectSite` is the source for URL/scope/limits/allowlist and project summary/search aggregate.
+7. **Frontend site aggregate cleanup**: closed for Workspace/Sidebar/search; UI uses `sites[]` and no longer treats `allowed_domains_csv` as the user-facing list of project sites.
 
 ## Immediate recommendation
 
@@ -63,3 +64,4 @@
 - Route/API wave закрыта: `/projects/*`, `/projects/{project_id}/sites`, `/runs/by-project/{project_id}`, `projects.edit`, `ProjectOut`.
 - DB/model wave закрыта: `Project` model, `projects` table, `project_id` FK/payload fields, Alembic rename migration.
 - Project container cleanup закрыт: duplicate crawl/site columns removed from `projects`, project summary/get derives URL/allowlist from first `ProjectSite`.
+- Frontend site aggregate cleanup закрыт: `/projects/summary` returns `sites[]/site_count`, Workspace/Sidebar/search use site aggregate, obsolete `projectDomains`/`ProjectDomainPills` removed.
