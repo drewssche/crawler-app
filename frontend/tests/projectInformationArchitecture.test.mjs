@@ -4,6 +4,7 @@ import test from "node:test";
 
 const source = await readFile(new URL("../src/pages/ProjectDashboardPage.tsx", import.meta.url), "utf8");
 const sitesSource = await readFile(new URL("../src/components/projects/ProjectSitesSettings.tsx", import.meta.url), "utf8");
+const membersSource = await readFile(new URL("../src/components/projects/ProjectMembersSettings.tsx", import.meta.url), "utf8");
 const createSource = await readFile(new URL("../src/pages/ProjectNewPage.tsx", import.meta.url), "utf8");
 const siteCardsSource = await readFile(new URL("../src/components/projects/ProjectSiteContextCards.tsx", import.meta.url), "utf8");
 const pageDrawerSource = await readFile(new URL("../src/components/projects/PageContextDrawer.tsx", import.meta.url), "utf8");
@@ -65,6 +66,17 @@ test("settings contain real project parameters without a fake schedule save cont
   assert.match(sitesSource, /updateProjectSite/);
   assert.match(source, /Опасная зона/);
   assert.doesNotMatch(source, /Сохранить расписание/);
+});
+
+test("project members are added through searchable user combobox with highlight and states", () => {
+  assert.match(membersSource, /role="combobox"/);
+  assert.match(membersSource, /\/admin\/users\?status=all&q=/);
+  assert.match(membersSource, /HighlightedText/);
+  assert.match(membersSource, /Уже участник/);
+  assert.match(membersSource, /Заблокирован/);
+  assert.match(membersSource, /Ожидает подтверждения/);
+  assert.match(membersSource, /Пользователь не найден/);
+  assert.match(membersSource, /userLookupNoMatch/);
 });
 
 test("project creation uses explicit site cards instead of a shared domains textarea", () => {
