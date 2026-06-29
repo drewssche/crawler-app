@@ -1,5 +1,3 @@
-from urllib.parse import urlparse
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -41,19 +39,6 @@ class ProjectMemberPayload(BaseModel):
 
 class ProjectMemberRolePayload(BaseModel):
     role: str
-
-
-def _canonical_project_scope(start_url: str, allowed_domains_csv: str) -> tuple[str, tuple[str, ...]]:
-    parsed = urlparse(str(start_url).strip())
-    scheme = (parsed.scheme or "https").lower()
-    host = (parsed.hostname or "").lower()
-    path = parsed.path or "/"
-    normalized_path = "/" if path == "/" else f"/{path.strip('/')}"
-    normalized_start = f"{scheme}://{host}{normalized_path}"
-    domains = tuple(sorted({part.strip().lower() for part in (allowed_domains_csv or "").split(",") if part.strip()}))
-    if not domains and host:
-        domains = (host,)
-    return normalized_start, domains
 
 
 def _project_out(project: Project, site: ProjectSite | None = None) -> dict:
@@ -130,26 +115,6 @@ def create_project(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    requested_scope = _canonical_project_scope(primary_scope.start_url, payload.allowed_domains_csv)
-    existing_sites = (
-        db.query(Project, ProjectSite)
-        .join(ProjectSite, ProjectSite.project_id == Project.id)
-        .all()
-    )
-    for existing_project, existing_site in existing_sites:
-        if _canonical_project_scope(existing_site.start_url, existing_site.allowed_domains_csv) == requested_scope:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "project_scope_conflict",
-                    "message": f'Проект для этого адреса уже существует: «{existing_project.name}».',
-                    "existing_project": {
-                        "id": existing_project.id,
-                        "name": existing_project.name,
-                        "start_url": existing_site.start_url,
-                    },
-                },
-            )
     obj = Project(name=payload.name)
     db.add(obj)
     db.flush()

@@ -2302,7 +2302,7 @@ def test_browser_crawl_respects_browser_page_limit(monkeypatch):
     engine.dispose()
 
 
-def test_create_project_rejects_duplicate_canonical_scope():
+def test_create_project_allows_same_scope_in_different_projects():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()
     app.router.on_shutdown.clear()
@@ -2317,7 +2317,7 @@ def test_create_project_rejects_duplicate_canonical_scope():
         db.commit()
 
     client = TestClient(app)
-    response = client.post(
+    duplicate = client.post(
         "/projects",
         json={
             "name": "Duplicate",
@@ -2326,11 +2326,8 @@ def test_create_project_rejects_duplicate_canonical_scope():
         },
         headers=_auth_header("projects@test.local", role="editor"),
     )
-    assert response.status_code == 409
-    payload = _extract_error_payload(response)
-    assert payload["error"]["code"] == "project_scope_conflict"
-    assert "Existing" in payload["error"]["message"]
-    assert payload["error"]["details"]["existing_project"]["name"] == "Existing"
+    assert duplicate.status_code == 200
+    assert duplicate.json()["name"] == "Duplicate"
 
     distinct_path = client.post(
         "/projects",
