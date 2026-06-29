@@ -346,7 +346,8 @@
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas foundation готова: role-based limits для project count, sites per project, max pages/concurrency per site, active crawler jobs per user и bulk-run size; env overrides `QUOTA_{ROLE}_...`.
-  Осталось: ownership/membership model, project visibility by membership, actor/project storage budgets и UI-пояснения quota errors.
+  Membership foundation готова: `project_memberships`, creator=`owner`, admin/root-admin global access, viewer/editor видят только member-проекты; legacy projects без memberships остаются visible для совместимости.
+  Осталось: management API/UI для добавления/удаления участников, project role editor/viewer controls, actor/project storage budgets и UI-пояснения quota/membership errors.
   Canonical site/path scope и duplicate policy перенесены в epic `Site monitoring + scoped crawl + compare workspace`, чтобы не вести два конкурирующих контракта.
 
 - [ ] **P1 Protected emergency root actor** (`HIGH`).
@@ -360,6 +361,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P1 Project governance — project membership foundation**.
+  - Что было: `data.view/projects.edit` давали доступ ко всем проектам, кроме различий между ролями.
+  - Что стало: добавлены модель и миграция `project_memberships`. Новый проект получает owner membership для создателя; обычные viewer/editor видят и запускают только member-проекты; admin/root-admin сохраняют глобальный доступ. Legacy-проекты без membership-записей пока visible для authenticated users, чтобы не ломать dev/staging данные.
+  - Как проверить: `docker compose exec backend env PYTHONPATH=/app alembic upgrade head`; `docker compose exec backend env PYTHONPATH=/app pytest -q tests/test_api_integration.py`.
+  - Вклад в цели: появилась server-side основа ownership/visibility без UI-управления участниками (`high` governance/security).
 
 - [x] **P1 Project governance — role-based quota foundation**.
   - Что было: роль давала permission на запуск/редактирование, но не ограничивала стоимость настроек и размер очереди.

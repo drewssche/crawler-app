@@ -51,6 +51,7 @@ from app.services.page_context import build_page_context
 from app.services.persona_secrets import decrypt_session_bundle
 from app.services.persona_browser_state import build_browser_persona_state
 from app.services.run_recovery import mark_stale_running_runs_failed
+from app.services.project_memberships import require_project_read, require_project_write
 from app.services.project_quotas import enforce_actor_active_job_quota, enforce_bulk_run_quota
 from app.services.scan_retention import prune_site_persona_raw_artifacts
 from app.crawler.browser_fetcher import BrowserCrawlerError, BrowserPersonaClient, browser_state_requires_runtime
@@ -1167,6 +1168,7 @@ def start_site_run(
     site = db.get(ProjectSite, site_id)
     if not site:
         raise HTTPException(status_code=404, detail="Project site not found")
+    require_project_write(db, project_id=site.project_id, user=current_user)
     if not site.is_enabled:
         raise HTTPException(
             status_code=409,
@@ -1237,6 +1239,7 @@ def start_project_sites(
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    require_project_write(db, project_id=project_id, user=current_user)
     sites = (
         db.query(ProjectSite)
         .filter(ProjectSite.project_id == project_id, ProjectSite.is_enabled.is_(True))
@@ -1515,11 +1518,12 @@ def retry_problem_pages(
     run_id: int,
     payload: RetryPagesIn,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("crawler.run")),
+    current_user: User = Depends(require_permission("crawler.run")),
 ):
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_project_write(db, project_id=run.project_id, user=current_user)
     if run.status in {"RUNNING", "CANCEL_REQUESTED"}:
         raise HTTPException(
             status_code=409,
@@ -1701,6 +1705,7 @@ def cancel_run(
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_project_write(db, project_id=run.project_id, user=current_user)
     mark_stale_running_runs_failed(db, project_site_id=run.project_site_id)
     db.refresh(run)
     persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
@@ -1767,8 +1772,9 @@ def list_runs(
     page: int | None = None,
     page_size: int = 20,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
+    require_project_read(db, project_id=project_id, user=current_user)
     mark_stale_running_runs_failed(db, project_id=project_id)
     query = (
         db.query(Run, CrawlPersona)
@@ -1792,11 +1798,12 @@ def list_runs(
 def list_active_project_jobs(
     project_id: int,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    require_project_read(db, project_id=project_id, user=current_user)
     sites = (
         db.query(ProjectSite)
         .filter(ProjectSite.project_id == project_id)
@@ -1825,10 +1832,12 @@ def list_site_runs(
     page: int | None = None,
     page_size: int = 20,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
-    if not db.get(ProjectSite, site_id):
+    site = db.get(ProjectSite, site_id)
+    if not site:
         raise HTTPException(status_code=404, detail="Project site not found")
+    require_project_read(db, project_id=site.project_id, user=current_user)
     mark_stale_running_runs_failed(db, project_site_id=site_id)
     query = (
         db.query(Run, CrawlPersona)
@@ -1854,11 +1863,12 @@ def list_site_runs(
 def get_active_site_job(
     site_id: int,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
     site = db.get(ProjectSite, site_id)
     if not site:
         raise HTTPException(status_code=404, detail="Project site not found")
+    require_project_read(db, project_id=site.project_id, user=current_user)
     job = find_active_site_job(db, project_site_id=site_id)
     if job is None:
         return {
@@ -1899,8 +1909,12 @@ def list_pages(
     page: int | None = None,
     page_size: int = 20,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    require_project_read(db, project_id=run.project_id, user=current_user)
     query = db.query(Page).filter(Page.run_id == run_id).order_by(Page.id.asc())
     paged = paginate_query(query, page=page, page_size=page_size)
     if page is None:
@@ -1913,10 +1927,12 @@ def list_pages(
 def list_page_catalog(
     run_id: int,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
-    if not db.get(Run, run_id):
+    run = db.get(Run, run_id)
+    if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_project_read(db, project_id=run.project_id, user=current_user)
     rows = (
         db.query(Page.id, Page.url, Page.status_code, Page.html_hash, Page.html)
         .filter(Page.run_id == run_id)
@@ -1940,11 +1956,12 @@ def get_page_context(
     run_id: int,
     url: str = Query(min_length=1),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_project_read(db, project_id=run.project_id, user=current_user)
     page = (
         db.query(Page)
         .filter(Page.run_id == run_id, Page.url == url)
@@ -1960,11 +1977,12 @@ def get_page_snapshot(
     run_id: int,
     url: str = Query(min_length=1),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_project_read(db, project_id=run.project_id, user=current_user)
     page = (
         db.query(Page)
         .filter(Page.run_id == run_id, Page.url == url)
@@ -2009,11 +2027,12 @@ def create_rendered_page_snapshot(
     run_id: int,
     url: str = Query(min_length=1),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("crawler.run")),
+    current_user: User = Depends(require_permission("crawler.run")),
 ):
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_project_write(db, project_id=run.project_id, user=current_user)
     page = db.query(Page).filter(Page.run_id == run_id, Page.url == url).first()
     if not page:
         raise HTTPException(status_code=404, detail="Page not found in this run")
@@ -2036,8 +2055,12 @@ def get_rendered_page_snapshot(
     run_id: int,
     url: str = Query(min_length=1),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    require_project_read(db, project_id=run.project_id, user=current_user)
     page = db.query(Page).filter(Page.run_id == run_id, Page.url == url).first()
     if not page:
         raise HTTPException(status_code=404, detail="Page not found in this run")
@@ -2052,11 +2075,12 @@ def create_page_consent_audit(
     run_id: int,
     url: str = Query(min_length=1),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("crawler.run")),
+    current_user: User = Depends(require_permission("crawler.run")),
 ):
     run = db.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    require_project_write(db, project_id=run.project_id, user=current_user)
     page = db.query(Page).filter(Page.run_id == run_id, Page.url == url).first()
     if not page:
         raise HTTPException(status_code=404, detail="Page not found in this run")

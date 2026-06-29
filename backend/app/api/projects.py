@@ -17,6 +17,12 @@ from app.db.models.crawl_persona import CrawlPersona
 from app.schemas.project import ProjectCreate, ProjectOut
 from app.db.models.project_site import ProjectSite
 from app.services.project_sites import create_primary_site_for_project
+from app.services.project_memberships import (
+    ensure_project_owner,
+    require_project_read,
+    require_project_write,
+    visible_projects_query,
+)
 from app.services.project_quotas import enforce_project_create_quota, enforce_site_settings_quota
 from app.services.scan_retention import delete_rendered_snapshot_artifacts_for_project
 
@@ -50,9 +56,9 @@ def list_projects(
     page: int | None = None,
     page_size: int = 20,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
-    query = db.query(Project).order_by(Project.id.desc())
+    query = visible_projects_query(db, current_user).order_by(Project.id.desc())
     paged = paginate_query(query, page=page, page_size=page_size)
     if page is None:
         return paged
@@ -119,6 +125,7 @@ def create_project(
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    ensure_project_owner(db, project_id=obj.id, user_id=current_user.id)
     db.commit()
     db.refresh(obj)
     db.refresh(site)
@@ -129,8 +136,9 @@ def create_project(
 def list_projects_summary(
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
+    visible_project_ids = visible_projects_query(db, current_user).with_entities(Project.id).subquery()
     last_run_sq = (
         db.query(
             Run.project_id.label("project_id"),
@@ -166,6 +174,7 @@ def list_projects_summary(
         .outerjoin(last_run_sq, last_run_sq.c.project_id == Project.id)
         .outerjoin(Run, Run.id == last_run_sq.c.last_run_id)
         .outerjoin(runs_count_sq, runs_count_sq.c.project_id == Project.id)
+        .filter(Project.id.in_(db.query(visible_project_ids.c.id)))
         .order_by(Project.id.desc(), ProjectSite.sort_order.asc(), ProjectSite.id.asc())
         .all()
     )
@@ -199,11 +208,12 @@ def list_projects_summary(
 def get_project(
     project_id: int,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
     obj = db.get(Project, project_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Project not found")
+    require_project_read(db, project_id=project_id, user=current_user)
     site = (
         db.query(ProjectSite)
         .filter(ProjectSite.project_id == project_id)
@@ -217,11 +227,12 @@ def get_project(
 def delete_project(
     project_id: int,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
     obj = db.get(Project, project_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Project not found")
+    require_project_write(db, project_id=project_id, user=current_user)
     delete_rendered_snapshot_artifacts_for_project(db, project_id=project_id)
     run_ids = db.query(Run.id).filter(Run.project_id == project_id)
     db.query(Page).filter(Page.run_id.in_(run_ids)).delete(synchronize_session=False)

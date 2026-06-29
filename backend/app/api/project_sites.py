@@ -28,6 +28,7 @@ from app.db.session import get_db
 from app.schemas.project_site import ProjectSiteCreate, ProjectSiteOut, ProjectSiteUpdate
 from app.services.crawl_personas import ensure_guest_persona
 from app.services.persona_secrets import decrypt_session_bundle, encrypt_session_bundle, summarize_session_bundle
+from app.services.project_memberships import require_project_read, require_project_write
 from app.services.project_sites import build_project_site
 from app.services.project_quotas import enforce_project_site_create_quota, enforce_site_settings_quota
 from app.services.site_anomalies import evaluate_project_site_anomalies
@@ -243,14 +244,37 @@ def _persona_payload(persona: CrawlPersona) -> dict:
     }
 
 
-def _get_project_or_404(db: Session, project_id: int) -> Project:
+def _get_project_or_404(
+    db: Session,
+    project_id: int,
+    *,
+    current_user: User | None = None,
+    require_write: bool = False,
+) -> Project:
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    if current_user is not None:
+        if require_write:
+            require_project_write(db, project_id=project_id, user=current_user)
+        else:
+            require_project_read(db, project_id=project_id, user=current_user)
     return project
 
 
-def _get_site_or_404(db: Session, project_id: int, site_id: int) -> ProjectSite:
+def _get_site_or_404(
+    db: Session,
+    project_id: int,
+    site_id: int,
+    *,
+    current_user: User | None = None,
+    require_write: bool = False,
+) -> ProjectSite:
+    if current_user is not None:
+        if require_write:
+            require_project_write(db, project_id=project_id, user=current_user)
+        else:
+            require_project_read(db, project_id=project_id, user=current_user)
     site = (
         db.query(ProjectSite)
         .filter(ProjectSite.id == site_id, ProjectSite.project_id == project_id)
@@ -384,9 +408,9 @@ def list_project_sites(
     project_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
-    _get_project_or_404(db, project_id)
+    _get_project_or_404(db, project_id, current_user=current_user)
     rows = (
         db.query(ProjectSite)
         .filter(ProjectSite.project_id == project_id)
@@ -402,9 +426,9 @@ def list_project_sites_summary(
     project_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
-    _get_project_or_404(db, project_id)
+    _get_project_or_404(db, project_id, current_user=current_user)
     last_run_sq = (
         db.query(
             Run.project_site_id.label("project_site_id"),
@@ -515,9 +539,9 @@ def get_project_site_anomaly(
     site_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user)
     anomaly = evaluate_project_site_anomalies(db, [site_id])[site_id]
     return success_response_payload(request, data=anomaly)
 
@@ -528,9 +552,9 @@ def list_project_site_personas(
     site_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("data.view")),
+    current_user: User = Depends(require_permission("data.view")),
 ):
-    site = _get_site_or_404(db, project_id, site_id)
+    site = _get_site_or_404(db, project_id, site_id, current_user=current_user)
     ensure_guest_persona(db, site)
     rows = (
         db.query(CrawlPersona)
@@ -548,9 +572,9 @@ def create_project_site_persona(
     payload: CrawlPersonaCreate,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     if payload.key == "guest" and payload.kind != "guest":
         raise HTTPException(status_code=422, detail="Reserved key guest must use kind guest.")
     if payload.is_default:
@@ -592,9 +616,9 @@ def update_project_site_persona_session_bundle(
     payload: PersonaSessionBundleIn,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     persona = (
         db.query(CrawlPersona)
         .filter(CrawlPersona.id == persona_id, CrawlPersona.project_site_id == site_id)
@@ -632,9 +656,9 @@ def delete_project_site_persona_session_bundle(
     persona_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     persona = (
         db.query(CrawlPersona)
         .filter(CrawlPersona.id == persona_id, CrawlPersona.project_site_id == site_id)
@@ -663,7 +687,7 @@ def create_project_site_persona_login_capture(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("projects.edit")),
 ):
-    site = _get_site_or_404(db, project_id, site_id)
+    site = _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     persona = (
         db.query(CrawlPersona)
         .filter(CrawlPersona.id == persona_id, CrawlPersona.project_site_id == site_id)
@@ -713,9 +737,9 @@ def get_project_site_persona_login_capture(
     capture_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     capture = (
         db.query(CrawlPersonaLoginCapture)
         .filter(
@@ -743,9 +767,9 @@ def complete_project_site_persona_login_capture(
     payload: PersonaLoginCaptureComplete,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     capture = _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
     persona = db.get(CrawlPersona, persona_id)
     if persona is None or persona.project_site_id != site_id:
@@ -778,9 +802,9 @@ def capture_project_site_persona_login_managed_state(
     payload: PersonaLoginCaptureManagedComplete,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     capture = _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
     persona = db.get(CrawlPersona, persona_id)
     if persona is None or persona.project_site_id != site_id:
@@ -818,9 +842,9 @@ def start_project_site_persona_login_managed_session(
     payload: PersonaLoginCaptureManagedSessionCreate,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     capture = _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
     try:
         session = start_managed_login_session(capture.login_url, ttl_minutes=payload.ttl_minutes)
@@ -855,9 +879,9 @@ def get_project_site_persona_login_managed_session(
     session_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
     try:
         session = get_managed_login_session(session_id)
@@ -881,9 +905,9 @@ def save_project_site_persona_login_managed_session(
     payload: PersonaLoginCaptureManagedSessionSave,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     capture = _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
     persona = db.get(CrawlPersona, persona_id)
     if persona is None or persona.project_site_id != site_id:
@@ -926,9 +950,9 @@ def cancel_project_site_persona_login_managed_session(
     session_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     _pending_login_capture_or_404(db, site_id=site_id, persona_id=persona_id, capture_id=capture_id)
     try:
         session = cancel_managed_login_session(session_id)
@@ -951,9 +975,9 @@ def cancel_project_site_persona_login_capture(
     capture_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_site_or_404(db, project_id, site_id)
+    _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     capture = (
         db.query(CrawlPersonaLoginCapture)
         .filter(
@@ -981,7 +1005,7 @@ def create_project_site(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("projects.edit")),
 ):
-    _get_project_or_404(db, project_id)
+    _get_project_or_404(db, project_id, current_user=current_user, require_write=True)
     role = get_user_role(current_user)
     enforce_project_site_create_quota(db, project_id=project_id, role=role)
     enforce_site_settings_quota(role=role, max_pages=payload.max_pages, concurrency=payload.concurrency)
@@ -1034,7 +1058,7 @@ def update_project_site(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("projects.edit")),
 ):
-    site = _get_site_or_404(db, project_id, site_id)
+    site = _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     changes = payload.model_dump(exclude_unset=True)
     nullable_fields = {
         key
@@ -1102,9 +1126,9 @@ def delete_project_site(
     site_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
-    site = _get_site_or_404(db, project_id, site_id)
+    site = _get_site_or_404(db, project_id, site_id, current_user=current_user, require_write=True)
     runs_count = db.query(Run).filter(Run.project_site_id == site_id).count()
     if runs_count:
         raise HTTPException(

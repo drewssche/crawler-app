@@ -23,6 +23,7 @@ from app.db.models.crawler_run_job import CrawlerRunJob
 from app.db.models.event_feed import EventFeed
 from app.db.models.login_history import LoginHistory
 from app.db.models.project import Project
+from app.db.models.project_membership import ProjectMembership
 from app.db.models.project_site import ProjectSite
 from app.db.models.page import Page
 from app.db.models.page_retry_attempt import PageRetryAttempt
@@ -285,7 +286,7 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
     project_id = created_project.json()["id"]
 
     primary_rows = _extract_success_data(
-        client.get(f"/projects/{project_id}/sites", headers=viewer_headers)
+        client.get(f"/projects/{project_id}/sites", headers=editor_headers)
     )
     assert len(primary_rows) == 1
     assert primary_rows[0]["role"] == "primary"
@@ -353,6 +354,57 @@ def test_project_sites_are_created_canonically_and_enforce_role_permissions():
 
     with SessionLocal() as db:
         assert db.query(ProjectSite).filter(ProjectSite.project_id == project_id).count() == 1
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_created_project_is_visible_only_to_members_and_admins():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        owner = _make_user(email="member-owner@test.local", role="editor", is_approved=True)
+        outsider = _make_user(email="member-outsider@test.local", role="viewer", is_approved=True)
+        admin = _make_user(email="member-admin@test.local", role="admin", is_admin=True, is_approved=True)
+        db.add_all([owner, outsider, admin])
+        db.commit()
+        owner_id = owner.id
+
+    client = TestClient(app)
+    created = client.post(
+        "/projects",
+        json={
+            "name": "Private project",
+            "start_url": "https://private-project.test/",
+            "allowed_domains_csv": "private-project.test",
+            "max_pages": 1,
+        },
+        headers=_auth_header("member-owner@test.local", role="editor"),
+    )
+    assert created.status_code == 200
+    project_id = created.json()["id"]
+
+    with SessionLocal() as db:
+        membership = (
+            db.query(ProjectMembership)
+            .filter(ProjectMembership.project_id == project_id, ProjectMembership.user_id == owner_id)
+            .one()
+        )
+        assert membership.role == "owner"
+
+    owner_view = client.get(f"/projects/{project_id}", headers=_auth_header("member-owner@test.local", role="editor"))
+    assert owner_view.status_code == 200
+    outsider_view = client.get(f"/projects/{project_id}", headers=_auth_header("member-outsider@test.local", role="viewer"))
+    assert outsider_view.status_code == 404
+    outsider_summary = client.get("/projects/summary", headers=_auth_header("member-outsider@test.local", role="viewer"))
+    assert outsider_summary.status_code == 200
+    assert all(row["id"] != project_id for row in outsider_summary.json()["data"])
+    admin_view = client.get(f"/projects/{project_id}", headers=_auth_header("member-admin@test.local", role="admin"))
+    assert admin_view.status_code == 200
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
