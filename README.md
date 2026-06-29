@@ -76,7 +76,7 @@ docker compose up -d --build backend
 
 Активный прогон можно остановить через `POST /runs/{run_id}/cancel`. В текущей синхронной архитектуре это не прерывает уже начатый HTTP-запрос мгновенно: backend ставит `CANCEL_REQUESTED`, а crawler завершает текущую страницу и переводит run в `CANCELLED` перед следующим шагом.
 
-Операционная диагностика crawler доступна admin/root-admin через `GET /crawler/readiness`: режим исполнения, активные runs, ожидание отмены, stale recovery и порог `CRAWL_STALE_RUNNING_SECONDS`.
+Операционная диагностика crawler доступна admin/root-admin через `GET /crawler/readiness`: режим исполнения, активные runs/jobs, ожидание отмены, stale recovery и пороги зависших состояний. В Project Dashboard для admin/root-admin эти данные показываются компактной панелью: readiness, режим `worker/sync`, queued/running/cancel-requested jobs и warning/critical issues.
 
 Каждый запуск сайта теперь создаёт durable job-запись `crawler_run_jobs`. В dev `docker-compose` включён worker-mode: backend ставит site-run в очередь, а отдельный `worker` service забирает queued jobs и выполняет crawl.
 

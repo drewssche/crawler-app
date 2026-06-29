@@ -333,6 +333,28 @@ function pendingJobRetryText(job: PendingCrawlerJob): string | null {
   return `Повторная ${attemptText}${waitText ? ` · ${waitText}` : ""}. Причина: ${reason}.`;
 }
 
+function formatSecondsCompact(seconds?: number | null): string {
+  if (seconds == null) return "—";
+  if (seconds < 60) return `${Math.max(0, Math.round(seconds))} сек`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} мин`;
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return restMinutes > 0 ? `${hours} ч ${restMinutes} мин` : `${hours} ч`;
+}
+
+function crawlerModeLabel(mode?: string): string {
+  if (mode === "worker") return "worker";
+  if (mode === "synchronous") return "sync";
+  return mode || "—";
+}
+
+function crawlerReadinessLabel(readiness: CrawlerReadiness): string {
+  if (readiness.ready && readiness.status === "ok") return "Готов";
+  if (readiness.status === "degraded") return "Есть предупреждения";
+  return readiness.ready ? "Готов" : "Требует внимания";
+}
+
 function pendingJobsFromActiveProjectJobs(
   payload: ActiveProjectJobsResponse,
   sites: ProjectSiteSummary[],
@@ -417,6 +439,7 @@ export default function ProjectDashboardPage() {
   const canRunCrawler = hasPermission(user?.role, "crawler.run");
   const canEditProject = hasPermission(user?.role, "projects.edit");
   const canViewEvents = hasPermission(user?.role, "events.view");
+  const canViewOperations = hasPermission(user?.role, "audit.view");
 
   function showRunToast(item: Omit<ToastItem, "id">) {
     const toast = { ...item, id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` };
@@ -555,9 +578,11 @@ export default function ProjectDashboardPage() {
     const timer = window.setInterval(() => {
       void loadRuns(selectedSiteId, true);
       if (project) void loadSiteSummaries(project.id, true);
-      apiGet<CrawlerReadiness>("/crawler/readiness")
-        .then(setCrawlerReadiness)
-        .catch(() => undefined);
+      if (canViewOperations) {
+        apiGet<CrawlerReadiness>("/crawler/readiness")
+          .then(setCrawlerReadiness)
+          .catch(() => undefined);
+      }
       if (hasPendingJob) {
         apiGet<ActiveSiteJobResponse>(`/runs/active-job/by-site/${selectedSiteId}`)
           .then((payload) => {
@@ -594,7 +619,23 @@ export default function ProjectDashboardPage() {
       }
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [selectedSiteId, runs, project, loadRuns, loadSiteSummaries, pendingCrawlerJobs, sites]);
+  }, [selectedSiteId, runs, project, loadRuns, loadSiteSummaries, pendingCrawlerJobs, sites, canViewOperations]);
+
+  useEffect(() => {
+    if (!project || !canViewOperations) {
+      setCrawlerReadiness(null);
+      return;
+    }
+    let cancelled = false;
+    apiGet<CrawlerReadiness>("/crawler/readiness")
+      .then((payload) => {
+        if (!cancelled) setCrawlerReadiness(payload);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [project, canViewOperations]);
 
   useEffect(() => {
     if (selectedSiteId === null) return;
@@ -688,7 +729,7 @@ export default function ProjectDashboardPage() {
           body: `Job #${result.job_id}. Worker заберёт задачу автоматически; можно оставаться на странице.`,
           accent: "info",
         });
-        void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
+        if (canViewOperations) void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
       }
       await Promise.all([
         loadRuns(selectedSite.id, true),
@@ -761,7 +802,7 @@ export default function ProjectDashboardPage() {
           }
           return next;
         });
-        void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
+        if (canViewOperations) void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
       }
       await loadSiteSummaries(project.id, true);
       if (selectedSiteId !== null) await loadRuns(selectedSiteId, true);
@@ -929,7 +970,7 @@ export default function ProjectDashboardPage() {
   const selectedPendingJob = selectedSiteId !== null ? pendingCrawlerJobs[selectedSiteId] || null : null;
   const selectedPendingRetryText = selectedPendingJob ? pendingJobRetryText(selectedPendingJob) : null;
   const pendingJobsCount = Object.keys(pendingCrawlerJobs).length;
-  const workerIssue = crawlerReadiness?.issues?.[0] || null;
+  const readinessIssues = crawlerReadiness?.issues || [];
   const structureUpdatePending = hasRunning || Boolean(selectedPendingJob) || runPending || projectRunPending;
   const runsTotal = runs.length;
   const changedLast = lastRun?.pages_changed ?? 0;
@@ -969,7 +1010,7 @@ export default function ProjectDashboardPage() {
               source: "site",
             },
           }));
-          void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
+          if (canViewOperations) void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
           return;
         }
         setPendingCrawlerJobs((current) => {
@@ -983,7 +1024,7 @@ export default function ProjectDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSiteId, selectedSite?.name, selectedSite?.default_persona?.label]);
+  }, [selectedSiteId, selectedSite?.name, selectedSite?.default_persona?.label, canViewOperations]);
 
   const domainOptions = useMemo(() => ["all", ...domains], [domains]);
 
@@ -1209,33 +1250,70 @@ export default function ProjectDashboardPage() {
                   </div>
                 ) : undefined}
               />
-              {(selectedPendingJob || workerIssue) && (
-                <Card variant={workerIssue ? "warning" : "hint"} style={{ padding: 10, display: "grid", gap: 6 }}>
-                  {selectedPendingJob && (
-                    <>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                        <StatusText tone="muted">Сайт ожидает worker</StatusText>
-                        <MetaText opacity={0.72}>Job #{selectedPendingJob.jobId} · {formatTimeAgo(selectedPendingJob.queuedAt)}</MetaText>
-                      </div>
-                      <MetaText opacity={0.82}>
-                        Задача поставлена в очередь как «{selectedPendingJob.personaLabel}». Когда worker возьмёт её в работу, здесь появится live-структура и текущий URL.
+              {canViewOperations && crawlerReadiness && (
+                <Card
+                  variant={crawlerReadiness.ready ? "hint" : "warning"}
+                  style={{ padding: 10, display: "grid", gap: 8 }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                      <AccentPill tone={crawlerReadiness.ready ? "success" : "warning"}>
+                        Crawler: {crawlerReadinessLabel(crawlerReadiness)}
+                      </AccentPill>
+                      <AccentPill tone={crawlerReadiness.mode === "worker" ? "info" : "neutral"}>
+                        Режим: {crawlerModeLabel(crawlerReadiness.mode)}
+                      </AccentPill>
+                    </div>
+                    <MetaText opacity={0.72}>Операционная панель admin/root-admin</MetaText>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                    <MetaText opacity={0.86}>Очередь: <strong>{crawlerReadiness.jobs?.queued ?? 0}</strong></MetaText>
+                    <MetaText opacity={0.86}>В работе: <strong>{crawlerReadiness.jobs?.running ?? 0}</strong></MetaText>
+                    {(crawlerReadiness.jobs?.cancel_requested ?? 0) > 0 && (
+                      <MetaText opacity={0.86}>Остановка: <strong>{crawlerReadiness.jobs?.cancel_requested}</strong></MetaText>
+                    )}
+                    {crawlerReadiness.jobs?.diagnostics?.oldest_queued_age_seconds != null && (
+                      <MetaText opacity={0.86}>
+                        Старейшая задача ждёт: <strong>{formatSecondsCompact(crawlerReadiness.jobs.diagnostics.oldest_queued_age_seconds)}</strong>
                       </MetaText>
-                      {selectedPendingRetryText && (
-                        <StatusText tone="warning" style={{ fontSize: 12 }}>
-                          {selectedPendingRetryText}
+                    )}
+                    {(crawlerReadiness.jobs?.recovered_expired_jobs ?? 0) > 0 && (
+                      <MetaText opacity={0.86}>
+                        Восстановлено зависших: <strong>{crawlerReadiness.jobs?.recovered_expired_jobs}</strong>
+                      </MetaText>
+                    )}
+                  </div>
+                  {readinessIssues.length > 0 && (
+                    <div style={{ display: "grid", gap: 4 }}>
+                      {readinessIssues.slice(0, 2).map((issue) => (
+                        <StatusText
+                          key={`${issue.code}-${issue.message}`}
+                          tone={issue.severity === "critical" ? "danger" : "warning"}
+                          style={{ fontSize: 12 }}
+                        >
+                          {issue.message}{issue.count ? ` · ${issue.count}` : ""}
                         </StatusText>
+                      ))}
+                      {readinessIssues.length > 2 && (
+                        <MetaText opacity={0.72}>Ещё предупреждений: {readinessIssues.length - 2}</MetaText>
                       )}
-                    </>
+                    </div>
                   )}
-                  {workerIssue && (
-                    <StatusText tone={workerIssue.severity === "critical" ? "danger" : "warning"}>
-                      {workerIssue.message}
+                </Card>
+              )}
+              {selectedPendingJob && (
+                <Card variant="hint" style={{ padding: 10, display: "grid", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <StatusText tone="muted">Сайт ожидает worker</StatusText>
+                    <MetaText opacity={0.72}>Job #{selectedPendingJob.jobId} · {formatTimeAgo(selectedPendingJob.queuedAt)}</MetaText>
+                  </div>
+                  <MetaText opacity={0.82}>
+                    Задача поставлена в очередь как «{selectedPendingJob.personaLabel}». Когда worker возьмёт её в работу, здесь появится live-структура и текущий URL.
+                  </MetaText>
+                  {selectedPendingRetryText && (
+                    <StatusText tone="warning" style={{ fontSize: 12 }}>
+                      {selectedPendingRetryText}
                     </StatusText>
-                  )}
-                  {crawlerReadiness?.jobs?.diagnostics?.oldest_queued_age_seconds != null && (
-                    <MetaText opacity={0.72}>
-                      Самая старая задача в очереди ждёт {crawlerReadiness.jobs.diagnostics.oldest_queued_age_seconds} сек.
-                    </MetaText>
                   )}
                 </Card>
               )}

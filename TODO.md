@@ -340,7 +340,8 @@
   - 11. Bounded job retries/backoff MVP готов: worker не падает процессом на retryable job failure; transient failures переоткладываются в `QUEUED` до `CRAWLER_JOB_MAX_ATTEMPTS` с `CRAWLER_JOB_RETRY_BACKOFF_SECONDS`, non-retryable настройки/session/scope failures остаются terminal. Page retry/backoff уже был реализован отдельно.
   - 12. Project-level active jobs recovery MVP готов: `GET /runs/active-jobs/by-project/{project_id}` возвращает все active jobs проекта с site/persona metadata; Project Dashboard восстанавливает queued pending jobs всех сайтов после reload, включая сценарий `Запустить все сайты`.
   - 13. Pending retry/backoff explanation MVP готов: Project Dashboard показывает в pending-блоке retryable worker job: следующую попытку `N из M`, время до повторного запуска и причину последнего сбоя.
-  - Следующее: более быстрый interrupt текущего fetch, lightweight operations panel для worker/readiness.
+  - 14. Lightweight operations panel MVP готов: Project Dashboard для admin/root-admin показывает readiness crawler, режим `worker/sync`, queued/running/cancel-requested jobs, возраст старейшей queued job, recovered expired jobs и первые degraded-issues; запросы readiness в UI теперь guard-ятся правом `audit.view`.
+  - Следующее: более быстрый interrupt текущего fetch; расширенная operations-страница/журнал worker-событий только после подтверждения, что компактной панели недостаточно.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -360,6 +361,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P0/P1 Operations UX — crawler readiness panel**.
+  - Что было: readiness был доступен через API, но в Project Dashboard admin видел только локальный pending-блок; роли без `audit.view` могли лишний раз обращаться к защищённому endpoint и получать silent 403.
+  - Что стало: добавлена компактная операционная панель для admin/root-admin: readiness, режим исполнения, queued/running/cancel-requested, старейшая queued job, recovered expired jobs и первые warning/critical issues. UI дергает `/crawler/readiness` только при наличии `audit.view`.
+  - Как проверить: зайти admin/root-admin в Project Dashboard; при worker-mode увидеть `Crawler: Готов`, `Режим: worker`, counters очереди. Typecheck: `corepack pnpm --dir frontend exec tsc -b`.
+  - Вклад в цели: production-like worker-mode стал наблюдаемым прямо в рабочем экране без отдельного API/debug шага (`high` friendly admin UX/operations).
 
 - [x] **P0/P1 Operations reliability — continuous crawler worker loop MVP**.
   - Что было: worker execution был доступен только как ручной `POST /runs/worker/tick`, то есть без постоянного обработчика очереди.
