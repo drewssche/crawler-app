@@ -368,7 +368,8 @@
   `include_total=false` закреплён для Users/Audit/Login history: API отдаёт страницу и `total: null`, не заставляя UI ждать дорогой `COUNT(*)` на больших таблицах. Проверка 2026-06-29: `docker compose exec backend env PYTHONPATH=/app pytest -q tests/test_api_integration.py -k "include_total_false"` → `3 passed`.
 - [x] Users vs RootAdmins device/session parity on staging-sized data (`MEDIUM`, release-gate).
   RootAdmins page использует тот же snapshot/profile enrichment для trusted-devices/session summary, что Users list; расхождение `trusted_devices_count` зафиксировано тестом. Проверка 2026-06-29: `docker compose exec backend env PYTHONPATH=/app pytest -q tests/test_api_integration.py -k "users_and_root_admins_pages_have_parity_for_trusted_devices_count"` → `1 passed`.
-- [ ] Cleanup synthetic load-test data near production (`LOW`, prefer restore/reset).
+- [x] Cleanup synthetic load-test data near production (`LOW`, prefer restore/reset).
+  No-op cleanup закрыт 2026-06-29: текущая dev DB не содержит старого synthetic scale-up из `AUDIT_DB_INDEX_2026-02-24` (`login_history=38`, `admin_audit_logs=6`, `trusted_devices=7`, `projects=1`, `runs=1`). Удаляющий скрипт не добавлялся намеренно: без подтверждённого мусора безопаснее restore/reset, чем частичный destructive SQL.
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
