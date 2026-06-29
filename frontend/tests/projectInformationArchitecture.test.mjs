@@ -25,6 +25,10 @@ test("project page exposes the consolidated three-tab information architecture",
   for (const removedLabel of ["Сводка", "Расписание", "Структура"]) {
     assert.doesNotMatch(source, new RegExp(`label: "${removedLabel}"`));
   }
+  assert.ok(
+    source.indexOf("<SegmentedControl") < source.indexOf("<ProjectSiteContextCards"),
+    "primary project tabs should stay above site context cards",
+  );
 });
 
 test("main tab contains last run metrics and structure", () => {
@@ -69,6 +73,7 @@ test("site cards select the context used by runs, history and structure", () => 
 test("project-level run preserves per-site outcomes", () => {
   assert.match(source, /\/runs\/start-project\/\$\{project\.id\}/);
   assert.match(source, /Запустить все сайты/);
+  assert.match(source, /projectHasMultipleSites &&/);
   assert.match(source, /Успешно:/);
   assert.match(source, /с ошибкой:/);
   assert.match(source, /result\.site_name/);

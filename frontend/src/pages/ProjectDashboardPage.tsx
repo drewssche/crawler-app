@@ -1009,6 +1009,7 @@ export default function ProjectDashboardPage() {
   const selectedPendingJob = selectedSiteId !== null ? pendingCrawlerJobs[selectedSiteId] || null : null;
   const selectedPendingRetryText = selectedPendingJob ? pendingJobRetryText(selectedPendingJob) : null;
   const pendingJobsCount = Object.keys(pendingCrawlerJobs).length;
+  const projectHasMultipleSites = sites.length > 1;
   const readinessIssues = crawlerReadiness?.issues || [];
   const selectedRunLaunchIssue = personaLaunchIssue(selectedRunPersona);
   const structureUpdatePending = hasRunning || Boolean(selectedPendingJob) || runPending || projectRunPending;
@@ -1263,14 +1264,16 @@ export default function ProjectDashboardPage() {
                     >
                       Сравнить страницы
                     </CardActionButton>
-                    <CardActionButton
-                      variant="secondary"
-                      onClick={() => void handleStartAllSites()}
-                      disabled={projectRunPending || runPending || pendingJobsCount > 0 || sites.every((site) => !site.is_enabled)}
-                      title={sites.every((site) => !site.is_enabled) ? "В проекте нет включённых сайтов." : undefined}
-                    >
-                      {projectRunPending ? "Ставим в очередь..." : pendingJobsCount > 0 ? `В очереди: ${pendingJobsCount}` : "Запустить все сайты"}
-                    </CardActionButton>
+                    {projectHasMultipleSites && (
+                      <CardActionButton
+                        variant="secondary"
+                        onClick={() => void handleStartAllSites()}
+                        disabled={projectRunPending || runPending || pendingJobsCount > 0 || sites.every((site) => !site.is_enabled)}
+                        title={sites.every((site) => !site.is_enabled) ? "В проекте нет включённых сайтов." : undefined}
+                      >
+                        {projectRunPending ? "Ставим в очередь..." : pendingJobsCount > 0 ? `В очереди: ${pendingJobsCount}` : "Запустить все сайты"}
+                      </CardActionButton>
+                    )}
                     <CardActionButton
                       variant="primary"
                       onClick={() => {
@@ -1296,53 +1299,70 @@ export default function ProjectDashboardPage() {
                   variant={crawlerReadiness.ready ? "hint" : "warning"}
                   style={{ padding: 10, display: "grid", gap: 8 }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                      <AccentPill tone={crawlerReadiness.ready ? "success" : "warning"}>
-                        Crawler: {crawlerReadinessLabel(crawlerReadiness)}
-                      </AccentPill>
-                      <AccentPill tone={crawlerReadiness.mode === "worker" ? "info" : "neutral"}>
-                        Режим: {crawlerModeLabel(crawlerReadiness.mode)}
-                      </AccentPill>
-                    </div>
-                    <MetaText opacity={0.72}>Операционная панель admin/root-admin</MetaText>
-                  </div>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                    <MetaText opacity={0.86}>Очередь: <strong>{crawlerReadiness.jobs?.queued ?? 0}</strong></MetaText>
-                    <MetaText opacity={0.86}>В работе: <strong>{crawlerReadiness.jobs?.running ?? 0}</strong></MetaText>
-                    {(crawlerReadiness.jobs?.cancel_requested ?? 0) > 0 && (
-                      <MetaText opacity={0.86}>Остановка: <strong>{crawlerReadiness.jobs?.cancel_requested}</strong></MetaText>
-                    )}
-                    {crawlerReadiness.jobs?.diagnostics?.oldest_queued_age_seconds != null && (
-                      <MetaText opacity={0.86}>
-                        Старейшая задача ждёт: <strong>{formatSecondsCompact(crawlerReadiness.jobs.diagnostics.oldest_queued_age_seconds)}</strong>
-                      </MetaText>
-                    )}
-                    {(crawlerReadiness.jobs?.recovered_expired_jobs ?? 0) > 0 && (
-                      <MetaText opacity={0.86}>
-                        Восстановлено зависших: <strong>{crawlerReadiness.jobs?.recovered_expired_jobs}</strong>
-                      </MetaText>
-                    )}
-                  </div>
-                  {readinessIssues.length > 0 && (
-                    <div style={{ display: "grid", gap: 4 }}>
-                      {readinessIssues.slice(0, 2).map((issue) => (
-                        <StatusText
-                          key={`${issue.code}-${issue.message}`}
-                          tone={issue.severity === "critical" ? "danger" : "warning"}
-                          style={{ fontSize: 12 }}
-                        >
-                          {issue.message}{issue.count ? ` · ${issue.count}` : ""}
-                        </StatusText>
-                      ))}
-                      {readinessIssues.length > 2 && (
-                        <MetaText opacity={0.72}>Ещё предупреждений: {readinessIssues.length - 2}</MetaText>
+                  <details>
+                    <summary
+                      style={{
+                        cursor: "pointer",
+                        listStyle: "none",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                        <AccentPill tone={crawlerReadiness.ready ? "success" : "warning"}>
+                          Crawler: {crawlerReadinessLabel(crawlerReadiness)}
+                        </AccentPill>
+                        <AccentPill tone={crawlerReadiness.mode === "worker" ? "info" : "neutral"}>
+                          Режим: {crawlerModeLabel(crawlerReadiness.mode)}
+                        </AccentPill>
+                        <MetaText opacity={0.82}>
+                          Очередь: <strong>{crawlerReadiness.jobs?.queued ?? 0}</strong> · В работе: <strong>{crawlerReadiness.jobs?.running ?? 0}</strong>
+                        </MetaText>
+                      </div>
+                      <MetaText opacity={0.72}>Операционная панель admin/root-admin · раскрыть детали</MetaText>
+                    </summary>
+                    <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                        <MetaText opacity={0.86}>Очередь: <strong>{crawlerReadiness.jobs?.queued ?? 0}</strong></MetaText>
+                        <MetaText opacity={0.86}>В работе: <strong>{crawlerReadiness.jobs?.running ?? 0}</strong></MetaText>
+                        {(crawlerReadiness.jobs?.cancel_requested ?? 0) > 0 && (
+                          <MetaText opacity={0.86}>Остановка: <strong>{crawlerReadiness.jobs?.cancel_requested}</strong></MetaText>
+                        )}
+                        {crawlerReadiness.jobs?.diagnostics?.oldest_queued_age_seconds != null && (
+                          <MetaText opacity={0.86}>
+                            Старейшая задача ждёт: <strong>{formatSecondsCompact(crawlerReadiness.jobs.diagnostics.oldest_queued_age_seconds)}</strong>
+                          </MetaText>
+                        )}
+                        {(crawlerReadiness.jobs?.recovered_expired_jobs ?? 0) > 0 && (
+                          <MetaText opacity={0.86}>
+                            Восстановлено зависших: <strong>{crawlerReadiness.jobs?.recovered_expired_jobs}</strong>
+                          </MetaText>
+                        )}
+                      </div>
+                      {readinessIssues.length > 0 && (
+                        <div style={{ display: "grid", gap: 4 }}>
+                          {readinessIssues.slice(0, 2).map((issue) => (
+                            <StatusText
+                              key={`${issue.code}-${issue.message}`}
+                              tone={issue.severity === "critical" ? "danger" : "warning"}
+                              style={{ fontSize: 12 }}
+                            >
+                              {issue.message}{issue.count ? ` · ${issue.count}` : ""}
+                            </StatusText>
+                          ))}
+                          {readinessIssues.length > 2 && (
+                            <MetaText opacity={0.72}>Ещё предупреждений: {readinessIssues.length - 2}</MetaText>
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
+                  </details>
                 </Card>
               )}
-              {selectedPendingJob && (
+              {activeTab !== "settings" && selectedPendingJob && (
                 <Card variant="hint" style={{ padding: 10, display: "grid", gap: 6 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                     <StatusText tone="muted">Сайт ожидает worker</StatusText>
@@ -1358,164 +1378,83 @@ export default function ProjectDashboardPage() {
                   )}
                 </Card>
               )}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <MetaText opacity={0.86}>
-                  Выберите сайт карточкой: показатели, структура, история и ручной запуск ниже относятся только к нему.
-                </MetaText>
-                {selectedRunPersona && (
-                  selectedRunLaunchIssue ? (
-                    <StatusText tone="warning" style={{ fontSize: 12 }}>
-                      Текущий запуск: {selectedRunPersona.label} · {selectedRunLaunchIssue}
-                    </StatusText>
-                  ) : (
-                    <MetaText opacity={0.72}>
-                      Текущий запуск: {selectedRunPersona.label}
+              {activeTab !== "settings" && (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <MetaText opacity={0.86}>
+                      Выберите сайт карточкой: показатели, структура, история и ручной запуск ниже относятся только к нему.
                     </MetaText>
-                  )
-                )}
-                <MetaText opacity={0.72}>
-                  Если ничего не менять, crawler пойдёт как {effectiveRunPersona.label}
-                  {effectiveRunPersona.kind === "guest"
-                    ? ": без cookies и авторизации."
-                    : effectiveRunPersona.has_secrets
-                      ? ": с подключённой сессией этой роли."
-                      : ": роль выбрана, но сессия ещё не подключена."}
-                </MetaText>
-              </div>
-              <Card variant="default" style={{ padding: 10, display: "grid", gap: 8 }}>
-                <SectionHeaderRow
-                  title={
-                    <div>
-                      <div style={{ fontWeight: 700 }}>Контекст просмотра структуры и истории</div>
-                      <MetaText opacity={0.68}>
-                        Контекст влияет на доступные страницы и содержимое. Сравнение Гость ↔ Партнёр — это сравнение доступов, а не обычная аномалия сайта.
-                      </MetaText>
-                    </div>
-                  }
-                  actions={
-                    <label style={{ display: "grid", gap: 3, minWidth: 220 }}>
-                      <MetaText opacity={0.72}>Показывать runs</MetaText>
-                      <UiSelect
-                        value={selectedViewPersonaId}
-                        disabled={sitePersonasLoading || runsLoading}
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          setSelectedViewPersonaId(value === "all" ? "all" : Number(value));
-                        }}
-                      >
-                        <option value="all">Все контексты</option>
-                        {sitePersonas
-                          .filter((persona) => persona.is_enabled !== false)
-                          .map((persona) => (
-                            <option key={persona.id} value={persona.id}>
-                              {persona.label}
-                            </option>
-                          ))}
-                      </UiSelect>
-                    </label>
-                  }
-                />
-                <MetaText opacity={0.72}>
-                  Сейчас открыт срез: {selectedViewPersona ? selectedViewPersona.label : "все контексты"}.
-                  {selectedViewPersona && selectedViewPersona.kind !== "guest" && !selectedViewPersona.has_secrets
-                    ? " У этой роли сессия не подключена, новые прогоны будут пропущены до подключения."
-                    : ""}
-                </MetaText>
-              </Card>
-              {hasRunning && (
-                <MetaText opacity={0.72}>
-                  Сейчас сканируется выбранный сайт. Остальные сайты проекта сохраняют независимую историю.
-                </MetaText>
+                    {selectedRunPersona && (
+                      selectedRunLaunchIssue ? (
+                        <StatusText tone="warning" style={{ fontSize: 12 }}>
+                          Текущий запуск: {selectedRunPersona.label} · {selectedRunLaunchIssue}
+                        </StatusText>
+                      ) : (
+                        <MetaText opacity={0.72}>
+                          Текущий запуск: {selectedRunPersona.label}
+                        </MetaText>
+                      )
+                    )}
+                    <MetaText opacity={0.72}>
+                      Если ничего не менять, crawler пойдёт как {effectiveRunPersona.label}
+                      {effectiveRunPersona.kind === "guest"
+                        ? ": без cookies и авторизации."
+                        : effectiveRunPersona.has_secrets
+                          ? ": с подключённой сессией этой роли."
+                          : ": роль выбрана, но сессия ещё не подключена."}
+                    </MetaText>
+                  </div>
+                  <Card variant="default" style={{ padding: 10, display: "grid", gap: 8 }}>
+                    <SectionHeaderRow
+                      title={
+                        <div>
+                          <div style={{ fontWeight: 700 }}>Контекст просмотра структуры и истории</div>
+                          <MetaText opacity={0.68}>
+                            Контекст влияет на доступные страницы и содержимое. Сравнение Гость ↔ Партнёр — это сравнение доступов, а не обычная аномалия сайта.
+                          </MetaText>
+                        </div>
+                      }
+                      actions={
+                        <label style={{ display: "grid", gap: 3, minWidth: 220 }}>
+                          <MetaText opacity={0.72}>Показывать runs</MetaText>
+                          <UiSelect
+                            value={selectedViewPersonaId}
+                            disabled={sitePersonasLoading || runsLoading}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setSelectedViewPersonaId(value === "all" ? "all" : Number(value));
+                            }}
+                          >
+                            <option value="all">Все контексты</option>
+                            {sitePersonas
+                              .filter((persona) => persona.is_enabled !== false)
+                              .map((persona) => (
+                                <option key={persona.id} value={persona.id}>
+                                  {persona.label}
+                                </option>
+                              ))}
+                          </UiSelect>
+                        </label>
+                      }
+                    />
+                    <MetaText opacity={0.72}>
+                      Сейчас открыт срез: {selectedViewPersona ? selectedViewPersona.label : "все контексты"}.
+                      {selectedViewPersona && selectedViewPersona.kind !== "guest" && !selectedViewPersona.has_secrets
+                        ? " У этой роли сессия не подключена, новые прогоны будут пропущены до подключения."
+                        : ""}
+                    </MetaText>
+                  </Card>
+                  {hasRunning && (
+                    <MetaText opacity={0.72}>
+                      Сейчас сканируется выбранный сайт. Остальные сайты проекта сохраняют независимую историю.
+                    </MetaText>
+                  )}
+                </>
               )}
             </div>
           </Card>
 
-          <Card>
-            <div style={{ display: "grid", gap: 10 }}>
-              <SectionHeaderRow
-                title={
-                  <div>
-                    <div style={{ fontWeight: 700 }}>Сайты проекта</div>
-                    <MetaText opacity={0.68}>Карточка задаёт рабочий контекст страницы.</MetaText>
-                  </div>
-                }
-                actions={<MetaText opacity={0.68}>{sites.length} сайт(а)</MetaText>}
-              />
-              {sitesLoading && <MetaText>Загрузка сайтов...</MetaText>}
-              {!sitesLoading && sites.length === 0 && (
-                <StatusText tone="warning">В проекте пока нет доступных сайтов.</StatusText>
-              )}
-              {!sitesLoading && sites.length > 0 && (
-                <ProjectSiteContextCards
-                  sites={sites}
-                  selectedSiteId={selectedSiteId}
-                  onSelect={(siteId) => {
-                    if (siteId === selectedSiteId) return;
-                    setSelectedSiteId(siteId);
-                    setRunsError("");
-                    setPagesError("");
-                    setStructureSearch("");
-                    setStructureViewFilter("all");
-                    setFailureDetailsOpen(false);
-                    setPageContextOpen(false);
-                    setDirectoryContext(null);
-                  }}
-                />
-              )}
-              {projectRunResult && (
-                <Card
-                  variant={projectRunResult.failed > 0 || projectRunResult.skipped > 0 ? "warning" : "hint"}
-                  style={{ display: "grid", gap: 6 }}
-                >
-                  <div style={{ fontWeight: 700 }}>
-                    {projectRunResult.results.some((row) => row.status === "QUEUED") ? "Общий запуск поставлен в очередь" : "Общий запуск завершён"}
-                  </div>
-                  <MetaText>
-                    В очереди: {projectRunResult.results.filter((row) => row.status === "QUEUED").length} · успешно: {projectRunResult.finished} · с ошибкой: {projectRunResult.failed} · пропущено: {projectRunResult.skipped}
-                  </MetaText>
-                  <div style={{ display: "grid", gap: 6 }}>
-                    {projectRunResult.results.map((result) => {
-                      const tone = result.status === "FAILED" ? "danger" : result.status === "SKIPPED" ? "warning" : result.status === "QUEUED" ? "muted" : "success";
-                      const personaLabel = result.persona_label || result.persona?.label || "Гость";
-                      const sessionText = result.session_message || (
-                        result.session_status === "not_required"
-                          ? "Сессия не нужна."
-                          : result.session_status === "connected"
-                            ? "Сессия подключена."
-                            : result.session_status ? `Сессия: ${result.session_status}.` : ""
-                      );
-                      return (
-                        <Card key={result.project_site_id} variant={tone === "success" ? "default" : "warning"} style={{ padding: 10, display: "grid", gap: 3 }}>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                            <StatusText tone={tone} style={{ fontSize: 12 }}>
-                              {result.status === "FINISHED"
-                                ? "Запущен и завершён"
-                                : result.status === "QUEUED"
-                                  ? "В очереди worker"
-                                  : result.status === "SKIPPED" ? "Пропущен" : "Ошибка"}
-                            </StatusText>
-                            <span style={{ fontWeight: 700 }}>{result.site_name}</span>
-                            {result.job_id && <MetaText opacity={0.78}>Job #{result.job_id}</MetaText>}
-                            <MetaText opacity={0.78}>Контекст: {personaLabel}</MetaText>
-                            {result.status === "FINISHED" && <RunRuntimePill runtime={result.crawl_runtime} />}
-                          </div>
-                          {sessionText && <MetaText opacity={0.72}>{sessionText}</MetaText>}
-                          {result.status === "QUEUED" && (
-                            <MetaText opacity={0.78}>Worker заберёт задачу автоматически. Прогресс выбранного сайта появится в live-блоке.</MetaText>
-                          )}
-                          {result.status !== "FINISHED" && result.status !== "QUEUED" && (
-                            <MetaText opacity={0.78}>{result.failure_message || result.failure_code || result.status}</MetaText>
-                          )}
-                        </Card>
-                      );
-                    })}
-                  </div>
-                </Card>
-              )}
-            </div>
-          </Card>
-
-          <Card style={{ padding: 10 }}>
+          <Card variant="hint" style={{ padding: 10 }}>
             <SegmentedControl
               value={activeTab}
               onChange={(next) => setActiveTab(next)}
@@ -1526,6 +1465,93 @@ export default function ProjectDashboardPage() {
               ]}
             />
           </Card>
+
+          {activeTab !== "settings" && (
+            <Card>
+              <div style={{ display: "grid", gap: 10 }}>
+                <SectionHeaderRow
+                  title={
+                    <div>
+                      <div style={{ fontWeight: 700 }}>Сайты проекта</div>
+                      <MetaText opacity={0.68}>Карточка задаёт рабочий контекст страницы.</MetaText>
+                    </div>
+                  }
+                  actions={<MetaText opacity={0.68}>{sites.length} сайт(а)</MetaText>}
+                />
+                {sitesLoading && <MetaText>Загрузка сайтов...</MetaText>}
+                {!sitesLoading && sites.length === 0 && (
+                  <StatusText tone="warning">В проекте пока нет доступных сайтов.</StatusText>
+                )}
+                {!sitesLoading && sites.length > 0 && (
+                  <ProjectSiteContextCards
+                    sites={sites}
+                    selectedSiteId={selectedSiteId}
+                    onSelect={(siteId) => {
+                      if (siteId === selectedSiteId) return;
+                      setSelectedSiteId(siteId);
+                      setRunsError("");
+                      setPagesError("");
+                      setStructureSearch("");
+                      setStructureViewFilter("all");
+                      setFailureDetailsOpen(false);
+                      setPageContextOpen(false);
+                      setDirectoryContext(null);
+                    }}
+                  />
+                )}
+                {projectRunResult && (
+                  <Card
+                    variant={projectRunResult.failed > 0 || projectRunResult.skipped > 0 ? "warning" : "hint"}
+                    style={{ display: "grid", gap: 6 }}
+                  >
+                    <div style={{ fontWeight: 700 }}>
+                      {projectRunResult.results.some((row) => row.status === "QUEUED") ? "Общий запуск поставлен в очередь" : "Общий запуск завершён"}
+                    </div>
+                    <MetaText>
+                      В очереди: {projectRunResult.results.filter((row) => row.status === "QUEUED").length} · успешно: {projectRunResult.finished} · с ошибкой: {projectRunResult.failed} · пропущено: {projectRunResult.skipped}
+                    </MetaText>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {projectRunResult.results.map((result) => {
+                        const tone = result.status === "FAILED" ? "danger" : result.status === "SKIPPED" ? "warning" : result.status === "QUEUED" ? "muted" : "success";
+                        const personaLabel = result.persona_label || result.persona?.label || "Гость";
+                        const sessionText = result.session_message || (
+                          result.session_status === "not_required"
+                            ? "Сессия не нужна."
+                            : result.session_status === "connected"
+                              ? "Сессия подключена."
+                              : result.session_status ? `Сессия: ${result.session_status}.` : ""
+                        );
+                        return (
+                          <Card key={result.project_site_id} variant={tone === "success" ? "default" : "warning"} style={{ padding: 10, display: "grid", gap: 3 }}>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                              <StatusText tone={tone} style={{ fontSize: 12 }}>
+                                {result.status === "FINISHED"
+                                  ? "Запущен и завершён"
+                                  : result.status === "QUEUED"
+                                    ? "В очереди worker"
+                                    : result.status === "SKIPPED" ? "Пропущен" : "Ошибка"}
+                              </StatusText>
+                              <span style={{ fontWeight: 700 }}>{result.site_name}</span>
+                              {result.job_id && <MetaText opacity={0.78}>Job #{result.job_id}</MetaText>}
+                              <MetaText opacity={0.78}>Контекст: {personaLabel}</MetaText>
+                              {result.status === "FINISHED" && <RunRuntimePill runtime={result.crawl_runtime} />}
+                            </div>
+                            {sessionText && <MetaText opacity={0.72}>{sessionText}</MetaText>}
+                            {result.status === "QUEUED" && (
+                              <MetaText opacity={0.78}>Worker заберёт задачу автоматически. Прогресс выбранного сайта появится в live-блоке.</MetaText>
+                            )}
+                            {result.status !== "FINISHED" && result.status !== "QUEUED" && (
+                              <MetaText opacity={0.78}>{result.failure_message || result.failure_code || result.status}</MetaText>
+                            )}
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                )}
+              </div>
+            </Card>
+          )}
 
           {activeTab === "main" && (
             <>
