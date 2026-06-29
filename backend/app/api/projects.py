@@ -17,6 +17,7 @@ from app.db.models.crawl_persona import CrawlPersona
 from app.schemas.project import ProjectCreate, ProjectOut
 from app.db.models.project_site import ProjectSite
 from app.services.project_sites import create_primary_site_for_project
+from app.services.scan_retention import delete_rendered_snapshot_artifacts_for_project
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -217,6 +218,7 @@ def delete_project(
     obj = db.get(Project, project_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Project not found")
+    delete_rendered_snapshot_artifacts_for_project(db, project_id=project_id)
     run_ids = db.query(Run.id).filter(Run.project_id == project_id)
     db.query(Page).filter(Page.run_id.in_(run_ids)).delete(synchronize_session=False)
     db.query(Run).filter(Run.project_id == project_id).delete(synchronize_session=False)

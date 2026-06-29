@@ -80,6 +80,8 @@ docker compose up -d --build backend
 
 Каждый запуск сайта теперь создаёт durable job-запись `crawler_run_jobs`. В dev `docker-compose` включён worker-mode: backend ставит site-run в очередь, а отдельный `worker` service забирает queued jobs и выполняет crawl.
 
+Raw artifacts хранятся ограниченно: по умолчанию сохраняется HTML/rendered snapshot только для двух последних успешных прогонов сайта в рамках одной crawl-persona (`latest + previous`). Старые runs, URL, HTTP-статусы, hashes, timings и агрегаты остаются в базе для истории и статистики, но тяжёлый HTML и rendered files очищаются. Лимит задаёт `SCAN_RAW_ARTIFACT_RUNS_TO_KEEP` от 1 до 20, по умолчанию 2.
+
 Readiness также контролирует production-состояние очереди:
 
 - `RUNNING/CANCEL_REQUESTED` job с истёкшей lease автоматически закрывается как failed/cancelled и освобождает сайт для нового запуска;

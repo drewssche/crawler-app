@@ -342,14 +342,11 @@
   - 13. Pending retry/backoff explanation MVP готов: Project Dashboard показывает в pending-блоке retryable worker job: следующую попытку `N из M`, время до повторного запуска и причину последнего сбоя.
   - 14. Lightweight operations panel MVP готов: Project Dashboard для admin/root-admin показывает readiness crawler, режим `worker/sync`, queued/running/cancel-requested jobs, возраст старейшей queued job, recovered expired jobs и первые degraded-issues; запросы readiness в UI теперь guard-ятся правом `audit.view`.
   - 15. Fast cancel interrupt MVP готов: во время run отдельный cancel-watchdog отслеживает `CANCEL_REQUESTED` и закрывает текущий HTTP/browser client, чтобы прервать зависший fetch быстрее сетевого timeout; частично оборванная текущая страница не сохраняется как page-error, уже сохранённые страницы остаются в истории.
-  - Следующее: extended operations/event log для worker только если компактной панели и notification center недостаточно; иначе перейти к governance/quotas или retention policy.
+  - Следующее: extended operations/event log для worker только если компактной панели и notification center недостаточно; иначе перейти к governance/quotas.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
   Canonical site/path scope и duplicate policy перенесены в epic `Site monitoring + scoped crawl + compare workspace`, чтобы не вести два конкурирующих контракта.
-
-- [ ] **HIGH Scan storage retention + permanent stats policy**.
-  Raw artifacts `latest + previous`; агрегаты сохраняются; project delete транзакционный и audit-safe.
 
 - [ ] **P1 Protected emergency root actor** (`HIGH`).
   Secret/config-backed break-glass actor, скрытый из обычных списков, недоступный для delete/demote, audit-visible.
@@ -362,6 +359,13 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **HIGH Scan storage retention + permanent stats policy**.
+  - Что было: каждый successful crawl сохранял HTML в `pages.html`, а rendered snapshots могли оставаться файлами без ограничителя объёма.
+  - Что стало: добавлен `scan_retention` policy: по умолчанию raw artifacts сохраняются только для двух последних `FINISHED` runs одного site+persona (`latest + previous`). У старых runs очищается тяжёлый HTML и удаляется rendered snapshot directory, но URL/status/hash/timing/run counters остаются для истории, статистики и baseline. Project delete дополнительно удаляет rendered snapshot files всех runs проекта.
+  - Настройка: `SCAN_RAW_ARTIFACT_RUNS_TO_KEEP` от 1 до 20, дефолт 2.
+  - Как проверить: `docker compose exec backend env PYTHONPATH=/app pytest -q tests/test_api_integration.py -k "scan_retention or inflight_fetch or cancel_requested or crawler_readiness or primary_site"`.
+  - Вклад в цели: storage growth ограничен без потери постоянных агрегатов (`high` production readiness).
 
 - [x] **P0/P1 Operations reliability — fast cancel interrupt**.
   - Что было: cancel гарантированно срабатывал между страницами, но уже начатый fetch мог ждать сетевой/browser timeout.

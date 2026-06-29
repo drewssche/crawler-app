@@ -51,6 +51,7 @@ from app.services.page_context import build_page_context
 from app.services.persona_secrets import decrypt_session_bundle
 from app.services.persona_browser_state import build_browser_persona_state
 from app.services.run_recovery import mark_stale_running_runs_failed
+from app.services.scan_retention import prune_site_persona_raw_artifacts
 from app.crawler.browser_fetcher import BrowserCrawlerError, BrowserPersonaClient, browser_state_requires_runtime
 from app.crawler.renderer import (
     get_rendered_snapshot_metadata,
@@ -1077,6 +1078,12 @@ def _execute_site_run(
         )
         db.commit()
         finish_job_from_run(db, job=job, run=run)
+        prune_site_persona_raw_artifacts(
+            db,
+            project_site_id=site.id,
+            crawl_persona_id=run.crawl_persona_id,
+        )
+        db.commit()
     except HTTPException as exc:
         if run.status != "FAILED":
             detail = exc.detail if isinstance(exc.detail, dict) else {}

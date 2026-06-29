@@ -2430,6 +2430,80 @@ def test_site_run_interrupts_inflight_fetch_after_cancel(monkeypatch):
     engine.dispose()
 
 
+def test_scan_retention_keeps_latest_and_previous_raw_artifacts(monkeypatch, tmp_path):
+    from app.services.scan_retention import prune_site_persona_raw_artifacts
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    monkeypatch.setenv("RENDERED_SNAPSHOT_DIR", str(tmp_path))
+
+    with SessionLocal() as db:
+        project = Project(name="Retention", start_url="https://retention.test", allowed_domains_csv="retention.test")
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        site = _add_primary_site(db, project)
+        persona = db.query(CrawlPersona).filter(CrawlPersona.project_site_id == site.id).first()
+        run_ids = []
+        page_ids = []
+        for index in range(3):
+            run = Run(
+                project_id=project.id,
+                project_site_id=site.id,
+                crawl_persona_id=persona.id if persona else None,
+                status="FINISHED",
+                pages_total=1,
+                pages_changed=index + 1,
+                pages_discovered=1,
+                finished_at=datetime.utcnow() + timedelta(seconds=index),
+            )
+            db.add(run)
+            db.flush()
+            page = Page(
+                run_id=run.id,
+                url=f"https://retention.test/{index}",
+                status_code=200,
+                content_type="text/html",
+                html=f"<html><body>run {index}</body></html>",
+                html_hash=f"hash-{index}",
+            )
+            db.add(page)
+            db.flush()
+            run_ids.append(run.id)
+            page_ids.append(page.id)
+            artifact_dir = tmp_path / str(run.id)
+            artifact_dir.mkdir()
+            (artifact_dir / "snapshot.jpeg").write_bytes(b"jpeg")
+            (artifact_dir / "snapshot.json").write_text("{}", encoding="utf-8")
+        db.commit()
+
+        result = prune_site_persona_raw_artifacts(
+            db,
+            project_site_id=site.id,
+            crawl_persona_id=persona.id if persona else None,
+            keep_successful_runs=2,
+        )
+        db.commit()
+
+        assert result == {"pruned_runs": 1, "pruned_pages": 1, "kept_runs": 2}
+        oldest_page = db.get(Page, page_ids[0])
+        middle_page = db.get(Page, page_ids[1])
+        latest_page = db.get(Page, page_ids[2])
+        assert oldest_page.html == ""
+        assert oldest_page.html_hash == "hash-0"
+        assert middle_page.html == "<html><body>run 1</body></html>"
+        assert latest_page.html == "<html><body>run 2</body></html>"
+        assert db.get(Run, run_ids[0]).pages_total == 1
+        assert db.get(Run, run_ids[0]).pages_changed == 1
+        assert not (tmp_path / str(run_ids[0])).exists()
+        assert (tmp_path / str(run_ids[1])).exists()
+        assert (tmp_path / str(run_ids[2])).exists()
+
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_empty_crawl_marks_run_failed(monkeypatch):
     from app.api import runs as runs_api
 

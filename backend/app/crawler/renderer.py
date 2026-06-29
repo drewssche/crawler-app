@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -158,6 +159,13 @@ def rendered_snapshot_file(page: Page) -> Path | None:
     if not image_path.exists() or not metadata_path.exists():
         return None
     return image_path
+
+
+def delete_rendered_snapshot_artifacts_for_run(run_id: int) -> None:
+    directory = snapshot_root() / str(run_id)
+    if not directory.exists():
+        return
+    shutil.rmtree(directory, ignore_errors=True)
 
 
 def render_page_snapshot(page: Page) -> dict:
