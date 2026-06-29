@@ -88,6 +88,7 @@ from app.services.reason_policy import (
     normalize_reason_text,
     resolve_admin_emails_reason_mode,
 )
+from app.services.storage_budget import build_storage_budget_payload
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger(__name__)
@@ -845,6 +846,7 @@ def get_settings_summary(
             "audit24h": {"value": audit24h_value, "source_ok": audit24h_ok},
             "monitoring": {"state": monitoring_state, "source_ok": monitoring_ok},
             "quota_overview": _build_quota_overview_payload(),
+            "storage_budget": build_storage_budget_payload(db),
         },
     )
 

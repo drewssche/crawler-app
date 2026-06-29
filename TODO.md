@@ -355,7 +355,8 @@
   Membership foundation и management UI готовы: `project_memberships`, creator=`owner`, admin/root-admin global access, viewer/editor видят только member-проекты; owner/admin могут добавлять, менять роль и удалять участников.
   Friendly quota UX готов: create project/site, settings save и site/project run показывают понятное объяснение лимита, текущего значения, запрошенного действия и следующего шага для пользователя.
   Quota overview готов: Settings показывает admin/root-admin read-only обзор лимитов ролей из `QUOTA_{ROLE}_...`.
-  Осталось: actor/project storage budgets и финальный audit устаревших compatibility-допусков по membership.
+  Storage budget visibility готова: Settings показывает budget из `SCAN_STORAGE_BUDGET_MB`, фактическое использование raw HTML/rendered snapshots, retention `SCAN_RAW_ARTIFACT_RUNS_TO_KEEP` и крупнейшие проекты по raw HTML. Жёсткая enforcement-очистка сверх retention пока не нужна: `scan_retention` уже ограничивает тяжёлые artifacts последних successful runs.
+  Осталось: финальный audit устаревших compatibility-допусков по membership.
   Canonical site/path scope и duplicate policy перенесены в epic `Site monitoring + scoped crawl + compare workspace`, чтобы не вести два конкурирующих контракта.
 
 - [x] **P1 Protected emergency root actor** (`HIGH`).

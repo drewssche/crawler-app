@@ -13,6 +13,7 @@ export type SettingsSummary = {
     source: string;
     roles: QuotaOverviewRole[];
   };
+  storageBudget: StorageBudget;
 };
 
 export type QuotaOverviewRole = {
@@ -25,6 +26,34 @@ export type QuotaOverviewRole = {
   max_bulk_sites_per_run: number;
 };
 
+export type StorageBudget = {
+  sourceOk: boolean;
+  status: "ok" | "warning" | "over_budget" | string;
+  budgetMb: number;
+  usedMb: number;
+  usagePercent: number;
+  rawHtmlMb: number;
+  renderedSnapshotsMb: number;
+  source: string;
+  retention: {
+    rawArtifactRunsToKeep: number;
+    source: string;
+  };
+  totals: {
+    projects: number;
+    runs: number;
+    pages: number;
+    pagesWithRawHtml: number;
+  };
+  topProjects: Array<{
+    projectId: number;
+    name: string;
+    runs: number;
+    pages: number;
+    rawHtmlMb: number;
+  }>;
+};
+
 type SettingsSummaryResponse = {
   pending_users?: { value?: number | null; source_ok?: boolean };
   root_admins?: { value?: number | null; source_ok?: boolean };
@@ -35,6 +64,33 @@ type SettingsSummaryResponse = {
     source_ok?: boolean;
     source?: string;
     roles?: QuotaOverviewRole[];
+  };
+  storage_budget?: {
+    source_ok?: boolean;
+    status?: string;
+    budget_mb?: number;
+    used_mb?: number;
+    usage_percent?: number;
+    raw_html_mb?: number;
+    rendered_snapshots_mb?: number;
+    source?: string;
+    retention?: {
+      raw_artifact_runs_to_keep?: number;
+      source?: string;
+    };
+    totals?: {
+      projects?: number;
+      runs?: number;
+      pages?: number;
+      pages_with_raw_html?: number;
+    };
+    top_projects?: Array<{
+      project_id?: number;
+      name?: string;
+      runs?: number;
+      pages?: number;
+      raw_html_mb?: number;
+    }>;
   };
 };
 
@@ -78,6 +134,39 @@ function normalizeSummary(raw: SettingsSummaryResponse | null | undefined): Sett
       sourceOk: raw?.quota_overview?.source_ok !== false,
       source: raw?.quota_overview?.source || "env:QUOTA_{ROLE}_...",
       roles: Array.isArray(raw?.quota_overview?.roles) ? raw.quota_overview.roles : [],
+    },
+    storageBudget: {
+      sourceOk: raw?.storage_budget?.source_ok !== false,
+      status: raw?.storage_budget?.status || "ok",
+      budgetMb: typeof raw?.storage_budget?.budget_mb === "number" ? raw.storage_budget.budget_mb : 0,
+      usedMb: typeof raw?.storage_budget?.used_mb === "number" ? raw.storage_budget.used_mb : 0,
+      usagePercent: typeof raw?.storage_budget?.usage_percent === "number" ? raw.storage_budget.usage_percent : 0,
+      rawHtmlMb: typeof raw?.storage_budget?.raw_html_mb === "number" ? raw.storage_budget.raw_html_mb : 0,
+      renderedSnapshotsMb: typeof raw?.storage_budget?.rendered_snapshots_mb === "number" ? raw.storage_budget.rendered_snapshots_mb : 0,
+      source: raw?.storage_budget?.source || "SCAN_STORAGE_BUDGET_MB",
+      retention: {
+        rawArtifactRunsToKeep: typeof raw?.storage_budget?.retention?.raw_artifact_runs_to_keep === "number"
+          ? raw.storage_budget.retention.raw_artifact_runs_to_keep
+          : 2,
+        source: raw?.storage_budget?.retention?.source || "SCAN_RAW_ARTIFACT_RUNS_TO_KEEP",
+      },
+      totals: {
+        projects: typeof raw?.storage_budget?.totals?.projects === "number" ? raw.storage_budget.totals.projects : 0,
+        runs: typeof raw?.storage_budget?.totals?.runs === "number" ? raw.storage_budget.totals.runs : 0,
+        pages: typeof raw?.storage_budget?.totals?.pages === "number" ? raw.storage_budget.totals.pages : 0,
+        pagesWithRawHtml: typeof raw?.storage_budget?.totals?.pages_with_raw_html === "number"
+          ? raw.storage_budget.totals.pages_with_raw_html
+          : 0,
+      },
+      topProjects: Array.isArray(raw?.storage_budget?.top_projects)
+        ? raw.storage_budget.top_projects.map((row) => ({
+          projectId: typeof row.project_id === "number" ? row.project_id : 0,
+          name: row.name || "Проект",
+          runs: typeof row.runs === "number" ? row.runs : 0,
+          pages: typeof row.pages === "number" ? row.pages : 0,
+          rawHtmlMb: typeof row.raw_html_mb === "number" ? row.raw_html_mb : 0,
+        }))
+        : [],
     },
   };
 }

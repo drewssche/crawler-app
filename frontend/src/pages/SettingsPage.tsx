@@ -6,6 +6,7 @@ import { hasPermission } from "../utils/permissions";
 import {
   getSettingsSummaryCached,
   type QuotaOverviewRole,
+  type StorageBudget,
 } from "../utils/settingsStatsCache";
 import {
   subscribeEventCenterUnread,
@@ -141,6 +142,78 @@ function QuotaOverviewCard({
   );
 }
 
+function StorageBudgetCard({ budget }: { budget: StorageBudget | null }) {
+  if (!budget) return null;
+  const toneColor = budget.status === "over_budget" ? "#ff8f8f" : budget.status === "warning" ? "#ffd27d" : "#8ee59c";
+  return (
+    <Card>
+      <div style={{ display: "grid", gap: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontWeight: 800 }}>Storage budget</div>
+            <div style={{ marginTop: 4, fontSize: 12, opacity: 0.75 }}>
+              Контроль роста raw HTML и rendered snapshots. Автоочистка уже держит raw artifacts только для последних успешных runs.
+            </div>
+          </div>
+          <div
+            style={{
+              border: `1px solid ${toneColor}`,
+              color: toneColor,
+              borderRadius: 999,
+              padding: "3px 8px",
+              fontSize: 11,
+              fontWeight: 800,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {budget.status}
+          </div>
+        </div>
+        {!budget.sourceOk && <div style={{ color: "#ffc9c9", fontSize: 13 }}>Источник storage статистики временно недоступен.</div>}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))", gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 11, opacity: 0.68 }}>Использовано</div>
+            <div style={{ fontWeight: 800 }}>{budget.usedMb} / {budget.budgetMb} MB</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, opacity: 0.68 }}>Заполнение</div>
+            <div style={{ fontWeight: 800 }}>{budget.usagePercent}%</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, opacity: 0.68 }}>Raw HTML</div>
+            <div style={{ fontWeight: 800 }}>{budget.rawHtmlMb} MB</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, opacity: 0.68 }}>Rendered snapshots</div>
+            <div style={{ fontWeight: 800 }}>{budget.renderedSnapshotsMb} MB</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.78 }}>
+          Retention: хранить raw artifacts для последних {budget.retention.rawArtifactRunsToKeep} successful runs на site+persona.
+          Источники: {budget.source}, {budget.retention.source}.
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.66 }}>
+          Env keys: SCAN_STORAGE_BUDGET_MB и SCAN_RAW_ARTIFACT_RUNS_TO_KEEP.
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.78 }}>
+          Всего: проектов {budget.totals.projects}, runs {budget.totals.runs}, страниц {budget.totals.pages}, с raw HTML {budget.totals.pagesWithRawHtml}.
+        </div>
+        {budget.topProjects.length > 0 && (
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>Крупнейшие проекты по raw HTML</div>
+            {budget.topProjects.map((project) => (
+              <div key={project.projectId} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{project.name}</span>
+                <span style={{ whiteSpace: "nowrap" }}>{project.rawHtmlMb} MB · {project.runs} runs · {project.pages} pages</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -152,6 +225,7 @@ export default function SettingsPage() {
   const [quotaRoles, setQuotaRoles] = useState<QuotaOverviewRole[]>([]);
   const [quotaSource, setQuotaSource] = useState("env:QUOTA_{ROLE}_...");
   const [quotaSourceOk, setQuotaSourceOk] = useState(true);
+  const [storageBudget, setStorageBudget] = useState<StorageBudget | null>(null);
   const [diagUsersOk, setDiagUsersOk] = useState(true);
   const [diagRootAdminsOk, setDiagRootAdminsOk] = useState(true);
   const [diagEventsOk, setDiagEventsOk] = useState(true);
@@ -180,6 +254,7 @@ export default function SettingsPage() {
                 setQuotaRoles(summary.quotaOverview.roles);
                 setQuotaSource(summary.quotaOverview.source);
                 setQuotaSourceOk(summary.quotaOverview.sourceOk);
+                setStorageBudget(summary.storageBudget);
               }
               if (canManageRootAdmins) {
                 setRootAdminsCount(summary.rootAdmins.value);
@@ -203,6 +278,7 @@ export default function SettingsPage() {
                 setDiagUsersOk(false);
                 setQuotaRoles([]);
                 setQuotaSourceOk(false);
+                setStorageBudget(null);
               }
               if (canManageRootAdmins) {
                 setRootAdminsCount(null);
@@ -283,7 +359,10 @@ export default function SettingsPage() {
         )}
 
         {canManageUsers && (
-          <QuotaOverviewCard roles={quotaRoles} source={quotaSource} sourceOk={quotaSourceOk} />
+          <>
+            <QuotaOverviewCard roles={quotaRoles} source={quotaSource} sourceOk={quotaSourceOk} />
+            <StorageBudgetCard budget={storageBudget} />
+          </>
         )}
 
         {(canViewEvents || canViewAudit) && (

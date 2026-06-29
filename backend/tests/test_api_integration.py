@@ -3805,6 +3805,7 @@ def test_settings_summary_endpoint_returns_domains():
     assert "audit24h" in data
     assert "monitoring" in data
     assert "quota_overview" in data
+    assert "storage_budget" in data
     assert data["pending_users"]["source_ok"] in {True, False}
     assert data["root_admins"]["source_ok"] in {True, False}
     assert data["events_unread"]["source_ok"] in {True, False}
@@ -3814,6 +3815,9 @@ def test_settings_summary_endpoint_returns_domains():
     quota_roles = {row["role"]: row for row in data["quota_overview"]["roles"]}
     assert {"viewer", "editor", "admin", "root-admin"} <= set(quota_roles)
     assert quota_roles["editor"]["max_projects"] >= 1
+    assert data["storage_budget"]["source_ok"] is True
+    assert data["storage_budget"]["retention"]["raw_artifact_runs_to_keep"] >= 1
+    assert data["storage_budget"]["totals"]["projects"] >= 0
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

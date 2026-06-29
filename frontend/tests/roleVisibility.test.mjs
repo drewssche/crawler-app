@@ -62,3 +62,11 @@ test("settings exposes read-only project quota overview for admins", () => {
   assert.match(settingsSource, /max_active_jobs_per_user/);
   assert.match(settingsSource, /max_bulk_sites_per_run/);
 });
+
+test("settings exposes storage budget and retention visibility", () => {
+  assert.match(settingsSource, /StorageBudgetCard/);
+  assert.match(settingsSource, /Storage budget/);
+  assert.match(settingsSource, /SCAN_STORAGE_BUDGET_MB/);
+  assert.match(settingsSource, /SCAN_RAW_ARTIFACT_RUNS_TO_KEEP/);
+  assert.match(settingsSource, /Rendered snapshots/);
+});
