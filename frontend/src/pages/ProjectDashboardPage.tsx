@@ -1825,57 +1825,36 @@ export default function ProjectDashboardPage() {
                     <Card variant="hint" style={{ padding: 10, display: "grid", gap: 6 }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <span
-                          className="project-run-spinner"
-                          aria-hidden="true"
-                          style={{
-                            width: 14,
-                            height: 14,
-                            borderRadius: "50%",
-                            border: "2px solid currentColor",
-                            borderTopColor: "transparent",
-                            display: "inline-block",
-                            flex: "0 0 auto",
-                          }}
-                        />
-                        <StatusText tone="success">
-                          {selectedPendingJob
-                            ? "Задача ожидает свободный worker"
-                            : projectRunPending
-                              ? "Сайты проекта ставятся в очередь"
-                              : "Идёт сканирование выбранного сайта"}
-                        </StatusText>
+                          <span
+                            className="project-run-spinner"
+                            aria-hidden="true"
+                            style={{
+                              width: 14,
+                              height: 14,
+                              borderRadius: "50%",
+                              border: "2px solid currentColor",
+                              borderTopColor: "transparent",
+                              display: "inline-block",
+                              flex: "0 0 auto",
+                            }}
+                          />
+                          <StatusText tone="success">
+                            {selectedPendingJob
+                              ? "Задача ожидает свободный worker"
+                              : projectRunPending
+                                ? "Сайты проекта ставятся в очередь"
+                                : "Идёт сканирование выбранного сайта"}
+                          </StatusText>
                         </div>
                         <MetaText opacity={0.72}>Прошло: {runElapsedSeconds} сек.</MetaText>
                       </div>
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
-                        <span style={{ color: "#8fd18f" }}>✓ Запуск принят</span>
-                        <span style={{ opacity: 0.45 }}>→</span>
-                        <span className={selectedPendingJob ? "project-run-live-stage" : undefined}>
-                          {selectedPendingJob ? "● В очереди worker" : "✓ Worker взял задачу"}
-                        </span>
-                        <span style={{ opacity: 0.45 }}>→</span>
-                        <span className={!selectedPendingJob ? "project-run-live-stage" : undefined} style={{ opacity: selectedPendingJob ? 0.62 : undefined }}>
-                          {!selectedPendingJob ? "● Crawler обходит страницы" : "Обход страниц"}
-                        </span>
-                        <span style={{ opacity: 0.45 }}>→</span>
-                        <span style={{ opacity: 0.62 }}>Обновление структуры</span>
-                      </div>
-                      {selectedPendingJob && (
-                        <Card style={{ padding: 8, display: "grid", gap: 4 }}>
-                          <MetaText>
-                            В очереди: job #{selectedPendingJob.jobId} · контекст {selectedPendingJob.personaLabel}
-                          </MetaText>
-                          {selectedPendingRetryText && (
-                            <StatusText tone="warning" style={{ fontSize: 12 }}>
-                              {selectedPendingRetryText}
-                            </StatusText>
-                          )}
-                          <MetaText opacity={0.72}>
-                            Это нормальный этап worker-mode. Если очередь зависнет, readiness покажет предупреждение.
-                          </MetaText>
-                        </Card>
-                      )}
+                      <MetaText opacity={0.72}>
+                        {structureIsLive
+                          ? `Уже добавлено в текущий срез: ${lastRunPages.length}. Новые страницы появляются автоматически; дерево не прокручивается само и не сбивает ваше место.`
+                          : structureRun
+                            ? "Пока показываем последнюю готовую структуру. После завершения нужного прогона она обновится автоматически."
+                            : "Собираем первый срез. Структура появится автоматически после завершения нужного прогона."}
+                      </MetaText>
                       {liveStructureRun?.current_url && (
                         <Card style={{ padding: 8, display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
                           <span
@@ -1908,13 +1887,41 @@ export default function ProjectDashboardPage() {
                           <span style={{ opacity: 0.72 }}>Текущий батч: {liveStructureRun.current_batch_no}</span>
                         </div>
                       )}
-                      <MetaText opacity={0.72}>
-                        {structureIsLive
-                          ? `Уже добавлено в текущий срез: ${lastRunPages.length}. Новые страницы появляются автоматически; дерево не прокручивается само и не сбивает ваше место.`
-                          : structureRun
-                          ? "Пока показываем последнюю готовую структуру. После завершения нужного прогона она обновится автоматически."
-                          : "Собираем первый срез. Структура появится автоматически после завершения нужного прогона."}
-                      </MetaText>
+                      <details>
+                        <summary style={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>
+                          Подробности процесса
+                        </summary>
+                        <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+                            <span style={{ color: "#8fd18f" }}>✓ Запуск принят</span>
+                            <span style={{ opacity: 0.45 }}>→</span>
+                            <span className={selectedPendingJob ? "project-run-live-stage" : undefined}>
+                              {selectedPendingJob ? "● В очереди worker" : "✓ Worker взял задачу"}
+                            </span>
+                            <span style={{ opacity: 0.45 }}>→</span>
+                            <span className={!selectedPendingJob ? "project-run-live-stage" : undefined} style={{ opacity: selectedPendingJob ? 0.62 : undefined }}>
+                              {!selectedPendingJob ? "● Crawler обходит страницы" : "Обход страниц"}
+                            </span>
+                            <span style={{ opacity: 0.45 }}>→</span>
+                            <span style={{ opacity: 0.62 }}>Обновление структуры</span>
+                          </div>
+                          {selectedPendingJob && (
+                            <Card style={{ padding: 8, display: "grid", gap: 4 }}>
+                              <MetaText>
+                                В очереди: job #{selectedPendingJob.jobId} · контекст {selectedPendingJob.personaLabel}
+                              </MetaText>
+                              {selectedPendingRetryText && (
+                                <StatusText tone="warning" style={{ fontSize: 12 }}>
+                                  {selectedPendingRetryText}
+                                </StatusText>
+                              )}
+                              <MetaText opacity={0.72}>
+                                Это нормальный этап worker-mode. Если очередь зависнет, readiness покажет предупреждение.
+                              </MetaText>
+                            </Card>
+                          )}
+                        </div>
+                      </details>
                     </Card>
                   )}
                   {!structureUpdatePending && structureRun && (
@@ -1926,11 +1933,7 @@ export default function ProjectDashboardPage() {
                         title={
                           <div>
                             <div style={{ fontWeight: 700 }}>Прогон завершён — структура готова</div>
-                            <MetaText opacity={0.68}>
-                              {formatRunTitle(structureRun.started_at)} · {formatDuration(structureRun.started_at, structureRun.finished_at)}
-                            </MetaText>
-                            <MetaText opacity={0.68}>Контекст проверки: {structureRun.persona?.label || "Гость"}</MetaText>
-                            <div style={{ marginTop: 4 }}><RunRuntimePill runtime={structureRun.crawl_runtime} /></div>
+                            <MetaText opacity={0.68}>Последний готовый срез выбранного сайта.</MetaText>
                           </div>
                         }
                         actions={<ProjectRunBadge status={structureRun.status} />}
@@ -1943,26 +1946,18 @@ export default function ProjectDashboardPage() {
                           Ошибок: {structureStatusCounts.error}
                         </span>
                       </div>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        {structureStatusCounts.added > 0 && (
-                          <CardActionButton
-                            compact
-                            variant="secondary"
-                            onClick={() => setStructureViewFilter("added")}
-                          >
-                            Показать новые
-                          </CardActionButton>
-                        )}
-                        {structureStatusCounts.error > 0 && (
-                          <CardActionButton
-                            compact
-                            variant="secondary"
-                            onClick={() => setStructureViewFilter("error")}
-                          >
-                            Показать ошибки
-                          </CardActionButton>
-                        )}
-                      </div>
+                      <details>
+                        <summary style={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>
+                          Детали среза
+                        </summary>
+                        <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                          <MetaText opacity={0.68}>
+                            {formatRunTitle(structureRun.started_at)} · {formatDuration(structureRun.started_at, structureRun.finished_at)}
+                          </MetaText>
+                          <MetaText opacity={0.68}>Контекст проверки: {structureRun.persona?.label || "Гость"}</MetaText>
+                          <div><RunRuntimePill runtime={structureRun.crawl_runtime} /></div>
+                        </div>
+                      </details>
                     </Card>
                   )}
                   {pagesLoading && (
@@ -2008,7 +2003,7 @@ export default function ProjectDashboardPage() {
                     </Card>
                   )}
                   <SectionHeaderRow
-                    title={<ListTotalMeta label="Узлов (текущий срез)" total={structureRows.length} />}
+                    title={<ListTotalMeta label="Страницы в структуре" total={structureRows.length} />}
                     actions={
                       structureRows.length > 0 ? (
                         <SegmentedControl
@@ -2031,7 +2026,14 @@ export default function ProjectDashboardPage() {
                   )}
                   {(!pagesLoading || structureRows.length > 0) && (
                     <>
-                      <StructureLegendHint />
+                      <details>
+                        <summary style={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>
+                          Легенда структуры
+                        </summary>
+                        <div style={{ marginTop: 8 }}>
+                          <StructureLegendHint />
+                        </div>
+                      </details>
                       <ClearableInput
                         value={structureSearch}
                         onChange={setStructureSearch}

@@ -182,9 +182,13 @@ test("structure keeps users informed while a crawl or refresh is running", () =>
   assert.match(source, /В очереди:/);
   assert.match(source, /currentBatchNo/);
   assert.match(source, /дерево не прокручивается само/);
-  assert.match(source, /Показать новые/);
-  assert.match(source, /Показать ошибки/);
+  assert.match(source, /Подробности процесса/);
+  assert.match(source, /Детали среза/);
+  assert.match(source, /Страницы в структуре/);
+  assert.match(source, /Легенда структуры/);
   assert.match(source, /Все ·/);
+  assert.match(source, /Новые ·/);
+  assert.match(source, /Ошибки ·/);
   assert.match(source, /Прогон завершён — структура готова/);
   assert.match(structureSource, /structure-tree-row-live-added/);
   assert.match(structureSource, /✓ готово/);
