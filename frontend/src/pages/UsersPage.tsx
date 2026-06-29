@@ -568,16 +568,19 @@ const UsersListRow = memo(
     const isSelf = !!actorEmail && row.email.toLowerCase() === actorEmail;
     const identityBadges =
       row.is_approved || row.is_root_admin ? (
-        <IdentityBadgeRow role={resolveDisplayRole(row)} showSelf={isSelf} />
-      ) : isSelf ? (
-        <RelevanceBadge relevance="self" />
+        <IdentityBadgeRow role={resolveDisplayRole(row)} />
       ) : null;
 
     return (
       <SelectableListRow
         checked={checked}
         onToggle={() => onToggle(row.id)}
-        title={<HighlightedText value={row.email} query={searchQuery} />}
+        title={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <HighlightedText value={row.email} query={searchQuery} />
+            {isSelf && <RelevanceBadge relevance="self" />}
+          </span>
+        }
         badges={
           <UserBadgeGroups
             identity={identityBadges}

@@ -13,9 +13,12 @@ import Card from "../ui/Card";
 import CardActionButton from "../ui/CardActionButton";
 import CardFooterActions from "../ui/CardFooterActions";
 import ConfirmDialog from "../ui/ConfirmDialog";
+import RelevanceBadge from "../ui/RelevanceBadge";
 import SectionHeaderRow from "../ui/SectionHeaderRow";
 import { MetaText, StatusText } from "../ui/StatusText";
 import UiSelect from "../ui/UiSelect";
+import { roleBadgeMeta } from "../users/userBadgeCatalog";
+import type { DisplayRole } from "../../utils/roles";
 
 const ROLE_OPTIONS: Array<{ value: ProjectMemberRole; label: string; hint: string; tone: "info" | "success" | "neutral" }> = [
   {
@@ -67,6 +70,10 @@ function RolePill({ role }: { role: ProjectMemberRole }) {
       {meta.label}
     </AccentPill>
   );
+}
+
+function systemRoleLabel(role: string | null | undefined): string {
+  return roleBadgeMeta((role || "не назначена") as DisplayRole).label;
 }
 
 export default function ProjectMembersSettings({ projectId }: { projectId: number }) {
@@ -218,11 +225,12 @@ export default function ProjectMembersSettings({ projectId }: { projectId: numbe
               <SectionHeaderRow
                 title={
                   <div>
-                    <div style={{ fontWeight: 700, wordBreak: "break-word" }}>
-                      {member.email} {member.is_current_user && <MetaText style={{ display: "inline", marginLeft: 6 }}>· это вы</MetaText>}
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontWeight: 700, wordBreak: "break-word" }}>
+                      <span>{member.email}</span>
+                      {member.is_current_user && <RelevanceBadge relevance="self" />}
                     </div>
                     <MetaText opacity={0.68}>
-                      Системная роль: {member.user_role}
+                      Системная роль: {systemRoleLabel(member.user_role)}
                       {!member.is_approved ? " · не подтверждён" : ""}
                       {member.is_blocked ? " · заблокирован" : ""}
                     </MetaText>

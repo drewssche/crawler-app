@@ -12,6 +12,7 @@ import FormModal from "../../components/ui/FormModal";
 import HighlightedText from "../../components/ui/HighlightedText";
 import ApplicabilityHint from "../../components/ui/ApplicabilityHint";
 import InlineInfoRow from "../../components/ui/InlineInfoRow";
+import RelevanceBadge from "../../components/ui/RelevanceBadge";
 import SelectableListRow from "../../components/ui/SelectableListRow";
 import SectionHeaderRow from "../../components/ui/SectionHeaderRow";
 import DrawerBody from "../../components/ui/DrawerBody";
@@ -493,12 +494,16 @@ export default function RootAdminsPage() {
                 checked={selected.includes(email)}
                 onToggle={() => toggleOne(email)}
                 checkboxDisabled={Boolean(row.is_emergency)}
-                title={<HighlightedText value={email} query={search} />}
+                title={
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <HighlightedText value={email} query={search} />
+                    {isSelf && <RelevanceBadge relevance="self" />}
+                  </span>
+                }
                 badges={
                   <>
                     <IdentityBadgeRow
                       role="root-admin"
-                      showSelf={isSelf}
                       dbPresence={inDb ? "in_db" : "only_env"}
                       inDbLabel={TXT.inDb}
                       onlyEnvLabel={TXT.onlyEnv}

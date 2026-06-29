@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import Card from "../components/ui/Card";
 import { useAuth } from "../hooks/auth";
@@ -11,6 +11,8 @@ import {
 import {
   subscribeEventCenterUnread,
 } from "../utils/eventCenterUnreadStore";
+import { roleBadgeMeta } from "../components/users/userBadgeCatalog";
+import type { DisplayRole } from "../utils/roles";
 
 const UI_DEBUG_CLIENT_ENABLED =
   String(import.meta.env.VITE_ENABLE_UI_DEBUG ?? "false").toLowerCase() === "true";
@@ -81,12 +83,103 @@ function SettingsItem({
 
 const QUOTA_LABELS: Array<{ key: keyof Omit<QuotaOverviewRole, "role">; label: string }> = [
   { key: "max_projects", label: "Проекты" },
-  { key: "max_sites_per_project", label: "Сайты/проект" },
-  { key: "max_pages_per_site", label: "Страницы/сайт" },
-  { key: "max_concurrency_per_site", label: "Параллельность" },
-  { key: "max_active_jobs_per_user", label: "Активные jobs" },
-  { key: "max_bulk_sites_per_run", label: "Bulk sites" },
+  { key: "max_sites_per_project", label: "Сайтов в проекте" },
+  { key: "max_pages_per_site", label: "Страниц за прогон" },
+  { key: "max_concurrency_per_site", label: "Параллельных запросов" },
+  { key: "max_active_jobs_per_user", label: "Активных задач" },
+  { key: "max_bulk_sites_per_run", label: "Сайтов в общем запуске" },
 ];
+
+function SettingsSection({
+  title,
+  description,
+  status,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  description: string;
+  status?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details
+      open={defaultOpen}
+      style={{
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: 14,
+        background: "rgba(255,255,255,0.03)",
+        overflow: "hidden",
+      }}
+    >
+      <summary
+        style={{
+          cursor: "pointer",
+          listStyle: "none",
+          padding: 14,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: "block", fontWeight: 800 }}>{title}</span>
+          <span style={{ display: "block", marginTop: 4, fontSize: 12, opacity: 0.72 }}>{description}</span>
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          {status && (
+            <span
+              style={{
+                fontSize: 11,
+                borderRadius: 999,
+                border: "1px solid rgba(106,160,255,0.42)",
+                background: "rgba(106,160,255,0.12)",
+                color: "#cfe0ff",
+                padding: "3px 8px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {status}
+            </span>
+          )}
+          <span style={{ opacity: 0.65 }}>⌄</span>
+        </span>
+      </summary>
+      <div style={{ padding: "0 14px 14px" }}>{children}</div>
+    </details>
+  );
+}
+
+function MetricTile({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
+  return (
+    <div
+      title={hint}
+      style={{
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: 10,
+        padding: "8px 9px",
+        background: "rgba(0,0,0,0.12)",
+        minWidth: 0,
+      }}
+    >
+      <div style={{ fontSize: 11, opacity: 0.68 }}>{label}</div>
+      <div style={{ marginTop: 3, fontWeight: 800 }}>{value}</div>
+    </div>
+  );
+}
+
+function roleLabel(role: string): string {
+  return roleBadgeMeta(role as DisplayRole).label;
+}
+
+function storageStatusLabel(status: StorageBudget["status"]): string {
+  if (status === "over_budget") return "Превышен лимит";
+  if (status === "warning") return "Внимание";
+  if (status === "ok") return "В норме";
+  return String(status || "Неизвестно");
+}
 
 function QuotaOverviewCard({
   roles,
@@ -99,13 +192,15 @@ function QuotaOverviewCard({
 }) {
   if (roles.length === 0 && sourceOk) return null;
   return (
-    <Card>
+    <SettingsSection
+      title="Лимиты ролей"
+      description="Сколько проектов, сайтов, страниц и одновременных задач доступно каждой роли."
+      status={sourceOk ? "Настроено" : "Источник недоступен"}
+    >
       <div style={{ display: "grid", gap: 10 }}>
-        <div>
-          <div style={{ fontWeight: 800 }}>Лимиты ролей</div>
-          <div style={{ marginTop: 4, fontSize: 12, opacity: 0.75 }}>
-            Read-only обзор квот crawler. Значения берутся из {source}; менять их лучше через env/config.
-          </div>
+        <div style={{ fontSize: 12, opacity: 0.78 }}>
+          Эти лимиты защищают crawler от слишком тяжёлых запусков. Сейчас они показываются для контроля;
+          редактирование через интерфейс лучше вынести отдельным root-admin действием с журналом изменений.
         </div>
         {!sourceOk && (
           <div style={{ color: "#ffc9c9", fontSize: 13 }}>Источник лимитов временно недоступен.</div>
@@ -115,21 +210,14 @@ function QuotaOverviewCard({
             {roles.map((row) => (
               <Card key={row.role} style={{ padding: 10, background: "rgba(255,255,255,0.025)" }}>
                 <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ fontWeight: 800 }}>{row.role}</div>
+                  <div style={{ fontWeight: 800 }}>{roleLabel(row.role)}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", gap: 6 }}>
                     {QUOTA_LABELS.map((item) => (
-                      <div
+                      <MetricTile
                         key={item.key}
-                        style={{
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          borderRadius: 10,
-                          padding: "7px 8px",
-                          background: "rgba(0,0,0,0.12)",
-                        }}
-                      >
-                        <div style={{ fontSize: 11, opacity: 0.68 }}>{item.label}</div>
-                        <div style={{ marginTop: 3, fontWeight: 800 }}>{row[item.key]}</div>
-                      </div>
+                        label={item.label}
+                        value={row[item.key]}
+                      />
                     ))}
                   </div>
                 </div>
@@ -137,8 +225,12 @@ function QuotaOverviewCard({
             ))}
           </div>
         )}
+        <details style={{ fontSize: 12, opacity: 0.72 }}>
+          <summary style={{ cursor: "pointer" }}>Технические детали</summary>
+          <div style={{ marginTop: 6 }}>Источник значений: {source}.</div>
+        </details>
       </div>
-    </Card>
+    </SettingsSection>
   );
 }
 
@@ -146,14 +238,16 @@ function StorageBudgetCard({ budget }: { budget: StorageBudget | null }) {
   if (!budget) return null;
   const toneColor = budget.status === "over_budget" ? "#ff8f8f" : budget.status === "warning" ? "#ffd27d" : "#8ee59c";
   return (
-    <Card>
+    <SettingsSection
+      title="Хранилище сканов"
+      description="Сколько места занимают сохранённые HTML и визуальные снимки страниц."
+      status={storageStatusLabel(budget.status)}
+    >
       <div style={{ display: "grid", gap: 10 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-          <div>
-            <div style={{ fontWeight: 800 }}>Storage budget</div>
-            <div style={{ marginTop: 4, fontSize: 12, opacity: 0.75 }}>
-              Контроль роста raw HTML и rendered snapshots. Автоочистка уже держит raw artifacts только для последних успешных runs.
-            </div>
+          <div style={{ fontSize: 12, opacity: 0.78 }}>
+            История URL, статусы и статистика остаются в базе, а тяжёлые raw HTML/снимки автоматически
+            хранятся только для последних успешных прогонов.
           </div>
           <div
             style={{
@@ -166,37 +260,21 @@ function StorageBudgetCard({ budget }: { budget: StorageBudget | null }) {
               whiteSpace: "nowrap",
             }}
           >
-            {budget.status}
+            {storageStatusLabel(budget.status)}
           </div>
         </div>
         {!budget.sourceOk && <div style={{ color: "#ffc9c9", fontSize: 13 }}>Источник storage статистики временно недоступен.</div>}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))", gap: 8 }}>
-          <div>
-            <div style={{ fontSize: 11, opacity: 0.68 }}>Использовано</div>
-            <div style={{ fontWeight: 800 }}>{budget.usedMb} / {budget.budgetMb} MB</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 11, opacity: 0.68 }}>Заполнение</div>
-            <div style={{ fontWeight: 800 }}>{budget.usagePercent}%</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 11, opacity: 0.68 }}>Raw HTML</div>
-            <div style={{ fontWeight: 800 }}>{budget.rawHtmlMb} MB</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 11, opacity: 0.68 }}>Rendered snapshots</div>
-            <div style={{ fontWeight: 800 }}>{budget.renderedSnapshotsMb} MB</div>
-          </div>
+          <MetricTile label="Использовано" value={`${budget.usedMb} / ${budget.budgetMb} MB`} />
+          <MetricTile label="Заполнение" value={`${budget.usagePercent}%`} />
+          <MetricTile label="Raw HTML" value={`${budget.rawHtmlMb} MB`} hint="Сохранённый HTML страниц для анализа и сравнения." />
+          <MetricTile label="Визуальные снимки" value={`${budget.renderedSnapshotsMb} MB`} hint="Сохранённые rendered snapshots для визуального просмотра." />
         </div>
         <div style={{ fontSize: 12, opacity: 0.78 }}>
-          Retention: хранить raw artifacts для последних {budget.retention.rawArtifactRunsToKeep} successful runs на site+persona.
-          Источники: {budget.source}, {budget.retention.source}.
-        </div>
-        <div style={{ fontSize: 12, opacity: 0.66 }}>
-          Env keys: SCAN_STORAGE_BUDGET_MB и SCAN_RAW_ARTIFACT_RUNS_TO_KEEP.
+          Хранить тяжёлые артефакты для последних {budget.retention.rawArtifactRunsToKeep} успешных прогонов каждого сайта и контекста доступа.
         </div>
         <div style={{ fontSize: 12, opacity: 0.78 }}>
-          Всего: проектов {budget.totals.projects}, runs {budget.totals.runs}, страниц {budget.totals.pages}, с raw HTML {budget.totals.pagesWithRawHtml}.
+          Всего: проектов {budget.totals.projects}, прогонов {budget.totals.runs}, страниц {budget.totals.pages}, с raw HTML {budget.totals.pagesWithRawHtml}.
         </div>
         {budget.topProjects.length > 0 && (
           <div style={{ display: "grid", gap: 6 }}>
@@ -204,13 +282,19 @@ function StorageBudgetCard({ budget }: { budget: StorageBudget | null }) {
             {budget.topProjects.map((project) => (
               <div key={project.projectId} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{project.name}</span>
-                <span style={{ whiteSpace: "nowrap" }}>{project.rawHtmlMb} MB · {project.runs} runs · {project.pages} pages</span>
+                <span style={{ whiteSpace: "nowrap" }}>{project.rawHtmlMb} MB · прогонов: {project.runs} · страниц: {project.pages}</span>
               </div>
             ))}
           </div>
         )}
+        <details style={{ fontSize: 12, opacity: 0.72 }}>
+          <summary style={{ cursor: "pointer" }}>Технические детали</summary>
+          <div style={{ marginTop: 6 }}>
+            Источники: {budget.source}, {budget.retention.source}. Env keys: SCAN_STORAGE_BUDGET_MB и SCAN_RAW_ARTIFACT_RUNS_TO_KEEP.
+          </div>
+        </details>
       </div>
-    </Card>
+    </SettingsSection>
   );
 }
 

@@ -65,8 +65,8 @@ test("settings exposes read-only project quota overview for admins", () => {
 
 test("settings exposes storage budget and retention visibility", () => {
   assert.match(settingsSource, /StorageBudgetCard/);
-  assert.match(settingsSource, /Storage budget/);
+  assert.match(settingsSource, /Хранилище сканов/);
   assert.match(settingsSource, /SCAN_STORAGE_BUDGET_MB/);
   assert.match(settingsSource, /SCAN_RAW_ARTIFACT_RUNS_TO_KEEP/);
-  assert.match(settingsSource, /Rendered snapshots/);
+  assert.match(settingsSource, /Визуальные снимки/);
 });
