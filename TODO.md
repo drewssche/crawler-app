@@ -339,7 +339,8 @@
   - 10. Persistent active job status MVP готов: `GET /runs/active-job/by-site/{site_id}` возвращает active crawler job сайта с site/persona metadata или `active=false`; Project Dashboard восстанавливает queued pending-блок после reload без ожидания нового run.
   - 11. Bounded job retries/backoff MVP готов: worker не падает процессом на retryable job failure; transient failures переоткладываются в `QUEUED` до `CRAWLER_JOB_MAX_ATTEMPTS` с `CRAWLER_JOB_RETRY_BACKOFF_SECONDS`, non-retryable настройки/session/scope failures остаются terminal. Page retry/backoff уже был реализован отдельно.
   - 12. Project-level active jobs recovery MVP готов: `GET /runs/active-jobs/by-project/{project_id}` возвращает все active jobs проекта с site/persona metadata; Project Dashboard восстанавливает queued pending jobs всех сайтов после reload, включая сценарий `Запустить все сайты`.
-  - Следующее: более быстрый interrupt текущего fetch, UI-пояснение retry attempt/backoff в pending-блоке, lightweight operations panel для worker/readiness.
+  - 13. Pending retry/backoff explanation MVP готов: Project Dashboard показывает в pending-блоке retryable worker job: следующую попытку `N из M`, время до повторного запуска и причину последнего сбоя.
+  - Следующее: более быстрый interrupt текущего fetch, lightweight operations panel для worker/readiness.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -401,6 +402,12 @@
   - Что стало: добавлен `GET /runs/active-jobs/by-project/{project_id}` под `data.view`. Endpoint проходит по сайтам проекта, применяет active-job recovery, возвращает все active jobs с site/persona metadata. Project Dashboard на initial load восстанавливает queued pending jobs всех сайтов одним запросом.
   - Как проверить: в worker-mode поставить два сайта в очередь, обновить проект; кнопка общего запуска показывает `В очереди: 2`, выбранный сайт показывает `Сайт ожидает worker / Job #...`. Backend targeted: `pytest -q tests/test_api_integration.py::test_project_active_jobs_lists_all_site_jobs`; frontend: `corepack pnpm --dir frontend exec tsc -b`.
   - Вклад в цели: multi-site queue state стал устойчивым к reload и пригодным для production-like общего запуска (`high` friendly operations UX).
+
+- [x] **P0/P1 Operations UX — pending retry/backoff explanation**.
+  - Что было: backend уже переоткладывал transient worker job failures, но UI продолжал показывать только `Сайт ожидает worker`, без причины ожидания и номера попытки.
+  - Что стало: pending job хранит `attempts/max_attempts/failure_code/failure_message/scheduled_at`; Dashboard показывает `Повторная попытка N из M`, когда она стартует, и причину последнего сбоя в верхнем pending-блоке и live-блоке структуры.
+  - Как проверить: смоделировать retryable worker failure; pending-блок должен показать причину (`timeout`/message), номер следующей попытки и `через N сек.` или `уже можно запускать`. Frontend: `corepack pnpm --dir frontend exec tsc -b`.
+  - Вклад в цели: ожидание worker стало объяснимым, пользователь понимает, что система сама повторит временный сбой и когда это произойдёт (`high` friendly operations UX).
 
 - [x] **P0/P1 Operations reliability — feature-flagged worker execution tick**.
   - Что было: durable job boundary уже был в DB, но start API всё равно всегда выполнял run синхронно.

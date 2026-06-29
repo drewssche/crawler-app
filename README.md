@@ -105,6 +105,8 @@ CRAWLER_JOB_RETRY_BACKOFF_SECONDS=10,30,120
 
 Worker автоматически переоткладывает transient job failures (`timeout`, `connection_error`, `request_error`, `http_error`, browser navigation/runtime errors) до лимита `CRAWLER_JOB_MAX_ATTEMPTS`. Ошибки настроек, сессии persona, scope и отключённого сайта не ретраятся автоматически.
 
+Project UI показывает retry/backoff прямо в pending-блоке: номер следующей попытки, лимит попыток, время до повторного запуска и причину последнего сбоя.
+
 Dev stack с worker запускается обычной командой:
 
 ```bash

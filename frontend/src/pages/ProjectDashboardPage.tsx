@@ -158,6 +158,11 @@ type PendingCrawlerJob = {
   status: string;
   personaLabel: string;
   queuedAt: string;
+  scheduledAt?: string | null;
+  attempts?: number | null;
+  maxAttempts?: number | null;
+  failureCode?: string | null;
+  failureMessage?: string | null;
   source: "site" | "project";
 };
 
@@ -191,6 +196,8 @@ type ActiveSiteJobResponse = {
     crawl_persona_id: number | null;
     run_id: number | null;
     status: string;
+    attempts: number;
+    max_attempts: number;
     scheduled_at: string;
     started_at: string | null;
     heartbeat_at: string | null;
@@ -302,6 +309,30 @@ function hasRunStartedAfter(run: ProjectRun, queuedAt: string): boolean {
   return runStarted >= queued - 5000;
 }
 
+function formatRetryWait(raw?: string | null): string | null {
+  if (!raw) return null;
+  const scheduled = Date.parse(raw);
+  if (!Number.isFinite(scheduled)) return null;
+  const diffSec = Math.ceil((scheduled - Date.now()) / 1000);
+  if (diffSec <= 0) return "уже можно запускать";
+  if (diffSec < 60) return `через ${diffSec} сек.`;
+  const mins = Math.ceil(diffSec / 60);
+  if (mins < 60) return `через ${mins} мин.`;
+  return `через ${Math.ceil(mins / 60)} ч.`;
+}
+
+function pendingJobRetryText(job: PendingCrawlerJob): string | null {
+  const attempts = job.attempts ?? 0;
+  const maxAttempts = job.maxAttempts ?? null;
+  if (!job.failureCode && attempts <= 0) return null;
+  const waitText = formatRetryWait(job.scheduledAt);
+  const attemptText = maxAttempts
+    ? `попытка ${Math.min(attempts + 1, maxAttempts)} из ${maxAttempts}`
+    : `попытка ${attempts + 1}`;
+  const reason = job.failureMessage || job.failureCode || "временная ошибка";
+  return `Повторная ${attemptText}${waitText ? ` · ${waitText}` : ""}. Причина: ${reason}.`;
+}
+
 function pendingJobsFromActiveProjectJobs(
   payload: ActiveProjectJobsResponse,
   sites: ProjectSiteSummary[],
@@ -318,6 +349,11 @@ function pendingJobsFromActiveProjectJobs(
       status: job.status,
       personaLabel: job.persona?.label || site?.default_persona?.label || "Гость",
       queuedAt: job.scheduled_at,
+      scheduledAt: job.scheduled_at,
+      attempts: job.attempts,
+      maxAttempts: job.max_attempts,
+      failureCode: job.failure_code,
+      failureMessage: job.failure_message,
       source: "project",
     };
   }
@@ -537,6 +573,11 @@ export default function ProjectDashboardPage() {
                   status: job.status,
                   personaLabel: job.persona?.label || currentSite?.default_persona?.label || "Гость",
                   queuedAt: job.scheduled_at,
+                  scheduledAt: job.scheduled_at,
+                  attempts: job.attempts,
+                  maxAttempts: job.max_attempts,
+                  failureCode: job.failure_code,
+                  failureMessage: job.failure_message,
                   source: "site",
                 },
               }));
@@ -634,6 +675,11 @@ export default function ProjectDashboardPage() {
             status: result.job_status || "QUEUED",
             personaLabel: result.persona?.label || result.persona_label || selectedPersona.label,
             queuedAt,
+            scheduledAt: queuedAt,
+            attempts: 0,
+            maxAttempts: null,
+            failureCode: null,
+            failureMessage: null,
             source: "site",
           },
         }));
@@ -705,6 +751,11 @@ export default function ProjectDashboardPage() {
               status: row.job_status || row.status,
               personaLabel: row.persona?.label || row.persona_label || "Гость",
               queuedAt,
+              scheduledAt: queuedAt,
+              attempts: 0,
+              maxAttempts: null,
+              failureCode: null,
+              failureMessage: null,
               source: "project",
             };
           }
@@ -876,6 +927,7 @@ export default function ProjectDashboardPage() {
   const lastSuccessfulRun = runs.find((r) => r.status === "FINISHED" && Boolean(r.finished_at)) || null;
   const hasRunning = runs.some((r) => r.status === "RUNNING");
   const selectedPendingJob = selectedSiteId !== null ? pendingCrawlerJobs[selectedSiteId] || null : null;
+  const selectedPendingRetryText = selectedPendingJob ? pendingJobRetryText(selectedPendingJob) : null;
   const pendingJobsCount = Object.keys(pendingCrawlerJobs).length;
   const workerIssue = crawlerReadiness?.issues?.[0] || null;
   const structureUpdatePending = hasRunning || Boolean(selectedPendingJob) || runPending || projectRunPending;
@@ -909,6 +961,11 @@ export default function ProjectDashboardPage() {
               status: job.status,
               personaLabel: job.persona?.label || selectedSite?.default_persona?.label || "Гость",
               queuedAt: job.scheduled_at,
+              scheduledAt: job.scheduled_at,
+              attempts: job.attempts,
+              maxAttempts: job.max_attempts,
+              failureCode: job.failure_code,
+              failureMessage: job.failure_message,
               source: "site",
             },
           }));
@@ -1163,6 +1220,11 @@ export default function ProjectDashboardPage() {
                       <MetaText opacity={0.82}>
                         Задача поставлена в очередь как «{selectedPendingJob.personaLabel}». Когда worker возьмёт её в работу, здесь появится live-структура и текущий URL.
                       </MetaText>
+                      {selectedPendingRetryText && (
+                        <StatusText tone="warning" style={{ fontSize: 12 }}>
+                          {selectedPendingRetryText}
+                        </StatusText>
+                      )}
                     </>
                   )}
                   {workerIssue && (
@@ -1616,6 +1678,11 @@ export default function ProjectDashboardPage() {
                           <MetaText>
                             В очереди: job #{selectedPendingJob.jobId} · контекст {selectedPendingJob.personaLabel}
                           </MetaText>
+                          {selectedPendingRetryText && (
+                            <StatusText tone="warning" style={{ fontSize: 12 }}>
+                              {selectedPendingRetryText}
+                            </StatusText>
+                          )}
                           <MetaText opacity={0.72}>
                             Это нормальный этап worker-mode. Если очередь зависнет, readiness покажет предупреждение.
                           </MetaText>
