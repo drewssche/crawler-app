@@ -516,7 +516,7 @@ export default function ProjectDashboardPage() {
   const [runPending, setRunPending] = useState(false);
   const [projectRunPending, setProjectRunPending] = useState(false);
   const [projectRunResult, setProjectRunResult] = useState<ProjectRunBatch | null>(null);
-  const [runsLoading, setRunsLoading] = useState(false);
+  const [, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
@@ -528,9 +528,6 @@ export default function ProjectDashboardPage() {
   const [pagesError, setPagesError] = useState("");
   const [lastRunPages, setLastRunPages] = useState<ProjectPage[]>([]);
   const [prevRunPages, setPrevRunPages] = useState<ProjectPage[]>([]);
-  const [lastRunCoverage, setLastRunCoverage] = useState<{ ok: number; total: number } | null>(null);
-  const [lastRunCoverageLoading, setLastRunCoverageLoading] = useState(false);
-  const [failureDetailsOpen, setFailureDetailsOpen] = useState(false);
   const [pageContextOpen, setPageContextOpen] = useState(false);
   const [pageContextLoading, setPageContextLoading] = useState(false);
   const [pageContextError, setPageContextError] = useState("");
@@ -1074,9 +1071,6 @@ export default function ProjectDashboardPage() {
     sitePersonas.find((persona) => persona.id === selectedRunPersonaId) ||
     selectedSite?.default_persona ||
     null;
-  const effectiveRunPersona =
-    selectedRunPersona ||
-    { id: 0, key: "guest", label: "Гость", kind: "guest", has_secrets: false };
   const selectedViewPersona =
     selectedViewPersonaId === "all"
       ? null
@@ -1094,7 +1088,6 @@ export default function ProjectDashboardPage() {
   const liveStructureRun = runs.find((run) => run.id > 0 && run.status === "RUNNING") || null;
   const displayedStructureRun = liveStructureRun || structureRun;
   const structureIsLive = liveStructureRun !== null;
-  const lastSuccessfulRun = runs.find((r) => r.status === "FINISHED" && Boolean(r.finished_at)) || null;
   const hasRunning = runs.some((r) => r.status === "RUNNING");
   const selectedPendingJob = selectedSiteId !== null ? pendingCrawlerJobs[selectedSiteId] || null : null;
   const selectedPendingRetryText = selectedPendingJob ? pendingJobRetryText(selectedPendingJob) : null;
@@ -1103,19 +1096,10 @@ export default function ProjectDashboardPage() {
   const readinessIssues = crawlerReadiness?.issues || [];
   const selectedRunLaunchIssue = personaLaunchIssue(selectedRunPersona);
   const structureUpdatePending = hasRunning || Boolean(selectedPendingJob) || runPending || projectRunPending;
-  const runsTotal = runs.length;
-  const changedLast = lastRun?.pages_changed ?? 0;
-  const pagesLast = lastRun?.pages_total ?? 0;
-  const changedShareLast = pagesLast > 0 ? (changedLast / pagesLast) * 100 : 0;
-  const lastRunDuration = lastRun ? formatDuration(lastRun.started_at, lastRun.finished_at) : "—";
   const structureRunId = displayedStructureRun?.id ?? null;
   const previousStructureRunId = structureIsLive
     ? structureRun?.id ?? null
     : previousStructureRun?.id ?? null;
-  const coveragePercent = lastRunCoverage && lastRunCoverage.total > 0
-    ? (lastRunCoverage.ok / lastRunCoverage.total) * 100
-    : 0;
-
   useEffect(() => {
     if (selectedSiteId === null) return;
     let cancelled = false;
@@ -1162,32 +1146,6 @@ export default function ProjectDashboardPage() {
   useEffect(() => {
     if (!domainOptions.includes(selectedDomain)) setSelectedDomain("all");
   }, [domainOptions, selectedDomain]);
-
-  useEffect(() => {
-    if (structureRunId === null) {
-      setLastRunCoverage(null);
-      return;
-    }
-    let cancelled = false;
-    setLastRunCoverageLoading(true);
-    fetchRunPages(structureRunId)
-      .then((rows) => {
-        if (cancelled) return;
-        const ok = rows.filter((row) => row.status_code >= 200 && row.status_code < 300).length;
-        setLastRunCoverage({ ok, total: rows.length });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setLastRunCoverage(null);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLastRunCoverageLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [structureRunId]);
 
   useEffect(() => {
     if (activeTab !== "main") return;
@@ -1471,78 +1429,15 @@ export default function ProjectDashboardPage() {
                   )}
                 </Card>
               )}
-              {activeTab !== "settings" && (
-                <>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <MetaText opacity={0.86}>
-                      Выберите сайт карточкой: показатели, структура, история и ручной запуск ниже относятся только к нему.
-                    </MetaText>
-                    {selectedRunPersona && (
-                      selectedRunLaunchIssue ? (
-                        <StatusText tone="warning" style={{ fontSize: 12 }}>
-                          Текущий запуск: {selectedRunPersona.label} · {selectedRunLaunchIssue}
-                        </StatusText>
-                      ) : (
-                        <MetaText opacity={0.72}>
-                          Текущий запуск: {selectedRunPersona.label}
-                        </MetaText>
-                      )
-                    )}
-                    <MetaText opacity={0.72}>
-                      Если ничего не менять, crawler пойдёт как {effectiveRunPersona.label}
-                      {effectiveRunPersona.kind === "guest"
-                        ? ": без cookies и авторизации."
-                        : effectiveRunPersona.has_secrets
-                          ? ": с подключённой сессией этой роли."
-                          : ": роль выбрана, но сессия ещё не подключена."}
-                    </MetaText>
-                  </div>
-                  <Card variant="default" style={{ padding: 10, display: "grid", gap: 8 }}>
-                    <SectionHeaderRow
-                      title={
-                        <div>
-                          <div style={{ fontWeight: 700 }}>Контекст просмотра структуры и истории</div>
-                          <MetaText opacity={0.68}>
-                            Контекст влияет на доступные страницы и содержимое. Сравнение Гость ↔ Партнёр — это сравнение доступов, а не обычная аномалия сайта.
-                          </MetaText>
-                        </div>
-                      }
-                      actions={
-                        <label style={{ display: "grid", gap: 3, minWidth: 220 }}>
-                          <MetaText opacity={0.72}>Показывать runs</MetaText>
-                          <UiSelect
-                            value={selectedViewPersonaId}
-                            disabled={sitePersonasLoading || runsLoading}
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              setSelectedViewPersonaId(value === "all" ? "all" : Number(value));
-                            }}
-                          >
-                            <option value="all">Все контексты</option>
-                            {sitePersonas
-                              .filter((persona) => persona.is_enabled !== false)
-                              .map((persona) => (
-                                <option key={persona.id} value={persona.id}>
-                                  {persona.label}
-                                </option>
-                              ))}
-                          </UiSelect>
-                        </label>
-                      }
-                    />
-                    <MetaText opacity={0.72}>
-                      Сейчас открыт срез: {selectedViewPersona ? selectedViewPersona.label : "все контексты"}.
-                      {selectedViewPersona && selectedViewPersona.kind !== "guest" && !selectedViewPersona.has_secrets
-                        ? " У этой роли сессия не подключена, новые прогоны будут пропущены до подключения."
-                        : ""}
-                    </MetaText>
-                  </Card>
-                  {hasRunning && (
-                    <MetaText opacity={0.72}>
-                      Сейчас сканируется выбранный сайт. Остальные сайты проекта сохраняют независимую историю.
-                    </MetaText>
-                  )}
-                </>
+              {activeTab !== "settings" && runsError && (
+                <StatusText tone="danger" style={{ fontSize: 13 }}>
+                  {runsError}
+                </StatusText>
+              )}
+              {activeTab !== "settings" && hasRunning && (
+                <MetaText opacity={0.72}>
+                  Сейчас сканируется выбранный сайт.
+                </MetaText>
               )}
             </div>
           </Card>
@@ -1586,7 +1481,6 @@ export default function ProjectDashboardPage() {
                       setPagesError("");
                       setStructureSearch("");
                       setStructureViewFilter("all");
-                      setFailureDetailsOpen(false);
                       setPageContextOpen(false);
                       setDirectoryContext(null);
                     }}
@@ -1648,230 +1542,6 @@ export default function ProjectDashboardPage() {
 
           {activeTab === "main" && (
             <>
-              <Card>
-                <div style={{ display: "grid", gap: 8 }}>
-                  <SectionHeaderRow
-                    title={
-                      <div>
-                        <div style={{ fontWeight: 700 }}>Рабочая сводка</div>
-                        <MetaText opacity={0.68}>
-                          Главное состояние выбранного сайта: мониторинг, последний прогон и следующий понятный шаг.
-                        </MetaText>
-                      </div>
-                    }
-                    actions={lastRun ? <ProjectRunBadge status={lastRun.status} /> : undefined}
-                  />
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10 }}>
-                    {selectedSite && (
-                      <Card
-                        variant={
-                          selectedSite.anomaly.status === "anomaly"
-                            ? selectedSite.anomaly.severity === "danger" ? "danger" : "warning"
-                            : selectedSite.anomaly.status === "normal" ? "hint" : "default"
-                        }
-                      >
-                        <div style={{ display: "grid", gap: 7 }}>
-                          <SectionHeaderRow
-                            title={<div style={{ fontWeight: 700 }}>Мониторинг отклонений</div>}
-                            actions={
-                              selectedSite.anomaly.status === "anomaly"
-                                ? <StatusText tone={selectedSite.anomaly.severity === "danger" ? "danger" : "warning"}>Аномалия</StatusText>
-                                : selectedSite.anomaly.status === "normal"
-                                  ? <StatusText tone="success">Норма</StatusText>
-                                  : <StatusText tone="muted">Недостаточно данных</StatusText>
-                            }
-                          />
-                          <MetaText>{selectedSite.anomaly.message}</MetaText>
-                          {selectedSite.anomaly.status === "insufficient_data" && (
-                            <StatusText tone="muted">
-                              Накоплено {selectedSite.anomaly.successful_runs} из {selectedSite.anomaly.baseline_runs_required + 1} успешных прогонов.
-                            </StatusText>
-                          )}
-                          {selectedSite.anomaly.reasons.map((reason) => (
-                            <StatusText
-                              key={reason.code}
-                              tone={reason.severity === "danger" ? "danger" : "warning"}
-                              style={{ fontSize: 13 }}
-                            >
-                              {reason.message}
-                            </StatusText>
-                          ))}
-                          <ProjectPersistentDetails
-                            storageKey="baseline-explanation"
-                            summary="Как считается baseline"
-                            summaryStyle={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
-                          >
-                            <div style={{ display: "grid", gap: 5, marginTop: 6 }}>
-                              <MetaText opacity={0.68}>
-                                Baseline считается только для контекста: {selectedSite.anomaly.persona_label || selectedSite.default_persona?.label || "Гость"}.
-                                Прогоны других ролей не смешиваются с этим мониторингом.
-                              </MetaText>
-                              {selectedSite.anomaly.status === "insufficient_data" && (
-                                <MetaText opacity={0.68}>
-                                  После накопления истории сервис начнёт сравнивать количество страниц, HTTP-ошибки и объём изменений с обычным уровнем сайта.
-                                </MetaText>
-                              )}
-                              {selectedSite.anomaly.baseline && selectedSite.anomaly.latest && (
-                                <MetaText opacity={0.65}>
-                                  Обычный уровень для {selectedSite.anomaly.persona_label || "Гость"}: в среднем {selectedSite.anomaly.baseline.pages_average} страниц · последний прогон: {selectedSite.anomaly.latest.pages_total}.
-                                </MetaText>
-                              )}
-                            </div>
-                          </ProjectPersistentDetails>
-                        </div>
-                      </Card>
-                    )}
-                    <Card>
-                      <div style={{ display: "grid", gap: 8 }}>
-                        <div style={{ fontWeight: 700 }}>Последний прогон</div>
-                        {runsError ? <StatusText tone="danger">{runsError}</StatusText> : null}
-                        {!runsLoading && !lastRun && (
-                          <div style={{ display: "grid", gap: 8 }}>
-                            <MetaText>
-                              {selectedViewPersona
-                                ? `Для контекста «${selectedViewPersona.label}» прогонов пока нет. Переключите фильтр на «Все контексты» или запустите сайт этой ролью.`
-                                : "Для выбранного сайта прогонов пока нет. Запустите первый сбор, чтобы получить структуру и метрики."}
-                            </MetaText>
-                            {canRunCrawler && <div>
-                              <CardActionButton
-                                variant="primary"
-                                onClick={() => void handleStartRun()}
-                                disabled={runPending || projectRunPending || hasRunning || !selectedSite?.is_enabled}
-                              >
-                                {runPending ? "Запуск..." : "Запустить первый прогон"}
-                              </CardActionButton>
-                            </div>}
-                          </div>
-                        )}
-                        {!runsLoading && lastRun && (
-                          <div style={{ display: "grid", gap: 6 }}>
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                              <ProjectRunBadge status={lastRun.status} />
-                              <RunRuntimePill runtime={lastRun.crawl_runtime} />
-                            </div>
-                            <MetaText>Старт: {formatOperationalDateTime(lastRun.started_at)}</MetaText>
-                            <MetaText>
-                              Завершение: {lastRun.finished_at ? formatOperationalDateTime(lastRun.finished_at) : "еще выполняется"}
-                            </MetaText>
-                            <MetaText>Длительность: {formatDuration(lastRun.started_at, lastRun.finished_at)}</MetaText>
-                            <MetaText>
-                              Страниц: {lastRun.pages_total}, изменений: {lastRun.pages_changed}
-                            </MetaText>
-                            {lastRun.status === "FAILED" && (
-                              <Card variant="danger" style={{ padding: 12 }}>
-                                <div style={{ display: "grid", gap: 8 }}>
-                                  <div style={{ fontWeight: 700 }}>Прогон не завершен</div>
-                                  <MetaText>{lastRun.failure_message || "Не удалось получить страницы сайта."}</MetaText>
-                                  {canRunCrawler && <CardFooterActions>
-                                    <CardActionButton
-                                      variant="primary"
-                                      onClick={() => void handleStartRun()}
-                                      disabled={runPending || projectRunPending || hasRunning || !selectedSite?.is_enabled}
-                                    >
-                                      Повторить
-                                    </CardActionButton>
-                                    <CardActionButton
-                                      variant="secondary"
-                                      onClick={() => selectedSite && window.open(selectedSite.start_url, "_blank", "noopener,noreferrer")}
-                                    >
-                                      Проверить адрес
-                                    </CardActionButton>
-                                    <CardActionButton
-                                      variant="ghost"
-                                      onClick={() => setFailureDetailsOpen((open) => !open)}
-                                    >
-                                      {failureDetailsOpen ? "Скрыть детали" : "Технические детали"}
-                                    </CardActionButton>
-                                  </CardFooterActions>}
-                                  {failureDetailsOpen && (
-                                    <MetaText opacity={0.68}>
-                                      Код: {lastRun.failure_code || "unknown_error"}; run #{lastRun.id}; адрес: {selectedSite?.start_url || "—"}
-                                    </MetaText>
-                                  )}
-                                </div>
-                              </Card>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </Card>
-                  </div>
-                </div>
-              </Card>
-
-              <Card>
-                <ProjectPersistentDetails
-                  storageKey="last-run-metrics"
-                  summary={
-                    <>
-                      <div>
-                        <div style={{ fontWeight: 700 }}>Показатели последнего прогона</div>
-                        <MetaText opacity={0.68}>Подробные метрики: изменения, покрытие, длительность и история успешных прогонов.</MetaText>
-                      </div>
-                      <MetaText opacity={0.72}>
-                        {lastRun ? `${pagesLast} страниц · ${changedLast} изменений` : "Нет данных"}
-                      </MetaText>
-                    </>
-                  }
-                  summaryStyle={{
-                      cursor: "pointer",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      flexWrap: "wrap",
-                      alignItems: "center",
-                      listStyle: "none",
-                  }}
-                >
-                  <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-                    {lastRun?.finished_at && <MetaText opacity={0.68}>Срез: {formatOperationalDateTime(lastRun.finished_at)}</MetaText>}
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
-                      <Card style={{ padding: 10, display: "grid", alignContent: "space-between", minHeight: 108 }}>
-                        <MetaText opacity={0.7} style={{ minHeight: 38 }}>Доля изменений (последний прогон)</MetaText>
-                        <div style={{ fontWeight: 800, fontSize: 22 }}>
-                          {lastRun && pagesLast > 0 ? `${changedShareLast.toFixed(1)}%` : "—"}
-                        </div>
-                      </Card>
-                      <Card style={{ padding: 10, display: "grid", alignContent: "space-between", minHeight: 108 }}>
-                        <MetaText opacity={0.7} style={{ minHeight: 38 }}>Последний успешный прогон</MetaText>
-                        <div style={{ fontWeight: 800, fontSize: 20 }}>
-                          {lastSuccessfulRun?.finished_at ? formatOperationalDateTime(lastSuccessfulRun.finished_at) : "—"}
-                        </div>
-                        <MetaText opacity={0.65}>
-                          {lastSuccessfulRun?.finished_at ? formatTimeAgo(lastSuccessfulRun.finished_at) : "Нет завершенных успешных прогонов"}
-                        </MetaText>
-                      </Card>
-                      <Card style={{ padding: 10, display: "grid", alignContent: "space-between", minHeight: 108 }}>
-                        <MetaText opacity={0.7} style={{ minHeight: 38 }}>Длительность последнего прогона</MetaText>
-                        <div style={{ fontWeight: 800, fontSize: 22 }}>{lastRunDuration}</div>
-                        <MetaText opacity={0.65}>{lastRun?.status === "RUNNING" ? "Прогон еще выполняется" : "По меткам start/finish"}</MetaText>
-                      </Card>
-                      <Card style={{ padding: 10, display: "grid", alignContent: "space-between", minHeight: 108 }}>
-                        <MetaText opacity={0.7} style={{ minHeight: 38 }}>Покрытие (2xx/всего)</MetaText>
-                        <div style={{ fontWeight: 800, fontSize: 22 }}>
-                          {lastRunCoverageLoading ? "..." : lastRunCoverage ? `${lastRunCoverage.ok}/${lastRunCoverage.total}` : "—"}
-                        </div>
-                        <MetaText opacity={0.65}>
-                          {lastRunCoverage && lastRunCoverage.total > 0 ? `${coveragePercent.toFixed(1)}% успешных ответов` : "Недостаточно данных"}
-                        </MetaText>
-                      </Card>
-                      <Card style={{ padding: 10, display: "grid", alignContent: "space-between", minHeight: 108 }}>
-                        <MetaText opacity={0.7} style={{ minHeight: 38 }}>Прогонов всего</MetaText>
-                        <div style={{ fontWeight: 800, fontSize: 22 }}>{runsTotal}</div>
-                      </Card>
-                      <Card style={{ padding: 10, display: "grid", alignContent: "space-between", minHeight: 108 }}>
-                        <MetaText opacity={0.7} style={{ minHeight: 38 }}>Страниц (последний прогон)</MetaText>
-                        <div style={{ fontWeight: 800, fontSize: 22 }}>{pagesLast}</div>
-                      </Card>
-                      <Card style={{ padding: 10, display: "grid", alignContent: "space-between", minHeight: 108 }}>
-                        <MetaText opacity={0.7} style={{ minHeight: 38 }}>Изменений (последний прогон)</MetaText>
-                        <div style={{ fontWeight: 800, fontSize: 22 }}>{changedLast}</div>
-                      </Card>
-                    </div>
-                  </div>
-                </ProjectPersistentDetails>
-              </Card>
-
               <Card>
                 <div style={{ display: "grid", gap: 10 }}>
                   <SectionHeaderRow

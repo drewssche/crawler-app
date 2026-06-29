@@ -32,20 +32,20 @@ test("project page exposes the consolidated three-tab information architecture",
   );
 });
 
-test("main tab contains last run metrics and structure", () => {
+test("main tab keeps minimal project workspace without duplicate summary blocks", () => {
   assert.match(source, /activeTab === "main"/);
-  assert.match(source, /Рабочая сводка/);
-  assert.match(source, /Последний прогон/);
-  assert.match(source, /Показатели последнего прогона/);
-  assert.match(source, /Подробные метрики/);
   assert.match(source, /Структура сайта/);
+  assert.match(source, /ProjectSiteContextCards/);
+  assert.doesNotMatch(source, /Рабочая сводка/);
+  assert.doesNotMatch(source, /Показатели последнего прогона/);
+  assert.doesNotMatch(source, /Контекст просмотра структуры и истории/);
+  assert.doesNotMatch(source, /Если ничего не менять, crawler пойдёт/);
 });
 
 test("project disclosure blocks persist collapsed state locally", () => {
   assert.match(source, /PROJECT_DISCLOSURE_STORAGE_PREFIX/);
   assert.match(source, /ProjectPersistentDetails/);
   assert.match(source, /window\.localStorage\.setItem/);
-  assert.match(source, /storageKey="last-run-metrics"/);
   assert.match(source, /storageKey="structure-process"/);
   assert.match(source, /storageKey="structure-slice-details"/);
   assert.match(source, /storageKey="structure-legend"/);
@@ -100,7 +100,8 @@ test("site cards select the context used by runs, history and structure", () => 
   assert.match(siteCardsSource, /aria-pressed=\{selected\}/);
   assert.match(siteCardsSource, /Страниц:/);
   assert.match(siteCardsSource, /Изменений:/);
-  assert.match(siteCardsSource, /Выбранный сайт/);
+  assert.match(siteCardsSource, /runs_total/);
+  assert.match(siteCardsSource, /site\.start_url/);
   assert.match(source, /if \(siteId === selectedSiteId\) return/);
   assert.doesNotMatch(source, /if \(siteId === selectedSiteId\) return;[\s\S]{0,180}setLastRunPages\(\[\]\)/);
 });
@@ -115,15 +116,10 @@ test("project-level run preserves per-site outcomes", () => {
 });
 
 test("site anomaly UX distinguishes baseline, normal and anomaly states", () => {
-  assert.match(source, /Недостаточно данных/);
-  assert.match(source, /Мониторинг отклонений/);
-  assert.match(source, /Накоплено/);
-  assert.match(source, /Обычный уровень/);
-  assert.match(source, /selectedSite\.anomaly\.status === "normal"/);
-  assert.match(source, /selectedSite\.anomaly\.reasons\.map/);
-  assert.match(siteCardsSource, /Мониторинг:/);
-  assert.match(siteCardsSource, /Аномалий не обнаружено/);
-  assert.match(siteCardsSource, /Обнаружена критичная аномалия/);
+  assert.match(siteCardsSource, /ProjectRunBadge/);
+  assert.doesNotMatch(siteCardsSource, /Мониторинг:/);
+  assert.doesNotMatch(siteCardsSource, /Аномалий не обнаружено/);
+  assert.doesNotMatch(siteCardsSource, /Обнаружена критичная аномалия/);
 });
 
 test("structure opens an on-demand page context drawer with SEO and broken links", () => {
@@ -325,7 +321,8 @@ test("page inspector exposes on-demand runtime consent audit", () => {
 });
 
 test("guest crawl persona is visible in site, compare and page context UX", () => {
-  assert.match(siteCardsSource, /Контекст:/);
+  assert.match(siteCardsSource, /contextLabel/);
+  assert.match(siteCardsSource, /default_persona\?\.label \|\| "Гость"/);
   assert.match(compareSource, /run\.persona\?\.label \|\| "Гость"/);
   assert.match(reportSource, /Контекст просмотра:/);
   assert.match(pageDrawerSource, /Контекст просмотра:/);
