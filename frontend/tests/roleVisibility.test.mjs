@@ -54,3 +54,11 @@ test("emergency root-admin is shown as protected and excluded from bulk removal"
   assert.match(rootAdminsSource, /rows\.filter\(\(row\) => !row\.is_emergency\)/);
   assert.match(selectableRowSource, /checkboxDisabled/);
 });
+
+test("settings exposes read-only project quota overview for admins", () => {
+  assert.match(settingsSource, /QuotaOverviewCard/);
+  assert.match(settingsSource, /Лимиты ролей/);
+  assert.match(settingsSource, /env:QUOTA_\{ROLE\}_\.\.\./);
+  assert.match(settingsSource, /max_active_jobs_per_user/);
+  assert.match(settingsSource, /max_bulk_sites_per_run/);
+});

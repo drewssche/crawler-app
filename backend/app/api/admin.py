@@ -49,6 +49,7 @@ from app.services.admin_monitoring import (
     get_monitoring_settings_payload,
     update_monitoring_settings_payload,
 )
+from app.services.project_quotas import quota_for_role
 from app.services.admin_actions import (
     is_bulk_action_allowed_for_actor,
     log_admin_action as svc_log_admin_action,
@@ -95,6 +96,8 @@ SECURITY_ACTIONS = {
     *SECURITY_ADMIN_ACTIONS,
     "update_admin_emails",
 }
+
+QUOTA_OVERVIEW_ROLES = ["viewer", "editor", "admin", "root-admin"]
 
 class ApproveUserIn(BaseModel):
     role: Literal["editor", "viewer", "admin"]
@@ -169,6 +172,29 @@ def _log_admin_action(
         logger=logger,
         created_at=_utc_now_naive(),
     )
+
+
+def _build_quota_overview_payload() -> dict:
+    roles = []
+    for role in QUOTA_OVERVIEW_ROLES:
+        quota = quota_for_role(role)
+        roles.append(
+            {
+                "role": role,
+                "max_projects": quota.max_projects,
+                "max_sites_per_project": quota.max_sites_per_project,
+                "max_pages_per_site": quota.max_pages_per_site,
+                "max_concurrency_per_site": quota.max_concurrency_per_site,
+                "max_active_jobs_per_user": quota.max_active_jobs_per_user,
+                "max_bulk_sites_per_run": quota.max_bulk_sites_per_run,
+            }
+        )
+    return {
+        "source_ok": True,
+        "source": "env:QUOTA_{ROLE}_...",
+        "roles": roles,
+    }
+
 
 def _calc_trusted_days_left(db: Session, user_id: int) -> float | None:
     now = _utc_now_naive()
@@ -818,6 +844,7 @@ def get_settings_summary(
             "events_unread": {"value": events_unread_value, "source_ok": events_unread_ok},
             "audit24h": {"value": audit24h_value, "source_ok": audit24h_ok},
             "monitoring": {"state": monitoring_state, "source_ok": monitoring_ok},
+            "quota_overview": _build_quota_overview_payload(),
         },
     )
 
@@ -1296,5 +1323,3 @@ def bulk_users(
     increment_counter("admin_bulk_result_total", action=payload.action, changed=str(changed).lower())
 
     return success_response_payload(request, data={"ok": True, "results": results})
-
-

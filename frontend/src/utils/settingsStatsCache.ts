@@ -8,6 +8,21 @@ export type SettingsSummary = {
   eventsUnread: { value: number | null; sourceOk: boolean };
   audit24h: { value: number | null; sourceOk: boolean };
   monitoring: { state: MonitoringState; sourceOk: boolean };
+  quotaOverview: {
+    sourceOk: boolean;
+    source: string;
+    roles: QuotaOverviewRole[];
+  };
+};
+
+export type QuotaOverviewRole = {
+  role: string;
+  max_projects: number;
+  max_sites_per_project: number;
+  max_pages_per_site: number;
+  max_concurrency_per_site: number;
+  max_active_jobs_per_user: number;
+  max_bulk_sites_per_run: number;
 };
 
 type SettingsSummaryResponse = {
@@ -16,6 +31,11 @@ type SettingsSummaryResponse = {
   events_unread?: { value?: number | null; source_ok?: boolean };
   audit24h?: { value?: number | null; source_ok?: boolean };
   monitoring?: { state?: MonitoringState; source_ok?: boolean };
+  quota_overview?: {
+    source_ok?: boolean;
+    source?: string;
+    roles?: QuotaOverviewRole[];
+  };
 };
 
 const TTL_MS = 30_000;
@@ -53,6 +73,11 @@ function normalizeSummary(raw: SettingsSummaryResponse | null | undefined): Sett
     monitoring: {
       state: raw?.monitoring?.state || "нет данных",
       sourceOk: raw?.monitoring?.source_ok !== false,
+    },
+    quotaOverview: {
+      sourceOk: raw?.quota_overview?.source_ok !== false,
+      source: raw?.quota_overview?.source || "env:QUOTA_{ROLE}_...",
+      roles: Array.isArray(raw?.quota_overview?.roles) ? raw.quota_overview.roles : [],
     },
   };
 }

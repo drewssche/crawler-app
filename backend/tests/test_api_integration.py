@@ -3804,11 +3804,16 @@ def test_settings_summary_endpoint_returns_domains():
     assert "events_unread" in data
     assert "audit24h" in data
     assert "monitoring" in data
+    assert "quota_overview" in data
     assert data["pending_users"]["source_ok"] in {True, False}
     assert data["root_admins"]["source_ok"] in {True, False}
     assert data["events_unread"]["source_ok"] in {True, False}
     assert data["audit24h"]["source_ok"] in {True, False}
     assert data["monitoring"]["source_ok"] in {True, False}
+    assert data["quota_overview"]["source_ok"] is True
+    quota_roles = {row["role"]: row for row in data["quota_overview"]["roles"]}
+    assert {"viewer", "editor", "admin", "root-admin"} <= set(quota_roles)
+    assert quota_roles["editor"]["max_projects"] >= 1
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

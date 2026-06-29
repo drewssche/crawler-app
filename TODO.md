@@ -354,7 +354,8 @@
   Quotas foundation готова: role-based limits для project count, sites per project, max pages/concurrency per site, active crawler jobs per user и bulk-run size; env overrides `QUOTA_{ROLE}_...`.
   Membership foundation и management UI готовы: `project_memberships`, creator=`owner`, admin/root-admin global access, viewer/editor видят только member-проекты; owner/admin могут добавлять, менять роль и удалять участников.
   Friendly quota UX готов: create project/site, settings save и site/project run показывают понятное объяснение лимита, текущего значения, запрошенного действия и следующего шага для пользователя.
-  Осталось: actor/project storage budgets, quota overview для admin/root-admin и финальный audit устаревших compatibility-допусков по membership.
+  Quota overview готов: Settings показывает admin/root-admin read-only обзор лимитов ролей из `QUOTA_{ROLE}_...`.
+  Осталось: actor/project storage budgets и финальный audit устаревших compatibility-допусков по membership.
   Canonical site/path scope и duplicate policy перенесены в epic `Site monitoring + scoped crawl + compare workspace`, чтобы не вести два конкурирующих контракта.
 
 - [x] **P1 Protected emergency root actor** (`HIGH`).

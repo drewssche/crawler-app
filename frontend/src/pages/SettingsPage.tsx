@@ -5,6 +5,7 @@ import { useAuth } from "../hooks/auth";
 import { hasPermission } from "../utils/permissions";
 import {
   getSettingsSummaryCached,
+  type QuotaOverviewRole,
 } from "../utils/settingsStatsCache";
 import {
   subscribeEventCenterUnread,
@@ -77,6 +78,69 @@ function SettingsItem({
   );
 }
 
+const QUOTA_LABELS: Array<{ key: keyof Omit<QuotaOverviewRole, "role">; label: string }> = [
+  { key: "max_projects", label: "Проекты" },
+  { key: "max_sites_per_project", label: "Сайты/проект" },
+  { key: "max_pages_per_site", label: "Страницы/сайт" },
+  { key: "max_concurrency_per_site", label: "Параллельность" },
+  { key: "max_active_jobs_per_user", label: "Активные jobs" },
+  { key: "max_bulk_sites_per_run", label: "Bulk sites" },
+];
+
+function QuotaOverviewCard({
+  roles,
+  source,
+  sourceOk,
+}: {
+  roles: QuotaOverviewRole[];
+  source: string;
+  sourceOk: boolean;
+}) {
+  if (roles.length === 0 && sourceOk) return null;
+  return (
+    <Card>
+      <div style={{ display: "grid", gap: 10 }}>
+        <div>
+          <div style={{ fontWeight: 800 }}>Лимиты ролей</div>
+          <div style={{ marginTop: 4, fontSize: 12, opacity: 0.75 }}>
+            Read-only обзор квот crawler. Значения берутся из {source}; менять их лучше через env/config.
+          </div>
+        </div>
+        {!sourceOk && (
+          <div style={{ color: "#ffc9c9", fontSize: 13 }}>Источник лимитов временно недоступен.</div>
+        )}
+        {roles.length > 0 && (
+          <div style={{ display: "grid", gap: 8 }}>
+            {roles.map((row) => (
+              <Card key={row.role} style={{ padding: 10, background: "rgba(255,255,255,0.025)" }}>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ fontWeight: 800 }}>{row.role}</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", gap: 6 }}>
+                    {QUOTA_LABELS.map((item) => (
+                      <div
+                        key={item.key}
+                        style={{
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          borderRadius: 10,
+                          padding: "7px 8px",
+                          background: "rgba(0,0,0,0.12)",
+                        }}
+                      >
+                        <div style={{ fontSize: 11, opacity: 0.68 }}>{item.label}</div>
+                        <div style={{ marginTop: 3, fontWeight: 800 }}>{row[item.key]}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -85,6 +149,9 @@ export default function SettingsPage() {
   const [eventsUnread, setEventsUnread] = useState<number | null>(null);
   const [audit24h, setAudit24h] = useState<number | null>(null);
   const [monitoringState, setMonitoringState] = useState<"стабильно" | "внимание" | "критично" | "нет данных">("нет данных");
+  const [quotaRoles, setQuotaRoles] = useState<QuotaOverviewRole[]>([]);
+  const [quotaSource, setQuotaSource] = useState("env:QUOTA_{ROLE}_...");
+  const [quotaSourceOk, setQuotaSourceOk] = useState(true);
   const [diagUsersOk, setDiagUsersOk] = useState(true);
   const [diagRootAdminsOk, setDiagRootAdminsOk] = useState(true);
   const [diagEventsOk, setDiagEventsOk] = useState(true);
@@ -110,6 +177,9 @@ export default function SettingsPage() {
               if (canManageUsers) {
                 setPendingCount(summary.pendingUsers.value);
                 setDiagUsersOk(summary.pendingUsers.sourceOk);
+                setQuotaRoles(summary.quotaOverview.roles);
+                setQuotaSource(summary.quotaOverview.source);
+                setQuotaSourceOk(summary.quotaOverview.sourceOk);
               }
               if (canManageRootAdmins) {
                 setRootAdminsCount(summary.rootAdmins.value);
@@ -131,6 +201,8 @@ export default function SettingsPage() {
               if (canManageUsers) {
                 setPendingCount(null);
                 setDiagUsersOk(false);
+                setQuotaRoles([]);
+                setQuotaSourceOk(false);
               }
               if (canManageRootAdmins) {
                 setRootAdminsCount(null);
@@ -208,6 +280,10 @@ export default function SettingsPage() {
               )}
             </div>
           </Card>
+        )}
+
+        {canManageUsers && (
+          <QuotaOverviewCard roles={quotaRoles} source={quotaSource} sourceOk={quotaSourceOk} />
         )}
 
         {(canViewEvents || canViewAudit) && (
