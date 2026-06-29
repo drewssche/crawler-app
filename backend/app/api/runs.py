@@ -28,7 +28,7 @@ from app.db.models.project_site import ProjectSite
 from app.db.models.run import Run
 from app.db.models.user import User
 from app.db.session import SessionLocal, get_db
-from app.core.security import require_permission
+from app.core.security import get_user_role, require_permission
 from app.core.events import (
     EVENT_CHANNEL_NOTIFICATION,
     EVENT_SEVERITY_DANGER,
@@ -51,6 +51,7 @@ from app.services.page_context import build_page_context
 from app.services.persona_secrets import decrypt_session_bundle
 from app.services.persona_browser_state import build_browser_persona_state
 from app.services.run_recovery import mark_stale_running_runs_failed
+from app.services.project_quotas import enforce_actor_active_job_quota, enforce_bulk_run_quota
 from app.services.scan_retention import prune_site_persona_raw_artifacts
 from app.crawler.browser_fetcher import BrowserCrawlerError, BrowserPersonaClient, browser_state_requires_runtime
 from app.crawler.renderer import (
@@ -1175,6 +1176,12 @@ def start_site_run(
             },
         )
     _assert_no_active_site_run(db, site)
+    enforce_actor_active_job_quota(
+        db,
+        actor_user_id=current_user.id,
+        role=get_user_role(current_user),
+        requested_jobs=1,
+    )
     persona = None
     if payload and payload.crawl_persona_id is not None:
         persona = (
@@ -1244,6 +1251,14 @@ def start_project_sites(
                 "message": "В проекте нет включённых сайтов для запуска.",
             },
         )
+    role = get_user_role(current_user)
+    enforce_bulk_run_quota(role=role, sites_count=len(sites))
+    enforce_actor_active_job_quota(
+        db,
+        actor_user_id=current_user.id,
+        role=role,
+        requested_jobs=len(sites),
+    )
 
     results = []
     for site in sites:

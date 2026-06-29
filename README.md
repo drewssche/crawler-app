@@ -82,6 +82,8 @@ docker compose up -d --build backend
 
 Raw artifacts хранятся ограниченно: по умолчанию сохраняется HTML/rendered snapshot только для двух последних успешных прогонов сайта в рамках одной crawl-persona (`latest + previous`). Старые runs, URL, HTTP-статусы, hashes, timings и агрегаты остаются в базе для истории и статистики, но тяжёлый HTML и rendered files очищаются. Лимит задаёт `SCAN_RAW_ARTIFACT_RUNS_TO_KEEP` от 1 до 20, по умолчанию 2.
 
+Role-based quotas защищают crawler от слишком дорогих настроек и очередей. По умолчанию `editor` ограничен 5000 страницами и concurrency 3 на сайт, 20 сайтами в проекте, 3 активными crawler jobs и 10 сайтами в одном bulk-run; `admin/root-admin` имеют более высокие лимиты. Переопределение идёт через env вида `QUOTA_EDITOR_MAX_PAGES_PER_SITE`, `QUOTA_EDITOR_MAX_ACTIVE_JOBS_PER_USER`, `QUOTA_ADMIN_MAX_BULK_SITES_PER_RUN`.
+
 Readiness также контролирует production-состояние очереди:
 
 - `RUNNING/CANCEL_REQUESTED` job с истёкшей lease автоматически закрывается как failed/cancelled и освобождает сайт для нового запуска;

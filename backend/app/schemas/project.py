@@ -15,8 +15,8 @@ class ProjectSiteSeed(BaseModel):
     exclude_ext_csv: str = ".css,.js,.png,.jpg,.jpeg,.webp,.svg,.woff,.woff2,.ttf,.eot,.map"
 
     respect_robots: bool = True
-    max_pages: int = 5000
-    concurrency: int = 3
+    max_pages: int = Field(default=5000, ge=1, le=10000)
+    concurrency: int = Field(default=3, ge=1, le=20)
     is_enabled: bool = True
 
 

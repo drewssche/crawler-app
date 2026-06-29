@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.api_response import success_response_payload
-from app.core.security import require_permission
+from app.core.security import get_user_role, require_permission
 from app.crawler.login_capture import (
     ManagedLoginCaptureUnavailable,
     cancel_managed_login_session,
@@ -29,6 +29,7 @@ from app.schemas.project_site import ProjectSiteCreate, ProjectSiteOut, ProjectS
 from app.services.crawl_personas import ensure_guest_persona
 from app.services.persona_secrets import decrypt_session_bundle, encrypt_session_bundle, summarize_session_bundle
 from app.services.project_sites import build_project_site
+from app.services.project_quotas import enforce_project_site_create_quota, enforce_site_settings_quota
 from app.services.site_anomalies import evaluate_project_site_anomalies
 
 router = APIRouter(prefix="/projects/{project_id}/sites", tags=["project-sites"])
@@ -978,9 +979,12 @@ def create_project_site(
     payload: ProjectSiteCreate,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
     _get_project_or_404(db, project_id)
+    role = get_user_role(current_user)
+    enforce_project_site_create_quota(db, project_id=project_id, role=role)
+    enforce_site_settings_quota(role=role, max_pages=payload.max_pages, concurrency=payload.concurrency)
     next_order = (
         db.query(ProjectSite)
         .filter(ProjectSite.project_id == project_id)
@@ -1028,7 +1032,7 @@ def update_project_site(
     payload: ProjectSiteUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
     site = _get_site_or_404(db, project_id, site_id)
     changes = payload.model_dump(exclude_unset=True)
@@ -1047,6 +1051,12 @@ def update_project_site(
     path_prefix = changes.pop("path_prefix", site.path_prefix)
     if "path_prefix" in payload.model_fields_set and "start_url" not in payload.model_fields_set:
         start_url = site.canonical_origin
+    role = get_user_role(current_user)
+    enforce_site_settings_quota(
+        role=role,
+        max_pages=int(changes.get("max_pages", site.max_pages)),
+        concurrency=int(changes.get("concurrency", site.concurrency)),
+    )
     if {"start_url", "scope_mode", "path_prefix"} & payload.model_fields_set:
         try:
             normalized = build_project_site(

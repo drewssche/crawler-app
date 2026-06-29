@@ -31,6 +31,7 @@ from app.db.models.trusted_device import TrustedDevice
 from app.db.models.user import User
 from app.db.session import get_db
 from app.main import app
+from app.services.crawl_personas import ensure_guest_persona
 from app.services.project_sites import build_project_site, create_primary_site_for_project
 
 
@@ -2084,6 +2085,118 @@ def test_create_project_rejects_duplicate_canonical_scope():
         headers=_auth_header("projects@test.local", role="editor"),
     )
     assert distinct_path.status_code == 200
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_editor_project_site_settings_are_limited_by_role_quota(monkeypatch):
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    monkeypatch.setenv("QUOTA_EDITOR_MAX_PAGES_PER_SITE", "2")
+    monkeypatch.setenv("QUOTA_EDITOR_MAX_CONCURRENCY_PER_SITE", "1")
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="quota-editor@test.local", role="editor", is_approved=True))
+        project = Project(name="Quota", start_url="https://quota.test", allowed_domains_csv="quota.test", max_pages=1)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        _add_primary_site(db, project)
+        db.commit()
+        project_id = project.id
+
+    headers = _auth_header("quota-editor@test.local", role="editor")
+    client = TestClient(app)
+
+    rejected_project = client.post(
+        "/projects",
+        json={
+            "name": "Too big",
+            "start_url": "https://too-big.test/",
+            "allowed_domains_csv": "too-big.test",
+            "max_pages": 3,
+            "concurrency": 1,
+        },
+        headers=headers,
+    )
+    assert rejected_project.status_code == 409
+    assert _extract_error_payload(rejected_project)["error"]["code"] == "quota_exceeded"
+
+    rejected_site = client.post(
+        f"/projects/{project_id}/sites",
+        json={
+            "name": "Too concurrent",
+            "start_url": "https://quota-two.test/",
+            "allowed_domains_csv": "quota-two.test",
+            "max_pages": 2,
+            "concurrency": 2,
+        },
+        headers=headers,
+    )
+    assert rejected_site.status_code == 409
+    error = _extract_error_payload(rejected_site)["error"]
+    assert error["code"] == "quota_exceeded"
+    assert error["details"]["quota"] == "max_concurrency_per_site"
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_editor_active_crawler_jobs_are_limited_by_role_quota(monkeypatch):
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    monkeypatch.setenv("QUOTA_EDITOR_MAX_ACTIVE_JOBS_PER_USER", "1")
+    monkeypatch.setenv("CRAWLER_WORKER_ENABLED", "1")
+
+    with SessionLocal() as db:
+        user = _make_user(email="quota-runner@test.local", role="editor", is_approved=True)
+        db.add(user)
+        project = Project(name="Quota jobs", start_url="https://quota-jobs-a.test", allowed_domains_csv="quota-jobs-a.test", max_pages=1)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        first_site = _add_primary_site(db, project)
+        second_site = build_project_site(
+            project_id=project.id,
+            name="Second",
+            start_url="https://quota-jobs-b.test/",
+            scope_mode="whole_site",
+            path_prefix=None,
+            role="peer",
+            allowed_domains_csv="quota-jobs-b.test",
+            exclude_paths_csv="",
+            exclude_ext_csv="",
+            respect_robots=True,
+            max_pages=1,
+            concurrency=1,
+            is_enabled=True,
+            sort_order=1,
+        )
+        db.add(second_site)
+        db.flush()
+        ensure_guest_persona(db, second_site)
+        db.commit()
+        first_site_id = first_site.id
+        second_site_id = second_site.id
+
+    headers = _auth_header("quota-runner@test.local", role="editor")
+    client = TestClient(app)
+    first = client.post(f"/runs/start-site/{first_site_id}", headers=headers)
+    assert first.status_code == 200
+    assert first.json()["queued"] is True
+
+    second = client.post(f"/runs/start-site/{second_site_id}", headers=headers)
+    assert second.status_code == 409
+    error = _extract_error_payload(second)["error"]
+    assert error["code"] == "quota_exceeded"
+    assert error["details"]["quota"] == "max_active_jobs_per_user"
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

@@ -345,7 +345,8 @@
   - Следующее: extended operations/event log для worker только если компактной панели и notification center недостаточно; иначе перейти к governance/quotas.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
-  Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
+  Quotas foundation готова: role-based limits для project count, sites per project, max pages/concurrency per site, active crawler jobs per user и bulk-run size; env overrides `QUOTA_{ROLE}_...`.
+  Осталось: ownership/membership model, project visibility by membership, actor/project storage budgets и UI-пояснения quota errors.
   Canonical site/path scope и duplicate policy перенесены в epic `Site monitoring + scoped crawl + compare workspace`, чтобы не вести два конкурирующих контракта.
 
 - [ ] **P1 Protected emergency root actor** (`HIGH`).
@@ -359,6 +360,13 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P1 Project governance — role-based quota foundation**.
+  - Что было: роль давала permission на запуск/редактирование, но не ограничивала стоимость настроек и размер очереди.
+  - Что стало: добавлен `project_quotas` service. Backend проверяет project create, site create/update, start-site и start-project: `max_projects`, `max_sites_per_project`, `max_pages_per_site`, `max_concurrency_per_site`, `max_active_jobs_per_user`, `max_bulk_sites_per_run`. Ошибки возвращаются как friendly `quota_exceeded` с `quota/limit/current/requested`.
+  - Настройка: env overrides вида `QUOTA_EDITOR_MAX_PAGES_PER_SITE`, `QUOTA_EDITOR_MAX_ACTIVE_JOBS_PER_USER`, `QUOTA_ADMIN_MAX_BULK_SITES_PER_RUN`.
+  - Как проверить: `docker compose exec backend env PYTHONPATH=/app pytest -q tests/test_api_integration.py -k "quota or duplicate_canonical_scope or project_sites_are_created or start_project"`.
+  - Вклад в цели: crawler получил server-side защиту от слишком дорогих запусков до появления полноценной ownership/membership модели (`high` production readiness).
 
 - [x] **HIGH Scan storage retention + permanent stats policy**.
   - Что было: каждый successful crawl сохранял HTML в `pages.html`, а rendered snapshots могли оставаться файлами без ограничителя объёма.

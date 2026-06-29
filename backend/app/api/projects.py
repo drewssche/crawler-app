@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.security import require_permission
+from app.core.security import get_user_role, require_permission
 from app.core.api_response import success_response_payload
 from app.core.paging import build_paged_response, paginate_query
 from app.core.site_scope import canonicalize_site_scope
@@ -17,6 +17,7 @@ from app.db.models.crawl_persona import CrawlPersona
 from app.schemas.project import ProjectCreate, ProjectOut
 from app.db.models.project_site import ProjectSite
 from app.services.project_sites import create_primary_site_for_project
+from app.services.project_quotas import enforce_project_create_quota, enforce_site_settings_quota
 from app.services.scan_retention import delete_rendered_snapshot_artifacts_for_project
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -63,8 +64,11 @@ def list_projects(
 def create_project(
     payload: ProjectCreate,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_permission("projects.edit")),
+    current_user: User = Depends(require_permission("projects.edit")),
 ):
+    role = get_user_role(current_user)
+    enforce_project_create_quota(db, role=role)
+    enforce_site_settings_quota(role=role, max_pages=payload.max_pages, concurrency=payload.concurrency)
     try:
         primary_scope = canonicalize_site_scope(
             str(payload.start_url),
