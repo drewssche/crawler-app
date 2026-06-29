@@ -38,6 +38,7 @@ import { MetaText, StatusText } from "../components/ui/StatusText";
 import { formatOperationalDateTime, formatRunTitle } from "../utils/datetime";
 import { invalidateProjectsCache } from "../utils/projectListCache";
 import { publishProjectRunLive } from "../utils/projectRunLiveStore";
+import { formatQuotaError, isQuotaError } from "../utils/quotaErrors";
 import { useAuth } from "../hooks/auth";
 import { hasPermission } from "../utils/permissions";
 import { refreshEventCenterPollingNow } from "../utils/eventCenterPollingManager";
@@ -784,6 +785,8 @@ export default function ProjectDashboardPage() {
       ]);
       if (e instanceof ApiError && ["run_already_active", "site_run_already_active"].includes(e.code)) {
         setRunsError("Для выбранного сайта уже выполняется прогон.");
+      } else if (isQuotaError(e)) {
+        setRunsError(formatQuotaError(e));
       } else if (e instanceof ApiError && e.code.startsWith("persona_session_")) {
         setRunsError(e.message || "Сессия выбранного контекста недоступна. Подключите её заново в настройках сайта.");
       } else if (e instanceof ApiError && e.status !== 502) {
@@ -793,7 +796,7 @@ export default function ProjectDashboardPage() {
       }
       showRunToast({
         title: `Прогон «${selectedSite.name}» завершился ошибкой`,
-        body: e instanceof Error ? e.message : "Откройте карточку прогона, чтобы увидеть причину.",
+        body: isQuotaError(e) ? formatQuotaError(e) : e instanceof Error ? e.message : "Откройте карточку прогона, чтобы увидеть причину.",
         accent: "danger",
       });
       if (canViewEvents) void refreshEventCenterPollingNow().catch(() => undefined);
@@ -851,10 +854,10 @@ export default function ProjectDashboardPage() {
       });
       if (canViewEvents) void refreshEventCenterPollingNow().catch(() => undefined);
     } catch (e) {
-      setRunsError(e instanceof Error ? e.message : "Не удалось запустить сайты проекта.");
+      setRunsError(isQuotaError(e) ? formatQuotaError(e) : e instanceof Error ? e.message : "Не удалось запустить сайты проекта.");
       showRunToast({
         title: "Общий запуск завершился ошибкой",
-        body: e instanceof Error ? e.message : "Не удалось получить результат запуска.",
+        body: isQuotaError(e) ? formatQuotaError(e) : e instanceof Error ? e.message : "Не удалось получить результат запуска.",
         accent: "danger",
       });
       if (canViewEvents) void refreshEventCenterPollingNow().catch(() => undefined);

@@ -24,6 +24,7 @@ import {
 } from "../../api/projectSites";
 import { ApiError } from "../../api/client";
 import { normalizePathPrefix, normalizeSiteUrl, validateSiteDraft } from "../../utils/siteScope";
+import { formatQuotaError, isQuotaError } from "../../utils/quotaErrors";
 import Card from "../ui/Card";
 import CardActionButton from "../ui/CardActionButton";
 import CardFooterActions from "../ui/CardFooterActions";
@@ -1060,6 +1061,7 @@ export default function ProjectSitesSettings({
       setError(
         err instanceof ApiError && err.code === "project_site_scope_conflict"
           ? "Сайт с такой областью мониторинга уже есть в проекте."
+          : isQuotaError(err) ? formatQuotaError(err)
           : err instanceof Error ? err.message : "Не удалось добавить сайт.",
       );
     } finally {
@@ -1091,6 +1093,7 @@ export default function ProjectSitesSettings({
       setError(
         err instanceof ApiError && err.code === "project_site_scope_conflict"
           ? "Сайт с такой областью мониторинга уже есть в проекте."
+          : isQuotaError(err) ? formatQuotaError(err)
           : err instanceof Error ? err.message : "Не удалось сохранить сайт.",
       );
     } finally {

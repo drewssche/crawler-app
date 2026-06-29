@@ -13,6 +13,7 @@ import {
   validateSiteDraft,
 } from "../utils/siteScope";
 import { invalidateProjectsCache } from "../utils/projectListCache";
+import { formatQuotaError, isQuotaError } from "../utils/quotaErrors";
 
 type ProjectOut = {
   id: number;
@@ -71,7 +72,7 @@ export default function ProjectNewPage() {
           setError("Проект для этого адреса уже существует.");
         }
       } else {
-        setError(err instanceof Error ? err.message : "Не удалось создать проект.");
+        setError(isQuotaError(err) ? formatQuotaError(err) : err instanceof Error ? err.message : "Не удалось создать проект.");
       }
     } finally {
       setPending(false);

@@ -14,6 +14,7 @@ const layoutSource = await readFile(new URL("../src/components/layout/AppLayout.
 const inspectorSource = await readFile(new URL("../src/pages/PageInspectorPage.tsx", import.meta.url), "utf8");
 const reportSource = await readFile(new URL("../src/components/projects/PageInspectionReport.tsx", import.meta.url), "utf8");
 const safeSnapshotSource = await readFile(new URL("../src/utils/safeSnapshotDocument.ts", import.meta.url), "utf8");
+const quotaErrorsSource = await readFile(new URL("../src/utils/quotaErrors.ts", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../src/index.css", import.meta.url), "utf8");
 const renderedSnapshotSource = await readFile(new URL("../src/components/projects/RenderedSnapshotView.tsx", import.meta.url), "utf8");
 
@@ -302,6 +303,16 @@ test("project run history exposes crawl runtime explicitly", () => {
   assert.match(source, /Browser runtime/);
   assert.match(source, /HTTP runtime/);
   assert.match(source, /crawl_runtime/);
+});
+
+test("project quota failures are explained as user-facing limits", () => {
+  assert.match(createSource, /formatQuotaError/);
+  assert.match(sitesSource, /formatQuotaError/);
+  assert.match(source, /formatQuotaError/);
+  assert.match(quotaErrorsSource, /Достигнут лимит:/);
+  assert.match(quotaErrorsSource, /Дождитесь завершения текущих задач/);
+  assert.match(quotaErrorsSource, /Запустите сайты частями/);
+  assert.match(quotaErrorsSource, /Уменьшите лимит страниц/);
 });
 
 test("compare auto-match suggests but does not force a relative-path pair", () => {

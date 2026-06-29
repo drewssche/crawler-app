@@ -352,8 +352,9 @@
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas foundation готова: role-based limits для project count, sites per project, max pages/concurrency per site, active crawler jobs per user и bulk-run size; env overrides `QUOTA_{ROLE}_...`.
-  Membership foundation готова: `project_memberships`, creator=`owner`, admin/root-admin global access, viewer/editor видят только member-проекты; legacy projects без memberships остаются visible для совместимости.
-  Осталось: management API/UI для добавления/удаления участников, project role editor/viewer controls, actor/project storage budgets и UI-пояснения quota/membership errors.
+  Membership foundation и management UI готовы: `project_memberships`, creator=`owner`, admin/root-admin global access, viewer/editor видят только member-проекты; owner/admin могут добавлять, менять роль и удалять участников.
+  Friendly quota UX готов: create project/site, settings save и site/project run показывают понятное объяснение лимита, текущего значения, запрошенного действия и следующего шага для пользователя.
+  Осталось: actor/project storage budgets, quota overview для admin/root-admin и финальный audit устаревших compatibility-допусков по membership.
   Canonical site/path scope и duplicate policy перенесены в epic `Site monitoring + scoped crawl + compare workspace`, чтобы не вести два конкурирующих контракта.
 
 - [ ] **P1 Protected emergency root actor** (`HIGH`).
