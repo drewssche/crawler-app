@@ -84,7 +84,7 @@ Raw artifacts хранятся ограниченно: по умолчанию �
 
 Role-based quotas защищают crawler от слишком дорогих настроек и очередей. По умолчанию `editor` ограничен 5000 страницами и concurrency 3 на сайт, 20 сайтами в проекте, 3 активными crawler jobs и 10 сайтами в одном bulk-run; `admin/root-admin` имеют более высокие лимиты. Переопределение идёт через env вида `QUOTA_EDITOR_MAX_PAGES_PER_SITE`, `QUOTA_EDITOR_MAX_ACTIVE_JOBS_PER_USER`, `QUOTA_ADMIN_MAX_BULK_SITES_PER_RUN`.
 
-Project membership ограничивает видимость новых проектов. При создании проекта текущий пользователь становится `owner`; обычные `viewer/editor` видят только проекты, где они участники, а `admin/root-admin` видят все. Legacy-проекты без membership-записей остаются видимыми authenticated users до явной миграции/назначения участников.
+Project membership ограничивает видимость проектов. При создании проекта текущий пользователь становится `owner`; обычные `viewer/editor` видят только проекты, где они участники, а `admin/root-admin` видят все. Проекты без membership-записей не видны обычным пользователям: назначьте owner через миграцию/backfill или админский доступ.
 
 Readiness также контролирует production-состояние очереди:
 

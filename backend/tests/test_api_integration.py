@@ -71,6 +71,14 @@ def _add_primary_site(db: Session, project: Project) -> ProjectSite:
     return site
 
 
+def _grant_project_role_by_email(db: Session, project: Project, email: str, role: str = "owner") -> None:
+    if project.id is None:
+        db.flush()
+    user = db.query(User).filter(User.email == email).one()
+    db.add(ProjectMembership(project_id=project.id, user_id=user.id, role=role))
+    db.flush()
+
+
 def _extract_error_payload(response):
     payload = response.json()
     assert payload["ok"] is False
@@ -219,6 +227,8 @@ def test_project_and_run_endpoints_enforce_role_permissions():
         db.add_all([viewer, editor, project])
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "project-viewer@test.local", role="viewer")
+        _grant_project_role_by_email(db, project, "project-editor@test.local", role="editor")
         site = _add_primary_site(db, project)
         run = Run(
             project_id=project.id,
@@ -799,6 +809,10 @@ def test_projects_summary_returns_last_run_and_totals():
         p2 = Project(name="B", start_url="https://b.test", allowed_domains_csv="b.test")
         db.add_all([viewer, p1, p2])
         db.commit()
+        db.add_all([
+            ProjectMembership(project_id=p1.id, user_id=viewer.id, role="viewer"),
+            ProjectMembership(project_id=p2.id, user_id=viewer.id, role="viewer"),
+        ])
         db.refresh(p1)
         db.refresh(p2)
         p1_site = _add_primary_site(db, p1)
@@ -885,6 +899,7 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "runs-multi@test.local")
         primary = _add_primary_site(db, project)
         secondary = build_project_site(
             project_id=project.id,
@@ -1378,6 +1393,8 @@ def test_crawl_persona_session_bundle_is_masked_encrypted_and_selectable(monkeyp
         project = Project(name="Persona", start_url="https://persona.test", allowed_domains_csv="persona.test")
         db.add(project)
         db.flush()
+        _grant_project_role_by_email(db, project, "persona-editor@test.local")
+        _grant_project_role_by_email(db, project, "persona-viewer@test.local", role="viewer")
         site = _add_primary_site(db, project)
         db.commit()
         project_id = project.id
@@ -1790,6 +1807,7 @@ def test_section_site_run_never_queues_urls_outside_path_scope(monkeypatch):
         )
         db.add(project)
         db.flush()
+        _grant_project_role_by_email(db, project, "section-run@test.local")
         site = build_project_site(
             project_id=project.id,
             name="Docs",
@@ -1871,6 +1889,7 @@ def test_project_run_continues_after_one_site_fails(monkeypatch):
         )
         db.add(project)
         db.flush()
+        _grant_project_role_by_email(db, project, "project-run@test.local")
         good_site = _add_primary_site(db, project)
         bad_site = build_project_site(
             project_id=project.id,
@@ -1963,6 +1982,7 @@ def test_project_run_skips_default_persona_without_session(monkeypatch):
         )
         db.add(project)
         db.flush()
+        _grant_project_role_by_email(db, project, "project-persona-run@test.local")
         site = _add_primary_site(db, project)
         guest = (
             db.query(CrawlPersona)
@@ -2032,6 +2052,7 @@ def test_project_run_uses_browser_client_for_persona_browser_storage(monkeypatch
         project = Project(name="Browser persona", start_url="https://browser-persona.test", allowed_domains_csv="browser-persona.test")
         db.add(project)
         db.flush()
+        _grant_project_role_by_email(db, project, "browser-persona@test.local")
         site = _add_primary_site(db, project)
         db.commit()
         project_id = project.id
@@ -2124,6 +2145,7 @@ def test_project_run_reports_browser_runtime_unavailable(monkeypatch):
         project = Project(name="Browser runtime", start_url="https://browser-runtime.test", allowed_domains_csv="browser-runtime.test")
         db.add(project)
         db.flush()
+        _grant_project_role_by_email(db, project, "browser-runtime@test.local")
         site = _add_primary_site(db, project)
         db.commit()
         project_id = project.id
@@ -2209,6 +2231,7 @@ def test_browser_crawl_respects_browser_page_limit(monkeypatch):
         )
         db.add(project)
         db.flush()
+        _grant_project_role_by_email(db, project, "browser-limit@test.local")
         site = _add_primary_site(db, project)
         db.commit()
         project_id = project.id
@@ -2339,6 +2362,7 @@ def test_editor_project_site_settings_are_limited_by_role_quota(monkeypatch):
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "quota-editor@test.local")
         _add_primary_site(db, project)
         db.commit()
         project_id = project.id
@@ -2396,6 +2420,7 @@ def test_editor_active_crawler_jobs_are_limited_by_role_quota(monkeypatch):
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "quota-runner@test.local")
         first_site = _add_primary_site(db, project)
         second_site = build_project_site(
             project_id=project.id,
@@ -2453,6 +2478,8 @@ def test_run_lock_is_scoped_to_project(monkeypatch):
         db.commit()
         db.refresh(first)
         db.refresh(second)
+        _grant_project_role_by_email(db, first, "runs-lock@test.local")
+        _grant_project_role_by_email(db, second, "runs-lock@test.local")
         first_site = _add_primary_site(db, first)
         second_site = _add_primary_site(db, second)
         db.add(
@@ -2517,6 +2544,7 @@ def test_stale_running_run_is_recovered_before_new_start(monkeypatch):
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "runs-stale@test.local")
         site = _add_primary_site(db, project)
         stale_run = Run(
             project_id=project.id,
@@ -2592,6 +2620,7 @@ def test_cancel_run_marks_active_run_cancel_requested():
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "runs-cancel@test.local")
         site = _add_primary_site(db, project)
         run = Run(
             project_id=project.id,
@@ -2648,6 +2677,7 @@ def test_site_run_honors_cancel_requested_between_pages(monkeypatch):
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "runs-cancel-loop@test.local")
         site = _add_primary_site(db, project)
         db.commit()
         site_id = site.id
@@ -2718,6 +2748,7 @@ def test_site_run_interrupts_inflight_fetch_after_cancel(monkeypatch):
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "runs-cancel-fetch@test.local")
         site = _add_primary_site(db, project)
         db.commit()
         site_id = site.id
@@ -2865,6 +2896,7 @@ def test_empty_crawl_marks_run_failed(monkeypatch):
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "runs-empty@test.local")
         site = _add_primary_site(db, project)
         db.commit()
         project_id = project.id
@@ -2928,6 +2960,7 @@ def test_redirect_chain_is_saved_as_friendly_page_result(monkeypatch):
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "redirect@test.local")
         site = _add_primary_site(db, project)
         db.commit()
         project_id = project.id
@@ -3006,6 +3039,7 @@ def test_page_network_failure_does_not_fail_run_with_successful_html(monkeypatch
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "partial-failure@test.local")
         site = _add_primary_site(db, project)
         db.commit()
         project_id = project.id
@@ -3123,6 +3157,7 @@ def test_retry_problem_page_preserves_original_result_and_records_attempt(monkey
         )
         db.add(project)
         db.flush()
+        _grant_project_role_by_email(db, project, "retry-page@test.local")
         site = _add_primary_site(db, project)
         guest = (
             db.query(CrawlPersona)
@@ -3223,6 +3258,7 @@ def test_retry_problem_page_requires_active_persona_session(monkeypatch):
         )
         db.add(project)
         db.flush()
+        _grant_project_role_by_email(db, project, "retry-persona@test.local")
         site = _add_primary_site(db, project)
         partner = CrawlPersona(
             project_site_id=site.id,
@@ -3307,6 +3343,7 @@ def test_retry_problem_page_uses_browser_runtime_for_browser_persona(monkeypatch
         )
         db.add(project)
         db.flush()
+        _grant_project_role_by_email(db, project, "retry-browser@test.local")
         site = _add_primary_site(db, project)
         db.commit()
         project_id = project.id
@@ -3426,6 +3463,7 @@ def test_pages_changed_counts_deleted_urls(monkeypatch):
         db.add(project)
         db.commit()
         db.refresh(project)
+        _grant_project_role_by_email(db, project, "runs-diff@test.local")
         site = _add_primary_site(db, project)
         previous = Run(
             project_id=project.id,

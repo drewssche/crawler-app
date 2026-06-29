@@ -350,13 +350,13 @@
   - 15. Fast cancel interrupt MVP готов: во время run отдельный cancel-watchdog отслеживает `CANCEL_REQUESTED` и закрывает текущий HTTP/browser client, чтобы прервать зависший fetch быстрее сетевого timeout; частично оборванная текущая страница не сохраняется как page-error, уже сохранённые страницы остаются в истории.
   - Следующее: extended operations/event log для worker только если компактной панели и notification center недостаточно; иначе перейти к governance/quotas.
 
-- [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
+- [x] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas foundation готова: role-based limits для project count, sites per project, max pages/concurrency per site, active crawler jobs per user и bulk-run size; env overrides `QUOTA_{ROLE}_...`.
-  Membership foundation и management UI готовы: `project_memberships`, creator=`owner`, admin/root-admin global access, viewer/editor видят только member-проекты; owner/admin могут добавлять, менять роль и удалять участников.
+  Membership foundation и management UI готовы: `project_memberships`, creator=`owner`, admin/root-admin global access, viewer/editor видят только member-проекты; owner/admin могут добавлять, менять роль и удалять участников. Compatibility fallback для проектов без membership удалён: такие проекты доступны только admin/root-admin до назначения owner.
   Friendly quota UX готов: create project/site, settings save и site/project run показывают понятное объяснение лимита, текущего значения, запрошенного действия и следующего шага для пользователя.
   Quota overview готов: Settings показывает admin/root-admin read-only обзор лимитов ролей из `QUOTA_{ROLE}_...`.
   Storage budget visibility готова: Settings показывает budget из `SCAN_STORAGE_BUDGET_MB`, фактическое использование raw HTML/rendered snapshots, retention `SCAN_RAW_ARTIFACT_RUNS_TO_KEEP` и крупнейшие проекты по raw HTML. Жёсткая enforcement-очистка сверх retention пока не нужна: `scan_retention` уже ограничивает тяжёлые artifacts последних successful runs.
-  Осталось: финальный audit устаревших compatibility-допусков по membership.
+  Финальный membership compatibility audit готов: runtime-допуск `project without memberships → visible to everyone` удалён; README обновлён под обязательную membership-модель.
   Canonical site/path scope и duplicate policy перенесены в epic `Site monitoring + scoped crawl + compare workspace`, чтобы не вести два конкурирующих контракта.
 
 - [x] **P1 Protected emergency root actor** (`HIGH`).
@@ -373,7 +373,7 @@
 
 - [x] **P1 Project governance — project membership foundation**.
   - Что было: `data.view/projects.edit` давали доступ ко всем проектам, кроме различий между ролями.
-  - Что стало: добавлены модель и миграция `project_memberships`. Новый проект получает owner membership для создателя; обычные viewer/editor видят и запускают только member-проекты; admin/root-admin сохраняют глобальный доступ. Legacy-проекты без membership-записей пока visible для authenticated users, чтобы не ломать dev/staging данные.
+  - Что стало: добавлены модель и миграция `project_memberships`. Новый проект получает owner membership для создателя; обычные viewer/editor видят и запускают только member-проекты; admin/root-admin сохраняют глобальный доступ. Runtime fallback для проектов без membership удалён: такие проекты доступны только admin/root-admin до назначения owner.
   - Как проверить: `docker compose exec backend env PYTHONPATH=/app alembic upgrade head`; `docker compose exec backend env PYTHONPATH=/app pytest -q tests/test_api_integration.py`.
   - Вклад в цели: появилась server-side основа ownership/visibility без UI-управления участниками (`high` governance/security).
 

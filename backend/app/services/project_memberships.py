@@ -1,5 +1,4 @@
 from fastapi import HTTPException
-from sqlalchemy import exists, or_
 from sqlalchemy.orm import Query, Session
 
 from app.core.security import get_user_role
@@ -46,15 +45,11 @@ def get_project_membership(db: Session, *, project_id: int, user_id: int) -> Pro
 def can_read_project(db: Session, *, project_id: int, user: User) -> bool:
     if user_has_global_project_access(user):
         return True
-    if not project_has_memberships(db, project_id=project_id):
-        return True
     return get_project_membership(db, project_id=project_id, user_id=user.id) is not None
 
 
 def can_write_project(db: Session, *, project_id: int, user: User) -> bool:
     if user_has_global_project_access(user):
-        return True
-    if not project_has_memberships(db, project_id=project_id):
         return True
     membership = get_project_membership(db, project_id=project_id, user_id=user.id)
     return bool(membership and membership.role in WRITE_MEMBERSHIP_ROLES)
@@ -81,8 +76,6 @@ def require_project_owner(db: Session, *, project_id: int, user: User) -> None:
     if not can_read_project(db, project_id=project_id, user=user):
         raise HTTPException(status_code=404, detail="Project not found")
     if user_has_global_project_access(user):
-        return
-    if not project_has_memberships(db, project_id=project_id):
         return
     membership = get_project_membership(db, project_id=project_id, user_id=user.id)
     if membership and membership.role == "owner":
@@ -144,5 +137,4 @@ def visible_projects_query(db: Session, user: User) -> Query:
     if user_has_global_project_access(user):
         return query
     member_project_ids = db.query(ProjectMembership.project_id).filter(ProjectMembership.user_id == user.id)
-    membership_exists = exists().where(ProjectMembership.project_id == Project.id)
-    return query.filter(or_(Project.id.in_(member_project_ids), ~membership_exists))
+    return query.filter(Project.id.in_(member_project_ids))
