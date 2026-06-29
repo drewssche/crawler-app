@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+/* eslint-disable react-refresh/only-export-components */
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost, clearToken, getToken, setToken } from "../api/client";
 import { type BaseRole } from "../utils/roles";
 
@@ -41,13 +42,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     clearToken();
     setTokenState(null);
     setUser(null);
-  };
+  }, []);
 
-  const refreshMe = async (): Promise<AuthUser | null> => {
+  const refreshMe = useCallback(async (): Promise<AuthUser | null> => {
     if (!token) {
       setUser(null);
       return null;
@@ -60,9 +61,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout();
       return null;
     }
-  };
+  }, [logout, token]);
 
-  const login = async (email: string): Promise<LoginStartResponse> => {
+  const login = useCallback(async (email: string): Promise<LoginStartResponse> => {
     const trustedDeviceToken = localStorage.getItem(TRUSTED_DEVICE_KEY);
     const res = await apiPost<LoginStartResponse>("/auth/start", {
       email,
@@ -77,9 +78,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     return res;
-  };
+  }, []);
 
-  const verifyCode = async (challengeId: number, code: string) => {
+  const verifyCode = useCallback(async (challengeId: number, code: string) => {
     const data = await apiPost<VerifyCodeResponse>("/auth/verify-code", {
       challenge_id: challengeId,
       code,
@@ -91,7 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const me = await apiGet<AuthUser>("/auth/me");
     setUser(me);
-  };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -109,11 +110,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [refreshMe, token]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ token, user, loading, login, verifyCode, logout, refreshMe }),
-    [token, user, loading],
+    [token, user, loading, login, verifyCode, logout, refreshMe],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

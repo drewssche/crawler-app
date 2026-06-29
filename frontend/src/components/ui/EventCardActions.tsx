@@ -1,7 +1,8 @@
 import { memo, useState } from "react";
 import type { EventItem } from "../../api/events";
 import ActionMenuPopover from "./ActionMenuPopover";
-import CardActionButton, { getCardActionButtonStyle } from "./CardActionButton";
+import CardActionButton from "./CardActionButton";
+import { getCardActionButtonStyle } from "./cardActionButtonStyle";
 
 type Props = {
   item: EventItem;

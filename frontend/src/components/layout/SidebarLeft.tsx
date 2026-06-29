@@ -13,7 +13,8 @@ import Button from "../ui/Button";
 import Card from "../ui/Card";
 import ClearableInput from "../ui/ClearableInput";
 import HighlightedText from "../ui/HighlightedText";
-import ProjectRunBadge, { getProjectRunBadgeMeta } from "../ui/ProjectRunBadge";
+import ProjectRunBadge from "../ui/ProjectRunBadge";
+import { getProjectRunBadgeMeta } from "../ui/projectRunBadgeMeta";
 import ScrollableRegion from "../ui/ScrollableRegion";
 import RoleBadge from "../ui/RoleBadge";
 

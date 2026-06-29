@@ -313,8 +313,6 @@ export default function ActivityLogPage() {
 
       });
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-
   }, []);
 
   useEffect(() => {
@@ -1443,7 +1441,6 @@ export default function ActivityLogPage() {
   );
 
 }
-
 
 
 

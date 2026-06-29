@@ -38,11 +38,13 @@ export function useGuardedAsyncState() {
         setError: setErrorIfCurrent,
       });
     } catch (e) {
-      if (!isCurrent()) return;
-      setError(normalizeError(e));
+      if (isCurrent()) {
+        setError(normalizeError(e));
+      }
     } finally {
-      if (!isCurrent()) return;
-      setIsLoading(false);
+      if (isCurrent()) {
+        setIsLoading(false);
+      }
     }
   }, []);
 

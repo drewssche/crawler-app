@@ -1,6 +1,6 @@
 export function parseApiDate(value: string): Date | null {
   if (!value) return null;
-  const hasTimezone = /([zZ]|[+\-]\d{2}:\d{2})$/.test(value);
+  const hasTimezone = /([zZ]|[+-]\d{2}:\d{2})$/.test(value);
   const normalized = hasTimezone ? value : `${value}Z`;
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return null;

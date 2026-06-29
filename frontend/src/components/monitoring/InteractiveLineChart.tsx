@@ -127,12 +127,12 @@ export default function InteractiveLineChart({
 
   useEffect(() => {
     if (!smoothHover) {
-      setSmoothHoverState(hover);
-      return;
+      const timer = window.setTimeout(() => setSmoothHoverState(hover), 0);
+      return () => window.clearTimeout(timer);
     }
     if (!hover) {
-      setSmoothHoverState(null);
-      return;
+      const timer = window.setTimeout(() => setSmoothHoverState(null), 0);
+      return () => window.clearTimeout(timer);
     }
 
     if (smoothRafRef.current != null) {

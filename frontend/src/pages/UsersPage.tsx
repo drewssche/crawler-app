@@ -1,4 +1,4 @@
-﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
+﻿import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiPost, isAbortError } from "../api/client";
 import Button from "../components/ui/Button";
@@ -182,7 +182,7 @@ export default function UsersPage() {
     scheduleResetAndLoad();
   }
 
-  async function refreshDrawerContext(userId: number) {
+  const refreshDrawerContext = useCallback(async (userId: number) => {
     const seq = ++drawerRequestSeqRef.current;
     drawerAbortRef.current?.abort();
     const controller = new AbortController();
@@ -212,12 +212,12 @@ export default function UsersPage() {
         setDrawerLoading(false);
       }
     }
-  }
+  }, []);
 
-  async function openDrawerById(userId: number) {
+  const openDrawerById = useCallback(async (userId: number) => {
     setDrawerOpen(true);
     await refreshDrawerContext(userId);
-  }
+  }, [refreshDrawerContext]);
 
   async function runBulkAction(payload: ActionPayload) {
     if (selectedUsers.length === 0) {
@@ -399,7 +399,7 @@ export default function UsersPage() {
         }
       })();
     }
-  }, [location.search]);
+  }, [location.search, openDrawerById]);
 
   useEffect(() => {
     return () => {

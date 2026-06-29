@@ -25,7 +25,8 @@ import { MetaText, StatusText } from "../../components/ui/StatusText";
 import UiSelect from "../../components/ui/UiSelect";
 import { useWorkspaceInfiniteScroll } from "../../hooks/useWorkspaceInfiniteScroll";
 import { extractHttpStatusFromLabels, getHttpStatusVisualMeta } from "../../utils/httpStatusVisual";
-import { BigChart, SmallHistoryCard, highlightStyle } from "./chartCards";
+import { BigChart, SmallHistoryCard } from "./chartCards";
+import { highlightStyle } from "./chartStyles";
 import { METRIC_DESCRIPTIONS } from "./metricDescriptions";
 import { latest, prev, sumMetric } from "./metricsMath";
 import type {

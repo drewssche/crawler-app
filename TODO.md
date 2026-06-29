@@ -325,7 +325,8 @@
   - Historical Alembic revisions/archive docs may still mention `profiles/profile_id`; keep them as migration/history records, not live product contract.
 
 - [ ] **P0 Stabilization gate** (`HIGH`, implementation mostly complete).
-  Осталось ручное подтверждение project/run сценариев по отдельному запросу: два независимых запуска, immediate project visibility, FINISHED pages, duplicate conflict.
+  Technical gate 2026-06-29 passed: backend `90 passed, 2 skipped`, Alembic head `f6a1d3c8e902`, frontend lint clean, typecheck/build passed, project/workspace/search/roles/compare UI tests passed, `git diff --check` passed.
+  Осталось ручное Browser-smoke подтверждение project/run сценариев по отдельному запросу: два независимых запуска, immediate project visibility, FINISHED pages, duplicate conflict.
 
 - [ ] **P0 Observer notification visibility parity** (`HIGH`, implementation mostly complete).
   Backend viewer получает `403`, frontend не монтирует Event Center. Остался явный viewer UI-smoke по запросу.

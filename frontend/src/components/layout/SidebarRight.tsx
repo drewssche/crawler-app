@@ -499,12 +499,15 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
 
   useEffect(() => {
     let active = true;
-    loadUserActionCatalogs().catch(() => {
-      if (!active) return;
-      // Keep previous values on transient failure instead of downgrading UI to fallback mode.
-    });
+    const timer = window.setTimeout(() => {
+      loadUserActionCatalogs().catch(() => {
+        if (!active) return;
+        // Keep previous values on transient failure instead of downgrading UI to fallback mode.
+      });
+    }, 0);
     return () => {
       active = false;
+      window.clearTimeout(timer);
     };
   }, [loadUserActionCatalogs]);
 
@@ -577,17 +580,21 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
 
   useEffect(() => {
     if (!contextItem) {
-      resetContextTask();
-      setMonitoringFocus(null);
-      setMonitoringFocusSnapshot(null);
-      setMonitoringErrorRows([]);
-      setContextUser(null);
-      setContextAvailableActions([]);
-      return;
+      const timer = window.setTimeout(() => {
+        resetContextTask();
+        setMonitoringFocus(null);
+        setMonitoringFocusSnapshot(null);
+        setMonitoringErrorRows([]);
+        setContextUser(null);
+        setContextAvailableActions([]);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
 
-    setContextUser(null);
-    setContextAvailableActions([]);
+    const resetTimer = window.setTimeout(() => {
+      setContextUser(null);
+      setContextAvailableActions([]);
+    }, 0);
     const { isMonitoring } = getMonitoringFocusMeta(contextItem);
 
     runContextTask(async ({ isCurrent }) => {
@@ -619,10 +626,12 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
           })(),
         );
       } else {
-        setMonitoringFocus(null);
-        setMonitoringFocusSnapshot(null);
-        setMonitoringErrorRows([]);
-        setMonitoringFocusRangeMinutes(60);
+        window.setTimeout(() => {
+          setMonitoringFocus(null);
+          setMonitoringFocusSnapshot(null);
+          setMonitoringErrorRows([]);
+          setMonitoringFocusRangeMinutes(60);
+        }, 0);
       }
 
       try {
@@ -637,6 +646,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
         setContextErrorMessage("Не удалось загрузить полный контекст события.");
       }
     });
+    return () => window.clearTimeout(resetTimer);
   }, [contextItem, resetContextTask, runContextTask, setContextErrorMessage]);
 
   const isAuthSecurityContextEvent = Boolean(

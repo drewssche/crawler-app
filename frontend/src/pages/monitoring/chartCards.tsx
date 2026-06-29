@@ -1,12 +1,7 @@
 import Card from "../../components/ui/Card";
 import InteractiveLineChart from "../../components/monitoring/InteractiveLineChart";
+import { highlightStyle } from "./chartStyles";
 import type { HistoryPoint } from "./types";
-
-export function highlightStyle(active: boolean) {
-  return active
-    ? { borderColor: "rgba(106,160,255,0.72)", boxShadow: "0 0 0 2px rgba(106,160,255,0.2)" }
-    : {};
-}
 
 export function SmallHistoryCard({
   title,

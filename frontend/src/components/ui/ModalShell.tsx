@@ -25,13 +25,17 @@ export default function ModalShell({
 
   useEffect(() => {
     if (open) {
-      setMounted(true);
-      const t = window.setTimeout(() => setVisible(true), 10);
-      return () => window.clearTimeout(t);
+      const mountTimer = window.setTimeout(() => {
+        setMounted(true);
+        setVisible(true);
+      }, 10);
+      return () => window.clearTimeout(mountTimer);
     }
-    setVisible(false);
-    const t = window.setTimeout(() => setMounted(false), 220);
-    return () => window.clearTimeout(t);
+    const hideTimer = window.setTimeout(() => {
+      setVisible(false);
+      window.setTimeout(() => setMounted(false), 220);
+    }, 0);
+    return () => window.clearTimeout(hideTimer);
   }, [open]);
 
   if (!mounted) return null;

@@ -88,7 +88,8 @@ export default function EventsPage() {
 
   useEffect(() => {
     const q = new URLSearchParams(location.search).get("similar");
-    setSimilar((q || "").trim());
+    const timer = window.setTimeout(() => setSimilar((q || "").trim()), 0);
+    return () => window.clearTimeout(timer);
   }, [location.search]);
 
   useEffect(() => {
@@ -543,7 +544,6 @@ export default function EventsPage() {
     </div>
   );
 }
-
 
 
 

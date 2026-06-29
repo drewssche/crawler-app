@@ -21,7 +21,7 @@ import { suggestPageMatch } from "../utils/pageMatch";
 import Button from "../components/ui/Button";
 import { getPageContext, type PageContext } from "../api/pageContext";
 import PageInspectionReport from "../components/projects/PageInspectionReport";
-import { getProjectRunBadgeMeta } from "../components/ui/ProjectRunBadge";
+import { getProjectRunBadgeMeta } from "../components/ui/projectRunBadgeMeta";
 import RenderedSnapshotView from "../components/projects/RenderedSnapshotView";
 import { useAuth } from "../hooks/auth";
 import { hasPermission } from "../utils/permissions";
