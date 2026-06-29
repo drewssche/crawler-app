@@ -262,6 +262,34 @@ function RunRuntimePill({ runtime }: { runtime?: string | null }) {
   return <AccentPill tone={meta.tone} title={meta.title}>{meta.label}</AccentPill>;
 }
 
+function personaLaunchIssue(persona: CrawlPersonaSummary | null | undefined): string | null {
+  if (!persona || persona.kind === "guest") return null;
+  const summary = persona.session_bundle_summary;
+  if (!persona.has_secrets || !summary || summary.status === "missing") {
+    return `Для контекста «${persona.label}» не подключена сессия. Подключите её в настройках сайта.`;
+  }
+  if (summary.status === "unavailable") {
+    return `Сессия контекста «${persona.label}» недоступна. Подключите её заново в настройках сайта.`;
+  }
+  if (summary.expiry_status === "expired") {
+    return `Сессия контекста «${persona.label}» истекла. Обновите её перед запуском.`;
+  }
+  return null;
+}
+
+function personaOptionSuffix(persona: CrawlPersonaSummary): string {
+  if (persona.kind === "guest") return "";
+  const issue = personaLaunchIssue(persona);
+  if (!issue) {
+    if (persona.session_bundle_summary?.expiry_status === "expiring") return " · сессия скоро истечёт";
+    return " · сессия подключена";
+  }
+  if (!persona.has_secrets || persona.session_bundle_summary?.status === "missing") return " · без сессии";
+  if (persona.session_bundle_summary?.status === "unavailable") return " · сессия недоступна";
+  if (persona.session_bundle_summary?.expiry_status === "expired") return " · сессия истекла";
+  return " · требует внимания";
+}
+
 function parseDomains(csv: string): string[] {
   return (csv || "")
     .split(",")
@@ -686,21 +714,18 @@ export default function ProjectDashboardPage() {
       sitePersonas.find((persona) => persona.id === selectedRunPersonaId) ||
       selectedSite.default_persona ||
       { id: 0, key: "guest", label: "Гость", kind: "guest", has_secrets: false };
+    const launchIssue = personaLaunchIssue(selectedPersona);
+    if (launchIssue) {
+      setRunsError(launchIssue);
+      showRunToast({
+        title: `«${selectedPersona.label}» нельзя запустить без активной сессии`,
+        body: launchIssue,
+        accent: "warning",
+      });
+      return;
+    }
     setRunPending(true);
     setRunsError("");
-    showRunToast({
-      title: `Запуск «${selectedSite.name}» отправлен`,
-      body: `Контекст: ${selectedPersona.label}. Сейчас backend поставит задачу в очередь worker.`,
-      accent: "info",
-    });
-    publishProjectRunLive({
-      projectId: project.id,
-      status: "QUEUED",
-      crawlRuntime: selectedPersona.session_bundle_summary?.browser_state_stored ? "browser" : "http",
-      startedAt: new Date().toISOString(),
-      pagesTotal: 0,
-      pagesChanged: 0,
-    });
     try {
       const result = await apiPost<StartSiteRunResponse>(
         `/runs/start-site/${selectedSite.id}`,
@@ -708,6 +733,14 @@ export default function ProjectDashboardPage() {
       );
       if (result.queued && result.job_id) {
         const queuedAt = new Date().toISOString();
+        publishProjectRunLive({
+          projectId: project.id,
+          status: "QUEUED",
+          crawlRuntime: result.crawl_runtime || (selectedPersona.session_bundle_summary?.browser_state_stored ? "browser" : "http"),
+          startedAt: queuedAt,
+          pagesTotal: 0,
+          pagesChanged: 0,
+        });
         setPendingCrawlerJobs((current) => ({
           ...current,
           [selectedSite.id]: {
@@ -751,6 +784,8 @@ export default function ProjectDashboardPage() {
       ]);
       if (e instanceof ApiError && ["run_already_active", "site_run_already_active"].includes(e.code)) {
         setRunsError("Для выбранного сайта уже выполняется прогон.");
+      } else if (e instanceof ApiError && e.code.startsWith("persona_session_")) {
+        setRunsError(e.message || "Сессия выбранного контекста недоступна. Подключите её заново в настройках сайта.");
       } else if (e instanceof ApiError && e.status !== 502) {
         setRunsError(e.message);
       } else if (!(e instanceof ApiError)) {
@@ -972,6 +1007,7 @@ export default function ProjectDashboardPage() {
   const selectedPendingRetryText = selectedPendingJob ? pendingJobRetryText(selectedPendingJob) : null;
   const pendingJobsCount = Object.keys(pendingCrawlerJobs).length;
   const readinessIssues = crawlerReadiness?.issues || [];
+  const selectedRunLaunchIssue = personaLaunchIssue(selectedRunPersona);
   const structureUpdatePending = hasRunning || Boolean(selectedPendingJob) || runPending || projectRunPending;
   const runsTotal = runs.length;
   const changedLast = lastRun?.pages_changed ?? 0;
@@ -1213,8 +1249,7 @@ export default function ProjectDashboardPage() {
                           .filter((persona) => persona.is_enabled !== false)
                           .map((persona) => (
                             <option key={persona.id} value={persona.id}>
-                              {persona.label}
-                              {persona.kind !== "guest" && !persona.has_secrets ? " · без сессии" : ""}
+                              {persona.label}{personaOptionSuffix(persona)}
                             </option>
                           ))}
                       </UiSelect>
@@ -1238,10 +1273,12 @@ export default function ProjectDashboardPage() {
                       onClick={() => {
                         void handleStartRun();
                       }}
-                      disabled={runPending || projectRunPending || hasRunning || Boolean(selectedPendingJob) || !selectedSite?.is_enabled}
+                      disabled={runPending || projectRunPending || hasRunning || Boolean(selectedPendingJob) || !selectedSite?.is_enabled || Boolean(selectedRunLaunchIssue)}
                       title={
                         !selectedSite?.is_enabled
                           ? "Включите выбранный сайт в настройках."
+                          : selectedRunLaunchIssue
+                            ? selectedRunLaunchIssue
                           : selectedPendingJob ? "Выбранный сайт уже ожидает worker."
                           : hasRunning ? "Выбранный сайт уже сканируется." : undefined
                       }
@@ -1323,12 +1360,15 @@ export default function ProjectDashboardPage() {
                   Выберите сайт карточкой: показатели, структура, история и ручной запуск ниже относятся только к нему.
                 </MetaText>
                 {selectedRunPersona && (
-                  <MetaText opacity={0.72}>
-                    Текущий запуск: {selectedRunPersona.label}
-                    {selectedRunPersona.kind !== "guest" && !selectedRunPersona.has_secrets
-                      ? " · сессия не подключена"
-                      : ""}
-                  </MetaText>
+                  selectedRunLaunchIssue ? (
+                    <StatusText tone="warning" style={{ fontSize: 12 }}>
+                      Текущий запуск: {selectedRunPersona.label} · {selectedRunLaunchIssue}
+                    </StatusText>
+                  ) : (
+                    <MetaText opacity={0.72}>
+                      Текущий запуск: {selectedRunPersona.label}
+                    </MetaText>
+                  )
                 )}
                 <MetaText opacity={0.72}>
                   Если ничего не менять, crawler пойдёт как {effectiveRunPersona.label}
