@@ -1000,9 +1000,11 @@ function ProjectSitePersonasPanel({
 export default function ProjectSitesSettings({
   projectId,
   onChanged,
+  compactHeader = false,
 }: {
   projectId: number;
   onChanged?: () => void;
+  compactHeader?: boolean;
 }) {
   const [sites, setSites] = useState<ProjectSite[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1147,10 +1149,14 @@ export default function ProjectSitesSettings({
       <div style={{ display: "grid", gap: 10 }}>
         <SectionHeaderRow
           title={
-            <div>
-              <div style={{ fontWeight: 700 }}>Сайты проекта</div>
-              <MetaText opacity={0.68}>Каждый сайт имеет собственную область, историю и результаты.</MetaText>
-            </div>
+            compactHeader ? (
+              <MetaText opacity={0.72}>Каждый сайт имеет собственную область, историю и результаты.</MetaText>
+            ) : (
+              <div>
+                <div style={{ fontWeight: 700 }}>Сайты проекта</div>
+                <MetaText opacity={0.68}>Каждый сайт имеет собственную область, историю и результаты.</MetaText>
+              </div>
+            )
           }
           actions={
             <CardActionButton

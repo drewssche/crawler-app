@@ -2238,6 +2238,7 @@ export default function ProjectDashboardPage() {
               >
                 <ProjectSitesSettings
                   projectId={project.id}
+                  compactHeader
                   onChanged={() => {
                     void loadSiteSummaries(project.id, true);
                   }}
@@ -2250,7 +2251,7 @@ export default function ProjectDashboardPage() {
                 description="Кто видит проект, кто может запускать crawler и кто управляет доступами."
                 meta={<AccentPill tone="neutral">Права проекта</AccentPill>}
               >
-                <ProjectMembersSettings projectId={project.id} />
+                <ProjectMembersSettings projectId={project.id} compactHeader />
               </ProjectSettingsSection>
 
               <ProjectSettingsSection

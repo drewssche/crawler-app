@@ -60,6 +60,10 @@ test("settings contain real project parameters without a fake schedule save cont
   assert.match(source, /title="Опасная зона"/);
   assert.match(source, /storageKey="sites"/);
   assert.match(source, /storageKey="members"/);
+  assert.match(source, /<ProjectSitesSettings[\s\S]*compactHeader/);
+  assert.match(source, /<ProjectMembersSettings[\s\S]*compactHeader/);
+  assert.match(sitesSource, /compactHeader/);
+  assert.match(membersSource, /compactHeader/);
   assert.match(source, /ProjectSitesSettings/);
   assert.match(sitesSource, /Сайты проекта/);
   assert.match(sitesSource, /Добавить сайт/);

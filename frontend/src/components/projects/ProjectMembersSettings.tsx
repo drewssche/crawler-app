@@ -102,7 +102,7 @@ function lookupStatusMeta(user: UserLookupRow, memberEmails: Set<string>): { lab
   return { label: "Можно добавить", tone: "neutral", blocked: false };
 }
 
-export default function ProjectMembersSettings({ projectId }: { projectId: number }) {
+export default function ProjectMembersSettings({ projectId, compactHeader = false }: { projectId: number; compactHeader?: boolean }) {
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState("");
@@ -255,10 +255,14 @@ export default function ProjectMembersSettings({ projectId }: { projectId: numbe
       <div style={{ display: "grid", gap: 12 }}>
         <SectionHeaderRow
           title={
-            <div>
-              <div style={{ fontWeight: 700 }}>Участники проекта</div>
+            compactHeader ? (
               <MetaText opacity={0.68}>Доступ задаётся внутри проекта. Минимум один владелец должен оставаться всегда.</MetaText>
-            </div>
+            ) : (
+              <div>
+                <div style={{ fontWeight: 700 }}>Участники проекта</div>
+                <MetaText opacity={0.68}>Доступ задаётся внутри проекта. Минимум один владелец должен оставаться всегда.</MetaText>
+              </div>
+            )
           }
           actions={<AccentPill tone="info">{members.length} участник(а)</AccentPill>}
         />
