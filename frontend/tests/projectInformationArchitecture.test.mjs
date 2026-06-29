@@ -44,9 +44,11 @@ test("settings contain real project parameters without a fake schedule save cont
   assert.doesNotMatch(source, /Сохранить расписание/);
 });
 
-test("project creation uses one explicit site instead of a shared domains textarea", () => {
+test("project creation uses explicit site cards instead of a shared domains textarea", () => {
   assert.match(createSource, /Первый сайт/);
-  assert.match(createSource, /scope_mode: scopeMode/);
+  assert.match(createSource, /\+ Добавить сайт/);
+  assert.match(createSource, /scope_mode: primaryDraft\.scopeMode/);
+  assert.match(createSource, /createProjectSite/);
   assert.match(createSource, /path_prefix:/);
   assert.doesNotMatch(createSource, /Домены \(обязательно, 1\+\)/);
   assert.doesNotMatch(createSource, /textarea/);
