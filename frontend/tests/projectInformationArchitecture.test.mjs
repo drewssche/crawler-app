@@ -33,8 +33,10 @@ test("project page exposes the consolidated three-tab information architecture",
 
 test("main tab contains last run metrics and structure", () => {
   assert.match(source, /activeTab === "main"/);
+  assert.match(source, /Рабочая сводка/);
   assert.match(source, /Последний прогон/);
   assert.match(source, /Показатели последнего прогона/);
+  assert.match(source, /Подробные метрики/);
   assert.match(source, /Структура сайта/);
 });
 
