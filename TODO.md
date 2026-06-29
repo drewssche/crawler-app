@@ -81,7 +81,7 @@
   2. превратить Page Inspector из сводки счётчиков в понятное исследование links/assets/tracking с легендами и progressive disclosure;
   3. заменить обрезанный sanitized DOM на достоверный сохранённый rendered snapshot, сохранив безопасный DOM/code-режим отдельно;
   4. сделать Compare пригодным для тысяч страниц: searchable picker, progressive controls и полноразмерные/изменяемые панели без фиксированной высоты документа.
-- Следующий рекомендуемый пункт: **browser-based Crawl Persona flow**: friendly login capture, применение `localStorage/sessionStorage`, MFA/manual checkpoint и честные UX-пояснения по истечению сессии.
+- Следующий рекомендуемый пункт: **release stabilization**: technical checks уже закрыты, остаётся только ручной Browser-smoke по явному запросу пользователя. Новые крупные фичи не начинать до подтверждения project/run сценариев.
 - Legacy audit 2026-06-27:
   - проект находится в dev-stage, поэтому breaking cleanup допустим, если упрощает целевую модель;
   - audit зафиксирован в [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md);
@@ -105,8 +105,10 @@
 
 ## Next — UX/Product
 
-- [ ] **P1 EPIC: Site monitoring + scoped crawl + compare workspace** (`HIGH`, staged).
+- [x] **P1 EPIC: Site monitoring + scoped crawl + compare workspace — MVP complete** (`HIGH`).
   Цель: одна модель должна поддерживать мониторинг одного сайта, несколько сайтов в проекте, аномалии и ручное/автоматическое сравнение страниц.
+  Итог 2026-06-29: пользовательский MVP готов. Проект поддерживает самостоятельные сайты, scoped crawl, site cards, multi-site runs, anomaly baseline, Page Inspector, redirects/errors/retry, personas, visual/code/structure Compare и selected-block compare. Оставшиеся пункты ниже являются расширениями после stabilization, а не блокерами MVP.
+  Evidence 2026-06-29: targeted backend suite по site scope, multi-site run, redirects, retries, personas, browser-runtime guard, worker/cancel/recovery → `17 passed`.
 
   **Product model**
   - `Project` — рабочий контейнер и права доступа.
@@ -331,8 +333,10 @@
 - [x] **P0 Observer notification visibility parity** (`HIGH`).
   Backend viewer/editor без `events.view` получают `403`, frontend не монтирует Event Center и не показывает Settings-link без `events.view`; event state mutations scoped по видимым событиям (`target_user_id is null` или текущий user). Явный viewer Browser-smoke остаётся только по запросу.
 
-- [ ] **P0/P1 Operations reliability + unattended recovery** (`HIGH`, epic).
+- [x] **P0/P1 Operations reliability + unattended recovery — MVP complete** (`HIGH`).
   Celery boundary, lease/heartbeat, bounded retries/backoff, timeout/cancel, health/readiness; Telegram digest только после достоверных signals.
+  Итог 2026-06-29: crawler уже работает через durable job boundary/worker, умеет восстанавливать stale/expired jobs, показывает queued/running/retry состояния, поддерживает bounded backoff, active-job restore после reload, readiness panel и быстрый cancel. Extended operations/event log оставлен только как optional расширение, если компактной панели и Event Center окажется недостаточно.
+  Evidence 2026-06-29: targeted backend suite по worker queue/tick, readiness recovery, retry backoff, active jobs restore и cancel interrupt входит в общий `17 passed` выше.
   - 1. Stale recovery MVP готов: `RUNNING` run без progress heartbeat дольше `CRAWL_STALE_RUNNING_SECONDS` автоматически помечается `FAILED/stale_run_recovered` при чтении истории или перед новым запуском сайта/проекта; это снимает вечную блокировку site-run после падения процесса.
   - 2. Cancel API MVP готов: `POST /runs/{run_id}/cancel` переводит активный run в `CANCEL_REQUESTED`; crawler проверяет флаг между страницами и завершает run как `CANCELLED`. До финального `CANCELLED` сайт считается занятым, retry недоступен.
   - 3. Crawler readiness MVP готов: `GET /crawler/readiness` показывает sync-mode, worker disabled, active/cancel-requested runs, stale recovery threshold/recovered count и sample активных runs для admin/root-admin.
@@ -370,6 +374,10 @@
   RootAdmins page использует тот же snapshot/profile enrichment для trusted-devices/session summary, что Users list; расхождение `trusted_devices_count` зафиксировано тестом. Проверка 2026-06-29: `docker compose exec backend env PYTHONPATH=/app pytest -q tests/test_api_integration.py -k "users_and_root_admins_pages_have_parity_for_trusted_devices_count"` → `1 passed`.
 - [x] Cleanup synthetic load-test data near production (`LOW`, prefer restore/reset).
   No-op cleanup закрыт 2026-06-29: текущая dev DB не содержит старого synthetic scale-up из `AUDIT_DB_INDEX_2026-02-24` (`login_history=38`, `admin_audit_logs=6`, `trusted_devices=7`, `projects=1`, `runs=1`). Удаляющий скрипт не добавлялся намеренно: без подтверждённого мусора безопаснее restore/reset, чем частичный destructive SQL.
+- [ ] Backend schedule contract (`P1`, после Browser-smoke): сохранённое расписание, timezone, duplicate-run guard, pause/resume и следующий запуск. Текущий settings-блок честно остаётся manual-only.
+- [ ] Snapshot/Compare polish (`P2`, после Browser-smoke): optional sync scroll/resize, нативный browser screenshot прямо во время persona-run, persisted consent audit history/queued audits и server-side search/true virtualization только при подтверждённой просадке на больших runs.
+- [ ] Target monitoring/subscriptions (`P2`, после snapshot/diff stabilization): сохранение выбранного блока как цели мониторинга, occurrence search, target fingerprint и outbox/subscriptions.
+- [ ] Extended operations/event log (`P2`, только если потребуется): отдельный подробный журнал worker-событий сверх текущих queued/running/retry states, readiness panel и Event Center.
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
