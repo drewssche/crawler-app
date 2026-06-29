@@ -40,6 +40,16 @@ test("main tab contains last run metrics and structure", () => {
   assert.match(source, /Структура сайта/);
 });
 
+test("project disclosure blocks persist collapsed state locally", () => {
+  assert.match(source, /PROJECT_DISCLOSURE_STORAGE_PREFIX/);
+  assert.match(source, /ProjectPersistentDetails/);
+  assert.match(source, /window\.localStorage\.setItem/);
+  assert.match(source, /storageKey="last-run-metrics"/);
+  assert.match(source, /storageKey="structure-process"/);
+  assert.match(source, /storageKey="structure-slice-details"/);
+  assert.match(source, /storageKey="structure-legend"/);
+});
+
 test("settings contain real project parameters without a fake schedule save control", () => {
   assert.match(source, /activeTab === "settings"/);
   assert.match(source, /ProjectSitesSettings/);

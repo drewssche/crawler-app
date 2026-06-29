@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode, type SyntheticEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   listProjectSitePersonas,
@@ -231,6 +231,8 @@ type StructureViewFilter = "all" | "added" | "error";
 
 type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "redirect" | "error";
 
+const PROJECT_DISCLOSURE_STORAGE_PREFIX = "crawler.projectDashboard.disclosure.";
+
 type StructureRow = {
   url: string;
   domain: string;
@@ -238,6 +240,45 @@ type StructureRow = {
   statusCode: number;
   batchNo: number | null;
 };
+
+function readStoredDisclosureState(storageKey: string, defaultOpen: boolean): boolean {
+  if (typeof window === "undefined") return defaultOpen;
+  const stored = window.localStorage.getItem(`${PROJECT_DISCLOSURE_STORAGE_PREFIX}${storageKey}`);
+  if (stored === "open") return true;
+  if (stored === "closed") return false;
+  return defaultOpen;
+}
+
+function ProjectPersistentDetails({
+  storageKey,
+  defaultOpen = false,
+  summary,
+  children,
+  summaryStyle,
+}: {
+  storageKey: string;
+  defaultOpen?: boolean;
+  summary: ReactNode;
+  children: ReactNode;
+  summaryStyle?: CSSProperties;
+}) {
+  const [open, setOpen] = useState(() => readStoredDisclosureState(storageKey, defaultOpen));
+
+  function handleToggle(event: SyntheticEvent<HTMLDetailsElement>) {
+    const nextOpen = event.currentTarget.open;
+    setOpen(nextOpen);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(`${PROJECT_DISCLOSURE_STORAGE_PREFIX}${storageKey}`, nextOpen ? "open" : "closed");
+    }
+  }
+
+  return (
+    <details open={open} onToggle={handleToggle}>
+      <summary style={summaryStyle}>{summary}</summary>
+      {children}
+    </details>
+  );
+}
 
 function getRetryPersonaLabel(result: RetryPagesResult, fallback?: string | null): string {
   return result.persona?.label || result.persona_label || fallback || "Гость";
@@ -1299,9 +1340,25 @@ export default function ProjectDashboardPage() {
                   variant={crawlerReadiness.ready ? "hint" : "warning"}
                   style={{ padding: 10, display: "grid", gap: 8 }}
                 >
-                  <details>
-                    <summary
-                      style={{
+                  <ProjectPersistentDetails
+                    storageKey="admin-readiness"
+                    summary={
+                      <>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                          <AccentPill tone={crawlerReadiness.ready ? "success" : "warning"}>
+                            Crawler: {crawlerReadinessLabel(crawlerReadiness)}
+                          </AccentPill>
+                          <AccentPill tone={crawlerReadiness.mode === "worker" ? "info" : "neutral"}>
+                            Режим: {crawlerModeLabel(crawlerReadiness.mode)}
+                          </AccentPill>
+                          <MetaText opacity={0.82}>
+                            Очередь: <strong>{crawlerReadiness.jobs?.queued ?? 0}</strong> · В работе: <strong>{crawlerReadiness.jobs?.running ?? 0}</strong>
+                          </MetaText>
+                        </div>
+                        <MetaText opacity={0.72}>Операционная панель admin/root-admin · раскрыть детали</MetaText>
+                      </>
+                    }
+                    summaryStyle={{
                         cursor: "pointer",
                         listStyle: "none",
                         display: "flex",
@@ -1309,21 +1366,8 @@ export default function ProjectDashboardPage() {
                         gap: 8,
                         flexWrap: "wrap",
                         alignItems: "center",
-                      }}
-                    >
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                        <AccentPill tone={crawlerReadiness.ready ? "success" : "warning"}>
-                          Crawler: {crawlerReadinessLabel(crawlerReadiness)}
-                        </AccentPill>
-                        <AccentPill tone={crawlerReadiness.mode === "worker" ? "info" : "neutral"}>
-                          Режим: {crawlerModeLabel(crawlerReadiness.mode)}
-                        </AccentPill>
-                        <MetaText opacity={0.82}>
-                          Очередь: <strong>{crawlerReadiness.jobs?.queued ?? 0}</strong> · В работе: <strong>{crawlerReadiness.jobs?.running ?? 0}</strong>
-                        </MetaText>
-                      </div>
-                      <MetaText opacity={0.72}>Операционная панель admin/root-admin · раскрыть детали</MetaText>
-                    </summary>
+                    }}
+                  >
                     <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
                       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                         <MetaText opacity={0.86}>Очередь: <strong>{crawlerReadiness.jobs?.queued ?? 0}</strong></MetaText>
@@ -1359,7 +1403,7 @@ export default function ProjectDashboardPage() {
                         </div>
                       )}
                     </div>
-                  </details>
+                  </ProjectPersistentDetails>
                 </Card>
               )}
               {activeTab !== "settings" && selectedPendingJob && (
@@ -1603,10 +1647,11 @@ export default function ProjectDashboardPage() {
                               {reason.message}
                             </StatusText>
                           ))}
-                          <details>
-                            <summary style={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>
-                              Как считается baseline
-                            </summary>
+                          <ProjectPersistentDetails
+                            storageKey="baseline-explanation"
+                            summary="Как считается baseline"
+                            summaryStyle={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
+                          >
                             <div style={{ display: "grid", gap: 5, marginTop: 6 }}>
                               <MetaText opacity={0.68}>
                                 Baseline считается только для контекста: {selectedSite.anomaly.persona_label || selectedSite.default_persona?.label || "Гость"}.
@@ -1623,7 +1668,7 @@ export default function ProjectDashboardPage() {
                                 </MetaText>
                               )}
                             </div>
-                          </details>
+                          </ProjectPersistentDetails>
                         </div>
                       </Card>
                     )}
@@ -1706,9 +1751,20 @@ export default function ProjectDashboardPage() {
               </Card>
 
               <Card>
-                <details>
-                  <summary
-                    style={{
+                <ProjectPersistentDetails
+                  storageKey="last-run-metrics"
+                  summary={
+                    <>
+                      <div>
+                        <div style={{ fontWeight: 700 }}>Показатели последнего прогона</div>
+                        <MetaText opacity={0.68}>Подробные метрики: изменения, покрытие, длительность и история успешных прогонов.</MetaText>
+                      </div>
+                      <MetaText opacity={0.72}>
+                        {lastRun ? `${pagesLast} страниц · ${changedLast} изменений` : "Нет данных"}
+                      </MetaText>
+                    </>
+                  }
+                  summaryStyle={{
                       cursor: "pointer",
                       display: "flex",
                       justifyContent: "space-between",
@@ -1716,16 +1772,8 @@ export default function ProjectDashboardPage() {
                       flexWrap: "wrap",
                       alignItems: "center",
                       listStyle: "none",
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 700 }}>Показатели последнего прогона</div>
-                      <MetaText opacity={0.68}>Подробные метрики: изменения, покрытие, длительность и история успешных прогонов.</MetaText>
-                    </div>
-                    <MetaText opacity={0.72}>
-                      {lastRun ? `${pagesLast} страниц · ${changedLast} изменений` : "Нет данных"}
-                    </MetaText>
-                  </summary>
+                  }}
+                >
                   <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
                     {lastRun?.finished_at && <MetaText opacity={0.68}>Срез: {formatOperationalDateTime(lastRun.finished_at)}</MetaText>}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
@@ -1772,7 +1820,7 @@ export default function ProjectDashboardPage() {
                       </Card>
                     </div>
                   </div>
-                </details>
+                </ProjectPersistentDetails>
               </Card>
 
               <Card>
@@ -1887,10 +1935,11 @@ export default function ProjectDashboardPage() {
                           <span style={{ opacity: 0.72 }}>Текущий батч: {liveStructureRun.current_batch_no}</span>
                         </div>
                       )}
-                      <details>
-                        <summary style={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>
-                          Подробности процесса
-                        </summary>
+                      <ProjectPersistentDetails
+                        storageKey="structure-process"
+                        summary="Подробности процесса"
+                        summaryStyle={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
+                      >
                         <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
                             <span style={{ color: "#8fd18f" }}>✓ Запуск принят</span>
@@ -1921,7 +1970,7 @@ export default function ProjectDashboardPage() {
                             </Card>
                           )}
                         </div>
-                      </details>
+                      </ProjectPersistentDetails>
                     </Card>
                   )}
                   {!structureUpdatePending && structureRun && (
@@ -1946,10 +1995,11 @@ export default function ProjectDashboardPage() {
                           Ошибок: {structureStatusCounts.error}
                         </span>
                       </div>
-                      <details>
-                        <summary style={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>
-                          Детали среза
-                        </summary>
+                      <ProjectPersistentDetails
+                        storageKey="structure-slice-details"
+                        summary="Детали среза"
+                        summaryStyle={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
+                      >
                         <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
                           <MetaText opacity={0.68}>
                             {formatRunTitle(structureRun.started_at)} · {formatDuration(structureRun.started_at, structureRun.finished_at)}
@@ -1957,7 +2007,7 @@ export default function ProjectDashboardPage() {
                           <MetaText opacity={0.68}>Контекст проверки: {structureRun.persona?.label || "Гость"}</MetaText>
                           <div><RunRuntimePill runtime={structureRun.crawl_runtime} /></div>
                         </div>
-                      </details>
+                      </ProjectPersistentDetails>
                     </Card>
                   )}
                   {pagesLoading && (
@@ -2026,14 +2076,15 @@ export default function ProjectDashboardPage() {
                   )}
                   {(!pagesLoading || structureRows.length > 0) && (
                     <>
-                      <details>
-                        <summary style={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>
-                          Легенда структуры
-                        </summary>
+                      <ProjectPersistentDetails
+                        storageKey="structure-legend"
+                        summary="Легенда структуры"
+                        summaryStyle={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
+                      >
                         <div style={{ marginTop: 8 }}>
                           <StructureLegendHint />
                         </div>
-                      </details>
+                      </ProjectPersistentDetails>
                       <ClearableInput
                         value={structureSearch}
                         onChange={setStructureSearch}
