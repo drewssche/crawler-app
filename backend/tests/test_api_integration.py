@@ -153,6 +153,59 @@ def test_event_center_forbidden_for_viewer():
     engine.dispose()
 
 
+def test_event_state_actions_are_scoped_to_visible_events():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        owner = _make_user(email="events-owner@test.local", role="admin", is_admin=True, is_approved=True)
+        other = _make_user(email="events-other@test.local", role="admin", is_admin=True, is_approved=True)
+        db.add_all([owner, other])
+        db.commit()
+        db.refresh(owner)
+        event = EventFeed(
+            event_type="targeted.test",
+            channel="notification",
+            severity="info",
+            title="Private target event",
+            body="Only the target user should see this.",
+            target_path="/events",
+            target_ref="targeted:test",
+            actor_user_id=None,
+            target_user_id=owner.id,
+            meta_json={},
+            created_at=datetime.utcnow(),
+        )
+        db.add(event)
+        db.commit()
+        event_id = event.id
+
+    client = TestClient(app)
+    owner_headers = _auth_header("events-owner@test.local", role="admin")
+    other_headers = _auth_header("events-other@test.local", role="admin")
+
+    for action in ["read", "dismiss", "handled"]:
+        hidden = client.post(f"/events/{event_id}/{action}", json={"value": True}, headers=other_headers)
+        assert hidden.status_code == 404
+
+    other_feed = client.get("/events/feed", headers=other_headers)
+    assert other_feed.status_code == 200
+    assert all(item["id"] != event_id for item in _extract_success_data(other_feed)["items"])
+
+    owner_feed = client.get("/events/feed", headers=owner_headers)
+    assert owner_feed.status_code == 200
+    assert any(item["id"] == event_id for item in _extract_success_data(owner_feed)["items"])
+    owner_read = client.post(f"/events/{event_id}/read", json={"value": True}, headers=owner_headers)
+    assert owner_read.status_code == 200
+    assert _extract_success_data(owner_read)["is_read"] is True
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_project_and_run_endpoints_enforce_role_permissions():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()

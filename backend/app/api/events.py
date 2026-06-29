@@ -118,6 +118,20 @@ def _count_unread_events(
     return int(value or 0)
 
 
+def _get_visible_event_or_404(db: Session, *, event_id: int, current_user: User) -> EventFeed:
+    event = (
+        db.query(EventFeed)
+        .filter(
+            EventFeed.id == event_id,
+            or_(EventFeed.target_user_id.is_(None), EventFeed.target_user_id == current_user.id),
+        )
+        .first()
+    )
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return event
+
+
 @router.get("/center")
 def get_center_events(
     notifications_limit: int = 20,
@@ -228,15 +242,14 @@ def set_read(
 ):
     increment_counter("events_read_total", state=str(payload.value).lower())
     if not payload.value:
-        event = db.get(EventFeed, event_id)
-        if not event:
-            raise HTTPException(status_code=404, detail="Event not found")
+        _get_visible_event_or_404(db, event_id=event_id, current_user=current_user)
         st = ensure_event_states(db, user_id=current_user.id, event_ids=[event_id])[event_id]
         st.is_read = False
         st.read_at = None
         st.updated_at = utc_now_naive()
         db.commit()
         return success_response_payload(request, data={"is_read": False})
+    _get_visible_event_or_404(db, event_id=event_id, current_user=current_user)
     st = mark_event_read(db, user_id=current_user.id, event_id=event_id)
     if not st:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -254,6 +267,7 @@ def set_dismiss(
     current_user: User = Depends(require_permission("events.view")),
 ):
     increment_counter("events_dismiss_total", state=str(payload.value).lower())
+    _get_visible_event_or_404(db, event_id=event_id, current_user=current_user)
     st = set_event_dismissed(db, user_id=current_user.id, event_id=event_id, dismissed=payload.value)
     if not st:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -270,6 +284,7 @@ def set_handled(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("events.view")),
 ):
+    _get_visible_event_or_404(db, event_id=event_id, current_user=current_user)
     st = set_event_handled(db, user_id=current_user.id, event_id=event_id, handled=payload.value)
     if not st:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -292,6 +307,7 @@ def read_all(
 ):
     q = db.query(EventUserState).filter(EventUserState.user_id == current_user.id)
     q = q.join(EventFeed, EventFeed.id == EventUserState.event_id)
+    q = q.filter(or_(EventFeed.target_user_id.is_(None), EventFeed.target_user_id == current_user.id))
     if payload.channel != "all":
         q = q.filter(EventFeed.channel == payload.channel)
     if payload.security_only:

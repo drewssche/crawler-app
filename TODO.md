@@ -328,8 +328,8 @@
   Technical gate 2026-06-29 passed: backend `90 passed, 2 skipped`, Alembic head `f6a1d3c8e902`, frontend lint clean, typecheck/build passed, project/workspace/search/roles/compare UI tests passed, `git diff --check` passed.
   Осталось ручное Browser-smoke подтверждение project/run сценариев по отдельному запросу: два независимых запуска, immediate project visibility, FINISHED pages, duplicate conflict.
 
-- [ ] **P0 Observer notification visibility parity** (`HIGH`, implementation mostly complete).
-  Backend viewer получает `403`, frontend не монтирует Event Center. Остался явный viewer UI-smoke по запросу.
+- [x] **P0 Observer notification visibility parity** (`HIGH`).
+  Backend viewer/editor без `events.view` получают `403`, frontend не монтирует Event Center и не показывает Settings-link без `events.view`; event state mutations scoped по видимым событиям (`target_user_id is null` или текущий user). Явный viewer Browser-smoke остаётся только по запросу.
 
 - [ ] **P0/P1 Operations reliability + unattended recovery** (`HIGH`, epic).
   Celery boundary, lease/heartbeat, bounded retries/backoff, timeout/cancel, health/readiness; Telegram digest только после достоверных signals.

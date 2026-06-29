@@ -6,6 +6,8 @@ const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "ut
 const sidebarSource = await readFile(new URL("../src/components/layout/SidebarLeft.tsx", import.meta.url), "utf8");
 const workspaceSource = await readFile(new URL("../src/pages/WorkspaceHomePage.tsx", import.meta.url), "utf8");
 const projectSource = await readFile(new URL("../src/pages/ProjectDashboardPage.tsx", import.meta.url), "utf8");
+const appLayoutSource = await readFile(new URL("../src/components/layout/AppLayout.tsx", import.meta.url), "utf8");
+const settingsSource = await readFile(new URL("../src/pages/SettingsPage.tsx", import.meta.url), "utf8");
 const permissionsSource = await readFile(new URL("../src/utils/permissions.ts", import.meta.url), "utf8");
 const debugSource = await readFile(new URL("../src/pages/UiDebugPage.tsx", import.meta.url), "utf8");
 
@@ -20,6 +22,13 @@ test("viewer and editor project capabilities are distinct", () => {
   assert.match(permissionsSource, /viewer:\s*new Set\(\["data\.view"\]\)/);
   assert.match(permissionsSource, /editor:\s*new Set\(\["data\.view", "crawler\.run", "projects\.edit"\]\)/);
   assert.match(permissionsSource, /raw in PERMISSIONS_BY_ROLE \? raw : "viewer"/);
+});
+
+test("event center is hidden unless the role has events.view", () => {
+  assert.match(appSource, /path="events"[\s\S]*?permission="events\.view"[\s\S]*?<EventsPage/);
+  assert.match(appLayoutSource, /const canViewEvents = hasPermission\(user\?\.role, "events\.view"\)/);
+  assert.match(appLayoutSource, /\{canViewEvents && !focusWorkspaceMode && \(/);
+  assert.match(settingsSource, /\{canViewEvents && \([\s\S]*?title="Центр событий"/);
 });
 
 test("project mutations are hidden without matching permissions", () => {
