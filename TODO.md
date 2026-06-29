@@ -364,8 +364,10 @@
 
 ## Release Gate / Deferred
 
-- [ ] Staging-scale count-less counters recheck: Events/Users/Activity (`MEDIUM`, release-gate).
-- [ ] Users vs RootAdmins device/session parity on staging-sized data (`MEDIUM`, release-gate).
+- [x] Staging-scale count-less counters recheck: Events/Users/Activity (`MEDIUM`, release-gate).
+  `include_total=false` закреплён для Users/Audit/Login history: API отдаёт страницу и `total: null`, не заставляя UI ждать дорогой `COUNT(*)` на больших таблицах. Проверка 2026-06-29: `docker compose exec backend env PYTHONPATH=/app pytest -q tests/test_api_integration.py -k "include_total_false"` → `3 passed`.
+- [x] Users vs RootAdmins device/session parity on staging-sized data (`MEDIUM`, release-gate).
+  RootAdmins page использует тот же snapshot/profile enrichment для trusted-devices/session summary, что Users list; расхождение `trusted_devices_count` зафиксировано тестом. Проверка 2026-06-29: `docker compose exec backend env PYTHONPATH=/app pytest -q tests/test_api_integration.py -k "users_and_root_admins_pages_have_parity_for_trusted_devices_count"` → `1 passed`.
 - [ ] Cleanup synthetic load-test data near production (`LOW`, prefer restore/reset).
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
