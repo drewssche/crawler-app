@@ -9,6 +9,7 @@ from app.db.models.user import User
 
 
 WRITE_MEMBERSHIP_ROLES = {"owner", "editor"}
+MEMBERSHIP_ROLES = {"owner", "editor", "viewer"}
 
 
 def user_has_global_project_access(user: User) -> bool:
@@ -72,6 +73,68 @@ def require_project_write(db: Session, *, project_id: int, user: User) -> None:
                 "code": "project_membership_required",
                 "message": "Недостаточно прав в этом проекте.",
                 "project_id": project_id,
+            },
+        )
+
+
+def require_project_owner(db: Session, *, project_id: int, user: User) -> None:
+    if not can_read_project(db, project_id=project_id, user=user):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if user_has_global_project_access(user):
+        return
+    if not project_has_memberships(db, project_id=project_id):
+        return
+    membership = get_project_membership(db, project_id=project_id, user_id=user.id)
+    if membership and membership.role == "owner":
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "project_owner_required",
+            "message": "Управлять участниками может только владелец проекта.",
+            "project_id": project_id,
+        },
+    )
+
+
+def normalize_membership_role(role: str) -> str:
+    normalized = str(role or "").strip().lower()
+    if normalized not in MEMBERSHIP_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_project_role",
+                "message": "Роль участника должна быть owner, editor или viewer.",
+            },
+        )
+    return normalized
+
+
+def count_project_owners(db: Session, *, project_id: int) -> int:
+    return (
+        db.query(ProjectMembership)
+        .filter(ProjectMembership.project_id == project_id, ProjectMembership.role == "owner")
+        .count()
+    )
+
+
+def ensure_can_change_owner_membership(
+    db: Session,
+    *,
+    membership: ProjectMembership,
+    next_role: str | None = None,
+    deleting: bool = False,
+) -> None:
+    keeps_owner = not deleting and next_role == "owner"
+    if membership.role != "owner" or keeps_owner:
+        return
+    if count_project_owners(db, project_id=membership.project_id) <= 1:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "last_project_owner",
+                "message": "В проекте должен оставаться хотя бы один владелец.",
+                "project_id": membership.project_id,
             },
         )
 

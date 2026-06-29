@@ -411,6 +411,113 @@ def test_created_project_is_visible_only_to_members_and_admins():
     engine.dispose()
 
 
+def test_project_members_management_enforces_roles_and_last_owner():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        owner = _make_user(email="members-owner@test.local", role="editor", is_approved=True)
+        teammate = _make_user(email="members-teammate@test.local", role="editor", is_approved=True)
+        outsider = _make_user(email="members-outsider@test.local", role="editor", is_approved=True)
+        db.add_all([owner, teammate, outsider])
+        db.commit()
+
+    client = TestClient(app)
+    owner_headers = _auth_header("members-owner@test.local", role="editor")
+    teammate_headers = _auth_header("members-teammate@test.local", role="editor")
+    outsider_headers = _auth_header("members-outsider@test.local", role="editor")
+    created = client.post(
+        "/projects",
+        json={
+            "name": "Project with members",
+            "start_url": "https://members-project.test/",
+            "allowed_domains_csv": "members-project.test",
+            "max_pages": 1,
+        },
+        headers=owner_headers,
+    )
+    assert created.status_code == 200
+    project_id = created.json()["id"]
+
+    members = client.get(f"/projects/{project_id}/members", headers=owner_headers)
+    assert members.status_code == 200
+    members_payload = members.json()
+    assert len(members_payload) == 1
+    owner_member_id = members_payload[0]["id"]
+    assert members_payload[0]["role"] == "owner"
+
+    outsider_add = client.post(
+        f"/projects/{project_id}/members",
+        json={"email": "members-teammate@test.local", "role": "viewer"},
+        headers=outsider_headers,
+    )
+    assert outsider_add.status_code == 404
+
+    added = client.post(
+        f"/projects/{project_id}/members",
+        json={"email": "members-teammate@test.local", "role": "viewer"},
+        headers=owner_headers,
+    )
+    assert added.status_code == 200
+    teammate_member = added.json()
+    teammate_member_id = teammate_member["id"]
+    assert teammate_member["role"] == "viewer"
+
+    denied_site = client.post(
+        f"/projects/{project_id}/sites",
+        json={
+            "name": "Denied",
+            "start_url": "https://denied-members-project.test/",
+            "scope_mode": "whole_site",
+            "path_prefix": "/",
+        },
+        headers=teammate_headers,
+    )
+    assert denied_site.status_code == 403
+    assert _extract_error_payload(denied_site)["error"]["code"] == "project_membership_required"
+
+    promoted_editor = client.patch(
+        f"/projects/{project_id}/members/{teammate_member_id}",
+        json={"role": "editor"},
+        headers=owner_headers,
+    )
+    assert promoted_editor.status_code == 200
+    assert promoted_editor.json()["role"] == "editor"
+
+    allowed_site = client.post(
+        f"/projects/{project_id}/sites",
+        json={
+            "name": "Allowed",
+            "start_url": "https://allowed-members-project.test/",
+            "scope_mode": "whole_site",
+            "path_prefix": "/",
+        },
+        headers=teammate_headers,
+    )
+    assert allowed_site.status_code == 200
+
+    last_owner_delete = client.delete(f"/projects/{project_id}/members/{owner_member_id}", headers=owner_headers)
+    assert last_owner_delete.status_code == 409
+    assert _extract_error_payload(last_owner_delete)["error"]["code"] == "last_project_owner"
+
+    promoted_owner = client.patch(
+        f"/projects/{project_id}/members/{teammate_member_id}",
+        json={"role": "owner"},
+        headers=owner_headers,
+    )
+    assert promoted_owner.status_code == 200
+    assert promoted_owner.json()["role"] == "owner"
+
+    removed_owner = client.delete(f"/projects/{project_id}/members/{owner_member_id}", headers=owner_headers)
+    assert removed_owner.status_code == 200
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
 def test_project_creation_supports_atomic_section_primary_site():
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()

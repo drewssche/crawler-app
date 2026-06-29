@@ -19,6 +19,11 @@
   - project/run permissions теперь enforced backend-first и отражены frontend guards;
   - fixture-only UI Debug Center реализован без impersonation и backend writes;
   - настоящая impersonation остаётся заблокированной до project membership.
+- Project membership governance:
+  - `ProjectMembership` задаёт доступ внутри проекта: `owner/editor/viewer`;
+  - owner управляет участниками, editor меняет сайты/запуски, viewer только смотрит результаты;
+  - backend защищает последнего owner, а UI объясняет роли в настройках проекта;
+  - глобальные `admin/root-admin` сохраняют полный operational-доступ ко всем проектам.
 - `ProjectSite` foundation 2026-06-24:
   - добавлены модель, миграция/backfill и RBAC API сайтов проекта;
   - новый и существующий проект гарантированно получает один primary site;

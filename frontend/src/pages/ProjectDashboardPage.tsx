@@ -16,6 +16,7 @@ import { ApiError, apiDelete, apiGet, apiPost } from "../api/client";
 import PageContextDrawer from "../components/projects/PageContextDrawer";
 import DirectoryContextDrawer from "../components/projects/DirectoryContextDrawer";
 import ProjectSiteContextCards from "../components/projects/ProjectSiteContextCards";
+import ProjectMembersSettings from "../components/projects/ProjectMembersSettings";
 import ProjectSitesSettings from "../components/projects/ProjectSitesSettings";
 import AccentPill from "../components/ui/AccentPill";
 import Card from "../components/ui/Card";
@@ -2023,6 +2024,7 @@ export default function ProjectDashboardPage() {
                   void loadSiteSummaries(project.id, true);
                 }}
               />
+              <ProjectMembersSettings projectId={project.id} />
 
               <Card variant="hint">
                 <div style={{ display: "grid", gap: 8 }}>

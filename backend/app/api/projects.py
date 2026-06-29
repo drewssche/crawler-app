@@ -1,6 +1,7 @@
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -14,12 +15,16 @@ from app.db.models.page import Page
 from app.db.models.run import Run
 from app.db.models.user import User
 from app.db.models.crawl_persona import CrawlPersona
+from app.db.models.project_membership import ProjectMembership
 from app.schemas.project import ProjectCreate, ProjectOut
 from app.db.models.project_site import ProjectSite
 from app.services.project_sites import create_primary_site_for_project
 from app.services.project_memberships import (
     ensure_project_owner,
+    ensure_can_change_owner_membership,
+    normalize_membership_role,
     require_project_read,
+    require_project_owner,
     require_project_write,
     visible_projects_query,
 )
@@ -27,6 +32,15 @@ from app.services.project_quotas import enforce_project_create_quota, enforce_si
 from app.services.scan_retention import delete_rendered_snapshot_artifacts_for_project
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+class ProjectMemberPayload(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: str = "viewer"
+
+
+class ProjectMemberRolePayload(BaseModel):
+    role: str
 
 
 def _canonical_project_scope(start_url: str, allowed_domains_csv: str) -> tuple[str, tuple[str, ...]]:
@@ -49,6 +63,39 @@ def _project_out(project: Project, site: ProjectSite | None = None) -> dict:
         "start_url": site.start_url if site else "",
         "allowed_domains_csv": site.allowed_domains_csv if site else "",
     }
+
+
+def _member_out(membership: ProjectMembership, user: User, current_user: User) -> dict:
+    return {
+        "id": membership.id,
+        "project_id": membership.project_id,
+        "user_id": user.id,
+        "email": user.email,
+        "user_role": get_user_role(user),
+        "role": membership.role,
+        "created_at": membership.created_at,
+        "is_current_user": user.id == current_user.id,
+        "is_approved": bool(user.is_approved),
+        "is_blocked": bool(user.is_blocked),
+    }
+
+
+def _find_active_user_by_email(db: Session, email: str) -> User:
+    normalized_email = email.strip().lower()
+    user = (
+        db.query(User)
+        .filter(func.lower(User.email) == normalized_email, User.is_deleted.is_(False))
+        .first()
+    )
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "user_not_found",
+                "message": "Пользователь с таким email не найден.",
+            },
+        )
+    return user
 
 
 @router.get("")
@@ -221,6 +268,112 @@ def get_project(
         .first()
     )
     return _project_out(obj, site)
+
+
+@router.get("/{project_id}/members")
+def list_project_members(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("data.view")),
+):
+    obj = db.get(Project, project_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    require_project_read(db, project_id=project_id, user=current_user)
+    rows = (
+        db.query(ProjectMembership, User)
+        .join(User, User.id == ProjectMembership.user_id)
+        .filter(ProjectMembership.project_id == project_id, User.is_deleted.is_(False))
+        .order_by(
+            ProjectMembership.role.asc(),
+            User.email.asc(),
+            ProjectMembership.id.asc(),
+        )
+        .all()
+    )
+    return [_member_out(membership, user, current_user) for membership, user in rows]
+
+
+@router.post("/{project_id}/members")
+def add_project_member(
+    project_id: int,
+    payload: ProjectMemberPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    obj = db.get(Project, project_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    require_project_owner(db, project_id=project_id, user=current_user)
+    role = normalize_membership_role(payload.role)
+    user = _find_active_user_by_email(db, payload.email)
+    membership = (
+        db.query(ProjectMembership)
+        .filter(ProjectMembership.project_id == project_id, ProjectMembership.user_id == user.id)
+        .first()
+    )
+    if membership is None:
+        membership = ProjectMembership(project_id=project_id, user_id=user.id, role=role)
+        db.add(membership)
+    else:
+        ensure_can_change_owner_membership(db, membership=membership, next_role=role)
+        membership.role = role
+    db.commit()
+    db.refresh(membership)
+    return _member_out(membership, user, current_user)
+
+
+@router.patch("/{project_id}/members/{membership_id}")
+def update_project_member(
+    project_id: int,
+    membership_id: int,
+    payload: ProjectMemberRolePayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    obj = db.get(Project, project_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    require_project_owner(db, project_id=project_id, user=current_user)
+    role = normalize_membership_role(payload.role)
+    row = (
+        db.query(ProjectMembership, User)
+        .join(User, User.id == ProjectMembership.user_id)
+        .filter(ProjectMembership.id == membership_id, ProjectMembership.project_id == project_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    membership, user = row
+    ensure_can_change_owner_membership(db, membership=membership, next_role=role)
+    membership.role = role
+    db.commit()
+    db.refresh(membership)
+    return _member_out(membership, user, current_user)
+
+
+@router.delete("/{project_id}/members/{membership_id}")
+def delete_project_member(
+    project_id: int,
+    membership_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    obj = db.get(Project, project_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    require_project_owner(db, project_id=project_id, user=current_user)
+    membership = (
+        db.query(ProjectMembership)
+        .filter(ProjectMembership.id == membership_id, ProjectMembership.project_id == project_id)
+        .first()
+    )
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    ensure_can_change_owner_membership(db, membership=membership, deleting=True)
+    db.delete(membership)
+    db.commit()
+    return {"ok": True}
 
 
 @router.delete("/{project_id}")
