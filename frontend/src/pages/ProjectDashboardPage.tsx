@@ -280,6 +280,55 @@ function ProjectPersistentDetails({
   );
 }
 
+function ProjectSettingsSection({
+  storageKey,
+  title,
+  description,
+  meta,
+  defaultOpen = false,
+  variant = "default",
+  children,
+}: {
+  storageKey: string;
+  title: string;
+  description: ReactNode;
+  meta?: ReactNode;
+  defaultOpen?: boolean;
+  variant?: "default" | "hint" | "warning" | "danger";
+  children: ReactNode;
+}) {
+  return (
+    <Card variant={variant} style={{ display: "grid", gap: 10 }}>
+      <ProjectPersistentDetails
+        storageKey={`settings-${storageKey}`}
+        defaultOpen={defaultOpen}
+        summary={
+          <>
+            <div>
+              <div style={{ fontWeight: 800 }}>{title}</div>
+              <MetaText opacity={0.68}>{description}</MetaText>
+            </div>
+            {meta ? <div>{meta}</div> : null}
+          </>
+        }
+        summaryStyle={{
+          cursor: "pointer",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+          alignItems: "center",
+          listStyle: "none",
+        }}
+      >
+        <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+          {children}
+        </div>
+      </ProjectPersistentDetails>
+    </Card>
+  );
+}
+
 function getRetryPersonaLabel(result: RetryPagesResult, fallback?: string | null): string {
   return result.persona?.label || result.persona_label || fallback || "Гость";
 }
@@ -2180,17 +2229,38 @@ export default function ProjectDashboardPage() {
 
           {activeTab === "settings" && canEditProject && (
             <div style={{ display: "grid", gap: 12 }}>
-              <ProjectSitesSettings
-                projectId={project.id}
-                onChanged={() => {
-                  void loadSiteSummaries(project.id, true);
-                }}
-              />
-              <ProjectMembersSettings projectId={project.id} />
+              <ProjectSettingsSection
+                storageKey="sites"
+                title="Сайты и контексты доступа"
+                description="Домены, области мониторинга, personas и сессии crawler для этого проекта."
+                meta={<AccentPill tone="info">{sites.length} сайт(а)</AccentPill>}
+                defaultOpen
+              >
+                <ProjectSitesSettings
+                  projectId={project.id}
+                  onChanged={() => {
+                    void loadSiteSummaries(project.id, true);
+                  }}
+                />
+              </ProjectSettingsSection>
 
-              <Card variant="hint">
+              <ProjectSettingsSection
+                storageKey="members"
+                title="Участники и права"
+                description="Кто видит проект, кто может запускать crawler и кто управляет доступами."
+                meta={<AccentPill tone="neutral">Права проекта</AccentPill>}
+              >
+                <ProjectMembersSettings projectId={project.id} />
+              </ProjectSettingsSection>
+
+              <ProjectSettingsSection
+                storageKey="schedule"
+                title="Расписание"
+                description="Пока это ручной запуск. Автозапуск появится после backend-контракта расписаний."
+                meta={<AccentPill tone="neutral">Manual-only</AccentPill>}
+                variant="hint"
+              >
                 <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ fontWeight: 700 }}>Расписание</div>
                   <MetaText>
                     Сейчас прогоны запускаются вручную. Автозапуск появится после backend-контракта расписаний и защиты от дублирующих запусков.
                   </MetaText>
@@ -2204,11 +2274,16 @@ export default function ProjectDashboardPage() {
                     </CardActionButton>
                   </div>
                 </div>
-              </Card>
+              </ProjectSettingsSection>
 
-              <Card variant="danger">
+              <ProjectSettingsSection
+                storageKey="danger-zone"
+                title="Опасная зона"
+                description="Необратимые действия по проекту. Здесь только операции, которые нельзя откатить."
+                meta={<AccentPill tone="danger">Требует внимания</AccentPill>}
+                variant="danger"
+              >
                 <div style={{ display: "grid", gap: 8 }}>
-                  <div style={{ fontWeight: 700 }}>Опасная зона</div>
                   <MetaText opacity={0.72}>
                     Удаление проекта необратимо: будут удалены связанные прогоны и артефакты.
                   </MetaText>
@@ -2221,7 +2296,7 @@ export default function ProjectDashboardPage() {
                     </CardActionButton>
                   </CardFooterActions>
                 </div>
-              </Card>
+              </ProjectSettingsSection>
             </div>
           )}
         </>
