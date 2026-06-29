@@ -74,7 +74,7 @@ docker compose up -d --build backend
 
 `CRAWL_STALE_RUNNING_SECONDS` задаёт, через сколько секунд без обновления прогресса `RUNNING`-прогон считается зависшим. При следующем чтении истории или запуске сайта backend пометит такой прогон как `FAILED/stale_run_recovered`, чтобы он не блокировал новый запуск.
 
-Активный прогон можно остановить через `POST /runs/{run_id}/cancel`. В текущей синхронной архитектуре это не прерывает уже начатый HTTP-запрос мгновенно: backend ставит `CANCEL_REQUESTED`, а crawler завершает текущую страницу и переводит run в `CANCELLED` перед следующим шагом.
+Активный прогон можно остановить через `POST /runs/{run_id}/cancel`. Backend ставит `CANCEL_REQUESTED`, а crawler-watchdog пытается быстро прервать текущий HTTP/browser fetch закрытием runtime-клиента; уже сохранённые страницы остаются в истории, а частично оборванная текущая страница не записывается как ошибка пользователя.
 
 Операционная диагностика crawler доступна admin/root-admin через `GET /crawler/readiness`: режим исполнения, активные runs/jobs, ожидание отмены, stale recovery и пороги зависших состояний. В Project Dashboard для admin/root-admin эти данные показываются компактной панелью: readiness, режим `worker/sync`, queued/running/cancel-requested jobs и warning/critical issues.
 

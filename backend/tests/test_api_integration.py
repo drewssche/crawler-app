@@ -1,6 +1,8 @@
 ﻿import hashlib
 import os
 import tempfile
+import threading
+import time
 from collections.abc import Generator
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -2348,6 +2350,80 @@ def test_site_run_honors_cancel_requested_between_pages(monkeypatch):
         assert run.finished_at is not None
         assert run.current_url is None
         assert db.query(Page).filter(Page.run_id == run_id).count() == 1
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_site_run_interrupts_inflight_fetch_after_cancel(monkeypatch):
+    from app.api import runs as runs_api
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    monkeypatch.setattr(runs_api, "SessionLocal", SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="runs-cancel-fetch@test.local", role="editor", is_approved=True))
+        project = Project(name="Cancel fetch", start_url="https://cancel-fetch.test", allowed_domains_csv="cancel-fetch.test", max_pages=5)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        site = _add_primary_site(db, project)
+        db.commit()
+        site_id = site.id
+
+    class BlockingClient:
+        def __init__(self, *args, **kwargs):
+            self.closed = threading.Event()
+            self.cancel_started = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def close(self):
+            self.closed.set()
+
+        def get(self, url: str):
+            if not self.cancel_started:
+                self.cancel_started = True
+
+                def request_cancel():
+                    time.sleep(0.1)
+                    with SessionLocal() as db:
+                        run = db.query(Run).filter(Run.project_site_id == site_id, Run.status == "RUNNING").one()
+                        run.status = "CANCEL_REQUESTED"
+                        run.failure_code = "cancel_requested"
+                        run.failure_message = "Остановка запрошена."
+                        run.progress_updated_at = datetime.utcnow()
+                        db.commit()
+
+                threading.Thread(target=request_cancel, daemon=True).start()
+            if not self.closed.wait(timeout=2.0):
+                raise httpx.ReadTimeout("timed out", request=httpx.Request("GET", url))
+            raise httpx.ReadError("client closed", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(runs_api.httpx, "Client", BlockingClient)
+    client = TestClient(app)
+    response = client.post(
+        f"/runs/start-site/{site_id}",
+        headers=_auth_header("runs-cancel-fetch@test.local", role="editor"),
+    )
+    assert response.status_code == 200
+    run_id = response.json()["run_id"]
+
+    with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        assert run.status == "CANCELLED"
+        assert run.failure_code == "cancelled_by_user"
+        assert run.finished_at is not None
+        assert run.current_url is None
+        assert db.query(Page).filter(Page.run_id == run_id).count() == 0
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

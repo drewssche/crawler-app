@@ -1,6 +1,7 @@
 import hashlib
 import math
 import os
+import threading
 import time
 from collections import deque
 from contextlib import contextmanager
@@ -26,7 +27,7 @@ from app.db.models.crawler_run_job import CrawlerRunJob
 from app.db.models.project_site import ProjectSite
 from app.db.models.run import Run
 from app.db.models.user import User
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.core.security import require_permission
 from app.core.events import (
     EVENT_CHANNEL_NOTIFICATION,
@@ -572,6 +573,73 @@ class RunCancelled(Exception):
     pass
 
 
+class RunCancelInterrupt(Exception):
+    pass
+
+
+class RunCancelWatcher:
+    def __init__(self, run_id: int, *, poll_seconds: float = 0.5):
+        self.run_id = run_id
+        self.poll_seconds = poll_seconds
+        self.cancel_requested = threading.Event()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._clients: list[Any] = []
+        self._lock = threading.Lock()
+
+    def __enter__(self):
+        self._thread = threading.Thread(target=self._watch, name=f"run-cancel-watch-{self.run_id}", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        return False
+
+    def register_client(self, client: Any) -> None:
+        with self._lock:
+            self._clients.append(client)
+        if self.cancel_requested.is_set():
+            self._close_client(client)
+
+    def raise_if_cancelled(self) -> None:
+        if self.cancel_requested.is_set():
+            raise RunCancelInterrupt()
+
+    def _watch(self) -> None:
+        while not self._stop.wait(self.poll_seconds):
+            if self._is_cancel_requested():
+                self.cancel_requested.set()
+                self._close_clients()
+                return
+
+    def _is_cancel_requested(self) -> bool:
+        try:
+            with SessionLocal() as db:
+                status = db.query(Run.status).filter(Run.id == self.run_id).scalar()
+                return status == "CANCEL_REQUESTED"
+        except Exception:
+            return False
+
+    def _close_clients(self) -> None:
+        with self._lock:
+            clients = list(self._clients)
+        for client in clients:
+            self._close_client(client)
+
+    @staticmethod
+    def _close_client(client: Any) -> None:
+        close = getattr(client, "close", None)
+        if not callable(close):
+            return
+        try:
+            close()
+        except Exception:
+            pass
+
+
 def _queued_run_response(
     *,
     job: CrawlerRunJob,
@@ -724,49 +792,87 @@ def _execute_site_run(
     run_deadline = time.monotonic() + browser_max_seconds if run.crawl_runtime == "browser" else None
 
     try:
-        with _persona_crawl_client(persona, document_url=site.start_url) as client:
-            queue: deque[str] = deque([site.start_url])
-            queued: set[str] = set(queue)
-            visited: set[str] = set()
-            pages: list[Page] = []
-            first_failure: tuple[str, str] | None = None
+        with RunCancelWatcher(run.id) as cancel_watcher:
+            with _persona_crawl_client(persona, document_url=site.start_url) as client:
+                cancel_watcher.register_client(client)
+                queue: deque[str] = deque([site.start_url])
+                queued: set[str] = set(queue)
+                visited: set[str] = set()
+                pages: list[Page] = []
+                first_failure: tuple[str, str] | None = None
 
-            while queue and len(pages) < max_pages:
-                db.refresh(run)
-                if run.status == "CANCEL_REQUESTED":
-                    _finalize_cancelled_run(
-                        db,
-                        run=run,
-                        site=site,
-                        persona=persona,
-                        actor_user_id=actor_user_id,
-                        job=job,
-                    )
-                    raise RunCancelled()
-                if run_deadline is not None and time.monotonic() >= run_deadline:
-                    if first_failure is None:
-                        first_failure = (
-                            "browser_run_time_limit",
-                            "Browser-runtime достиг лимита времени для одного прогона. Уменьшите область сайта или запустите повторно позже.",
+                while queue and len(pages) < max_pages:
+                    db.refresh(run)
+                    if run.status == "CANCEL_REQUESTED":
+                        _finalize_cancelled_run(
+                            db,
+                            run=run,
+                            site=site,
+                            persona=persona,
+                            actor_user_id=actor_user_id,
+                            job=job,
                         )
-                    break
-                current = queue.popleft()
-                if current in visited:
-                    continue
-                visited.add(current)
-                run.current_url = current
-                run.progress_updated_at = datetime.utcnow()
-                db.commit()
-                heartbeat_job(db, job=job)
+                        raise RunCancelled()
+                    if run_deadline is not None and time.monotonic() >= run_deadline:
+                        if first_failure is None:
+                            first_failure = (
+                                "browser_run_time_limit",
+                                "Browser-runtime достиг лимита времени для одного прогона. Уменьшите область сайта или запустите повторно позже.",
+                            )
+                        break
+                    current = queue.popleft()
+                    if current in visited:
+                        continue
+                    visited.add(current)
+                    run.current_url = current
+                    run.progress_updated_at = datetime.utcnow()
+                    db.commit()
+                    heartbeat_job(db, job=job)
 
-                started_fetch = time.monotonic()
-                try:
-                    resp = client.get(current)
-                except Exception as exc:
-                    failure_code, failure_message = _classify_fetch_failure(exc)
-                    if first_failure is None:
-                        first_failure = (failure_code, failure_message)
-                    failed_page = Page(
+                    started_fetch = time.monotonic()
+                    try:
+                        cancel_watcher.raise_if_cancelled()
+                        resp = client.get(current)
+                        cancel_watcher.raise_if_cancelled()
+                    except RunCancelInterrupt:
+                        db.refresh(run)
+                        if run.status != "CANCEL_REQUESTED":
+                            run.status = "CANCEL_REQUESTED"
+                            run.failure_code = "cancel_requested"
+                            run.failure_message = "Остановка запрошена."
+                            run.progress_updated_at = datetime.utcnow()
+                            db.commit()
+                        _finalize_cancelled_run(
+                            db,
+                            run=run,
+                            site=site,
+                            persona=persona,
+                            actor_user_id=actor_user_id,
+                            job=job,
+                        )
+                        raise RunCancelled()
+                    except Exception as exc:
+                        if cancel_watcher.cancel_requested.is_set():
+                            db.refresh(run)
+                            if run.status != "CANCEL_REQUESTED":
+                                run.status = "CANCEL_REQUESTED"
+                                run.failure_code = "cancel_requested"
+                                run.failure_message = "Остановка запрошена."
+                                run.progress_updated_at = datetime.utcnow()
+                                db.commit()
+                            _finalize_cancelled_run(
+                                db,
+                                run=run,
+                                site=site,
+                                persona=persona,
+                                actor_user_id=actor_user_id,
+                                job=job,
+                            )
+                            raise RunCancelled()
+                        failure_code, failure_message = _classify_fetch_failure(exc)
+                        if first_failure is None:
+                            first_failure = (failure_code, failure_message)
+                        failed_page = Page(
                             run_id=run.id,
                             url=current,
                             status_code=0,
@@ -780,108 +886,108 @@ def _execute_site_run(
                             fetch_error_message=failure_message,
                             response_time_ms=round((time.monotonic() - started_fetch) * 1000),
                             crawl_batch_no=(len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1,
-                    )
-                    pages.append(failed_page)
-                    db.add(failed_page)
-                    run.pages_total = len(pages)
-                    run.current_batch_no = (len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1
-                    run.progress_updated_at = datetime.utcnow()
-                    db.commit()
-                    heartbeat_job(db, job=job)
-                    continue
-
-                response_time_ms = round((time.monotonic() - started_fetch) * 1000)
-                final_url = _normalize_url(str(resp.url))
-                chain = _redirect_chain(resp)
-                source_status = chain[0]["status_code"] if len(chain) > 1 else int(resp.status_code)
-                visited.add(final_url)
-                if not _is_allowed_url(
-                    final_url,
-                    scope=scope,
-                    allowed_domains=allowed_domains,
-                    excluded_ext=excluded_ext,
-                ):
-                    if first_failure is None:
-                        first_failure = (
-                            "scope_redirect",
-                            "Стартовый адрес перенаправил crawler за пределы области сайта.",
                         )
-                    scope_page = Page(
-                            run_id=run.id,
-                            url=current,
-                            status_code=source_status,
-                            content_type="",
-                            html="",
-                            html_hash="",
-                            final_url=final_url,
-                            final_status_code=int(resp.status_code),
-                            redirect_chain_json=chain,
-                            fetch_error_code="scope_redirect",
-                            fetch_error_message="Перенаправление вышло за пределы области мониторинга.",
-                            response_time_ms=response_time_ms,
-                            crawl_batch_no=(len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1,
-                    )
-                    pages.append(scope_page)
-                    db.add(scope_page)
-                    run.pages_total = len(pages)
-                    run.current_batch_no = (len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1
-                    run.progress_updated_at = datetime.utcnow()
-                    db.commit()
-                    heartbeat_job(db, job=job)
-                    continue
-                ct = (resp.headers.get("content-type", "") or "").lower()
-                html = resp.text if "text/html" in ct else ""
-                h = hashlib.sha256(html.encode("utf-8", errors="ignore")).hexdigest() if html else ""
-
-                fetched_page = Page(
-                        run_id=run.id,
-                        url=current,
-                        status_code=source_status,
-                        content_type=ct,
-                        html=html,
-                        html_hash=h,
-                        final_url=final_url,
-                        final_status_code=int(resp.status_code),
-                        redirect_chain_json=chain,
-                        fetch_error_code=None,
-                        fetch_error_message=None,
-                        response_time_ms=response_time_ms,
-                        crawl_batch_no=(len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1,
-                )
-                pages.append(fetched_page)
-                db.add(fetched_page)
-                run.pages_total = len(pages)
-                run.current_batch_no = (len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1
-                run.progress_updated_at = datetime.utcnow()
-                db.commit()
-                heartbeat_job(db, job=job)
-
-                if not html or resp.status_code >= 400:
-                    continue
-
-                soup = BeautifulSoup(html, "lxml")
-                for tag in soup.find_all("a"):
-                    href = (tag.get("href") or "").strip()
-                    if not href:
+                        pages.append(failed_page)
+                        db.add(failed_page)
+                        run.pages_total = len(pages)
+                        run.current_batch_no = (len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1
+                        run.progress_updated_at = datetime.utcnow()
+                        db.commit()
+                        heartbeat_job(db, job=job)
                         continue
-                    candidate = _normalize_url(urljoin(final_url, href))
-                    if not candidate:
-                        continue
-                    if candidate in visited or candidate in queued:
-                        continue
+
+                    response_time_ms = round((time.monotonic() - started_fetch) * 1000)
+                    final_url = _normalize_url(str(resp.url))
+                    chain = _redirect_chain(resp)
+                    source_status = chain[0]["status_code"] if len(chain) > 1 else int(resp.status_code)
+                    visited.add(final_url)
                     if not _is_allowed_url(
-                        candidate,
+                        final_url,
                         scope=scope,
                         allowed_domains=allowed_domains,
                         excluded_ext=excluded_ext,
                     ):
+                        if first_failure is None:
+                            first_failure = (
+                                "scope_redirect",
+                                "Стартовый адрес перенаправил crawler за пределы области сайта.",
+                            )
+                        scope_page = Page(
+                                run_id=run.id,
+                                url=current,
+                                status_code=source_status,
+                                content_type="",
+                                html="",
+                                html_hash="",
+                                final_url=final_url,
+                                final_status_code=int(resp.status_code),
+                                redirect_chain_json=chain,
+                                fetch_error_code="scope_redirect",
+                                fetch_error_message="Перенаправление вышло за пределы области мониторинга.",
+                                response_time_ms=response_time_ms,
+                                crawl_batch_no=(len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1,
+                        )
+                        pages.append(scope_page)
+                        db.add(scope_page)
+                        run.pages_total = len(pages)
+                        run.current_batch_no = (len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1
+                        run.progress_updated_at = datetime.utcnow()
+                        db.commit()
+                        heartbeat_job(db, job=job)
                         continue
-                    queue.append(candidate)
-                    queued.add(candidate)
-                run.pages_discovered = len(queued)
-                run.progress_updated_at = datetime.utcnow()
-                db.commit()
-                heartbeat_job(db, job=job)
+                    ct = (resp.headers.get("content-type", "") or "").lower()
+                    html = resp.text if "text/html" in ct else ""
+                    h = hashlib.sha256(html.encode("utf-8", errors="ignore")).hexdigest() if html else ""
+
+                    fetched_page = Page(
+                            run_id=run.id,
+                            url=current,
+                            status_code=source_status,
+                            content_type=ct,
+                            html=html,
+                            html_hash=h,
+                            final_url=final_url,
+                            final_status_code=int(resp.status_code),
+                            redirect_chain_json=chain,
+                            fetch_error_code=None,
+                            fetch_error_message=None,
+                            response_time_ms=response_time_ms,
+                            crawl_batch_no=(len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1,
+                    )
+                    pages.append(fetched_page)
+                    db.add(fetched_page)
+                    run.pages_total = len(pages)
+                    run.current_batch_no = (len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1
+                    run.progress_updated_at = datetime.utcnow()
+                    db.commit()
+                    heartbeat_job(db, job=job)
+
+                    if not html or resp.status_code >= 400:
+                        continue
+
+                    soup = BeautifulSoup(html, "lxml")
+                    for tag in soup.find_all("a"):
+                        href = (tag.get("href") or "").strip()
+                        if not href:
+                            continue
+                        candidate = _normalize_url(urljoin(final_url, href))
+                        if not candidate:
+                            continue
+                        if candidate in visited or candidate in queued:
+                            continue
+                        if not _is_allowed_url(
+                            candidate,
+                            scope=scope,
+                            allowed_domains=allowed_domains,
+                            excluded_ext=excluded_ext,
+                        ):
+                            continue
+                        queue.append(candidate)
+                        queued.add(candidate)
+                    run.pages_discovered = len(queued)
+                    run.progress_updated_at = datetime.utcnow()
+                    db.commit()
+                    heartbeat_job(db, job=job)
 
         run.pages_total = len(pages)
         run.pages_discovered = max(len(queued), len(pages))

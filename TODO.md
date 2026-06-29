@@ -341,7 +341,8 @@
   - 12. Project-level active jobs recovery MVP готов: `GET /runs/active-jobs/by-project/{project_id}` возвращает все active jobs проекта с site/persona metadata; Project Dashboard восстанавливает queued pending jobs всех сайтов после reload, включая сценарий `Запустить все сайты`.
   - 13. Pending retry/backoff explanation MVP готов: Project Dashboard показывает в pending-блоке retryable worker job: следующую попытку `N из M`, время до повторного запуска и причину последнего сбоя.
   - 14. Lightweight operations panel MVP готов: Project Dashboard для admin/root-admin показывает readiness crawler, режим `worker/sync`, queued/running/cancel-requested jobs, возраст старейшей queued job, recovered expired jobs и первые degraded-issues; запросы readiness в UI теперь guard-ятся правом `audit.view`.
-  - Следующее: более быстрый interrupt текущего fetch; расширенная operations-страница/журнал worker-событий только после подтверждения, что компактной панели недостаточно.
+  - 15. Fast cancel interrupt MVP готов: во время run отдельный cancel-watchdog отслеживает `CANCEL_REQUESTED` и закрывает текущий HTTP/browser client, чтобы прервать зависший fetch быстрее сетевого timeout; частично оборванная текущая страница не сохраняется как page-error, уже сохранённые страницы остаются в истории.
+  - Следующее: extended operations/event log для worker только если компактной панели и notification center недостаточно; иначе перейти к governance/quotas или retention policy.
 
 - [ ] **P1 Project governance — quotas, ownership, membership** (`HIGH`, follows Site foundation).
   Quotas per actor/role/project/site, storage/concurrency budgets и server-side project membership.
@@ -361,6 +362,12 @@
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox; не смешивать с operational alerts).
 
 ## Recently Done
+
+- [x] **P0/P1 Operations reliability — fast cancel interrupt**.
+  - Что было: cancel гарантированно срабатывал между страницами, но уже начатый fetch мог ждать сетевой/browser timeout.
+  - Что стало: `_execute_site_run` запускает `RunCancelWatcher`, который отдельным коротким DB-poll отслеживает `CANCEL_REQUESTED` и закрывает активный HTTP/browser client. Если cancel пришёл во время fetch, run финализируется как `CANCELLED`, а текущая оборванная страница не превращается в ложный `timeout/error`.
+  - Как проверить: `docker compose exec backend env PYTHONPATH=/app pytest -q tests/test_api_integration.py -k "cancel_run or cancel_requested or inflight_fetch or worker_job_retries or crawler_readiness"`.
+  - Вклад в цели: остановка crawler стала отзывчивее и безопаснее для production-like worker-mode (`high` operations reliability/friendly UX).
 
 - [x] **P0/P1 Operations UX — crawler readiness panel**.
   - Что было: readiness был доступен через API, но в Project Dashboard admin видел только локальный pending-блок; роли без `audit.view` могли лишний раз обращаться к защищённому endpoint и получать silent 403.

@@ -86,6 +86,10 @@ class BrowserPersonaClient:
             ) from exc
 
     def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
+    def close(self):
         for resource in (self.context, self.browser):
             if resource is None:
                 continue
@@ -98,7 +102,9 @@ class BrowserPersonaClient:
                 self.playwright.stop()
             except Exception:
                 pass
-        return False
+        self.context = None
+        self.browser = None
+        self.playwright = None
 
     def get(self, url: str) -> BrowserFetchResponse:
         if self.context is None:
