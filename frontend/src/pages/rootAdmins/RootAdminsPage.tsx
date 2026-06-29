@@ -52,6 +52,7 @@ type AdminPageRow = {
   email: string;
   in_db: boolean;
   profile?: UserLookupRow | null;
+  is_emergency?: boolean;
 };
 
 type AdminPageResponse = PagedResponse<AdminPageRow> & {
@@ -84,6 +85,7 @@ type UserLookupRow = {
   last_activity_at?: string | null;
   last_ip?: string | null;
   last_user_agent?: string | null;
+  is_emergency_root_admin?: boolean;
 };
 
 type TrustPolicy = "strict" | "standard" | "extended" | "permanent";
@@ -112,6 +114,8 @@ const TXT = {
   removing: "\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435...",
   cannotSelf: "\u041d\u0435\u043b\u044c\u0437\u044f \u0443\u0434\u0430\u043b\u0438\u0442\u044c \u0441\u0435\u0431\u044f",
   cannotLast: "\u041d\u0435\u043b\u044c\u0437\u044f \u0443\u0434\u0430\u043b\u0438\u0442\u044c \u043f\u043e\u0441\u043b\u0435\u0434\u043d\u0435\u0433\u043e root-admin",
+  cannotEmergency: "Аварийный root-admin задаётся конфигом и не удаляется из интерфейса.",
+  emergency: "аварийный доступ",
   updated: "\u0421\u043f\u0438\u0441\u043e\u043a \u0441\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0445 \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u043e\u0432 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d.",
   badEmail: "\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043a\u043e\u0440\u0440\u0435\u043a\u0442\u043d\u044b\u0439 email.",
   needReason: "\u0423\u043a\u0430\u0436\u0438\u0442\u0435 \u043f\u0440\u0438\u0447\u0438\u043d\u0443 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u0441\u043f\u0438\u0441\u043a\u0430.",
@@ -298,12 +302,14 @@ export default function RootAdminsPage() {
     contentKey: `${rows.length}:${search}`,
   });
 
-  const allSelected = rows.length > 0 && rows.every((x) => selected.includes(x.email));
+  const selectableRows = rows.filter((row) => !row.is_emergency);
+  const allSelected = selectableRows.length > 0 && selectableRows.every((x) => selected.includes(x.email));
 
   const removableSelected = useMemo(() => {
     if (selected.length === 0) return [] as string[];
-    return selected.filter((x) => x !== selfEmail);
-  }, [selected, selfEmail]);
+    const emergency = new Set(rows.filter((row) => row.is_emergency).map((row) => row.email));
+    return selected.filter((x) => x !== selfEmail && !emergency.has(x));
+  }, [rows, selected, selfEmail]);
 
   const canBulkRemove = useMemo(() => {
     if (removableSelected.length === 0) return false;
@@ -311,11 +317,12 @@ export default function RootAdminsPage() {
   }, [adminCount, removableSelected.length]);
 
   function toggleOne(email: string) {
+    if (rows.find((row) => row.email === email)?.is_emergency) return;
     setSelected((prev) => (prev.includes(email) ? prev.filter((x) => x !== email) : [...prev, email]));
   }
 
   function toggleAll() {
-    setSelected(allSelected ? [] : rows.map((x) => x.email));
+    setSelected(allSelected ? [] : selectableRows.map((x) => x.email));
   }
 
   async function removeSelected() {
@@ -381,8 +388,9 @@ export default function RootAdminsPage() {
   }, []);
 
   const isDrawerSelf = drawerEmail.toLowerCase() === selfEmail;
+  const isDrawerEmergency = rows.find((row) => row.email.toLowerCase() === drawerEmail.toLowerCase())?.is_emergency || Boolean(drawerUser?.is_emergency_root_admin);
   const isLastRootAdmin = adminCount <= 1;
-  const canRemoveFromDrawer = !isDrawerSelf && !isLastRootAdmin;
+  const canRemoveFromDrawer = !isDrawerSelf && !isDrawerEmergency && !isLastRootAdmin;
   const addReasonMeta = getAdminEmailsReasonInputMeta(adminReasonContract, "add_root_admin");
   const removeReasonMeta = getAdminEmailsReasonInputMeta(adminReasonContract, "remove_other_root_admin");
 
@@ -484,15 +492,19 @@ export default function RootAdminsPage() {
                 key={email}
                 checked={selected.includes(email)}
                 onToggle={() => toggleOne(email)}
+                checkboxDisabled={Boolean(row.is_emergency)}
                 title={<HighlightedText value={email} query={search} />}
                 badges={
-                  <IdentityBadgeRow
-                    role="root-admin"
-                    showSelf={isSelf}
-                    dbPresence={inDb ? "in_db" : "only_env"}
-                    inDbLabel={TXT.inDb}
-                    onlyEnvLabel={TXT.onlyEnv}
-                  />
+                  <>
+                    <IdentityBadgeRow
+                      role="root-admin"
+                      showSelf={isSelf}
+                      dbPresence={inDb ? "in_db" : "only_env"}
+                      inDbLabel={TXT.inDb}
+                      onlyEnvLabel={TXT.onlyEnv}
+                    />
+                    {row.is_emergency && <AccentPill tone="warning">{TXT.emergency}</AccentPill>}
+                  </>
                 }
                 onOpen={() => {
                   void openDrawer(email);
@@ -550,6 +562,7 @@ export default function RootAdminsPage() {
                 <ApplicabilityHint applied={removableSelected.length} total={selected.length} />
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {selected.some((x) => x === selfEmail) && <AccentPill tone="warning">{TXT.cannotSelf}</AccentPill>}
+                  {selected.some((x) => rows.find((row) => row.email === x)?.is_emergency) && <AccentPill tone="warning">{TXT.cannotEmergency}</AccentPill>}
                   {adminCount <= 1 && <AccentPill tone="warning">{TXT.cannotLast}</AccentPill>}
                 </div>
               </>
@@ -601,13 +614,16 @@ export default function RootAdminsPage() {
                 <div style={{ display: "grid", gap: 8 }}>
                   <UserBadgeGroups
                     identity={
-                      <IdentityBadgeRow
-                        role="root-admin"
-                        showSelf={drawerEmail.toLowerCase() === selfEmail}
-                        dbPresence={drawerUser ? "in_db" : "only_env"}
-                        inDbLabel={TXT.inDb}
-                        onlyEnvLabel={TXT.onlyEnv}
-                      />
+                      <>
+                        <IdentityBadgeRow
+                          role="root-admin"
+                          showSelf={drawerEmail.toLowerCase() === selfEmail}
+                          dbPresence={drawerUser ? "in_db" : "only_env"}
+                          inDbLabel={TXT.inDb}
+                          onlyEnvLabel={TXT.onlyEnv}
+                        />
+                        {isDrawerEmergency && <AccentPill tone="warning">{TXT.emergency}</AccentPill>}
+                      </>
                     }
                     status={
                       drawerUser ? (
@@ -667,6 +683,7 @@ export default function RootAdminsPage() {
                   ) : (
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       {isDrawerSelf && <AccentPill tone="warning">{TXT.cannotSelf}</AccentPill>}
+                      {isDrawerEmergency && <AccentPill tone="warning">{TXT.cannotEmergency}</AccentPill>}
                       {isLastRootAdmin && <AccentPill tone="warning">{TXT.cannotLast}</AccentPill>}
                     </div>
                   )}

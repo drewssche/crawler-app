@@ -357,8 +357,8 @@
   Осталось: actor/project storage budgets, quota overview для admin/root-admin и финальный audit устаревших compatibility-допусков по membership.
   Canonical site/path scope и duplicate policy перенесены в epic `Site monitoring + scoped crawl + compare workspace`, чтобы не вести два конкурирующих контракта.
 
-- [ ] **P1 Protected emergency root actor** (`HIGH`).
-  Secret/config-backed break-glass actor, скрытый из обычных списков, недоступный для delete/demote, audit-visible.
+- [x] **P1 Protected emergency root actor** (`HIGH`).
+  `EMERGENCY_ROOT_ADMIN_EMAIL` добавляет config-backed break-glass root-admin в effective runtime access, скрывает его из обычного Users list без прямого поиска, защищает от удаления через root-admin management и bulk user actions, оставляет действия audit-visible.
 
 ## Release Gate / Deferred
 

@@ -4293,6 +4293,93 @@ def test_update_admin_emails_remove_other_root_requires_reason():
             os.environ.pop("ENV_FILE_PATH", None)
         else:
             os.environ["ENV_FILE_PATH"] = prev_env_file_path
+
+
+def test_emergency_root_admin_is_runtime_protected_and_hidden_from_default_users_list():
+    prev_admin_emails = os.environ.get("ADMIN_EMAILS")
+    prev_emergency_email = os.environ.get("EMERGENCY_ROOT_ADMIN_EMAIL")
+    prev_admin_password = os.environ.get("ADMIN_PASSWORD")
+    prev_env_file_path = os.environ.get("ENV_FILE_PATH")
+    os.environ["ADMIN_EMAILS"] = "root@test.local"
+    os.environ["EMERGENCY_ROOT_ADMIN_EMAIL"] = "breakglass@test.local"
+    os.environ["ADMIN_PASSWORD"] = "test-password"
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False) as tmp:
+            tmp.write("ADMIN_EMAILS=root@test.local\n")
+            env_path = tmp.name
+        os.environ["ENV_FILE_PATH"] = env_path
+
+        engine, SessionLocal = _get_session_factory()
+        app.router.on_startup.clear()
+        app.router.on_shutdown.clear()
+        app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+        with SessionLocal() as db:
+            root = _make_user(email="root@test.local", role="admin", is_admin=True, is_approved=True)
+            emergency = _make_user(email="breakglass@test.local", role="admin", is_admin=True, is_approved=True)
+            regular = _make_user(email="regular@test.local", role="viewer", is_approved=True)
+            db.add_all([root, emergency, regular])
+            db.commit()
+
+        client = TestClient(app)
+
+        settings = client.get(
+            "/admin/settings/admin-emails?page=1&page_size=20",
+            headers=_auth_header("root@test.local", role="root-admin"),
+        )
+        assert settings.status_code == 200
+        settings_data = _extract_success_data(settings)
+        rows = {row["email"]: row for row in settings_data["items"]}
+        assert rows["breakglass@test.local"]["is_emergency"] is True
+
+        default_users = client.get(
+            "/admin/users?status=all",
+            headers=_auth_header("root@test.local", role="root-admin"),
+        )
+        assert default_users.status_code == 200
+        assert "breakglass@test.local" not in [row["email"] for row in _extract_success_data(default_users)]
+
+        direct_lookup = client.get(
+            "/admin/users?status=all&q=breakglass@test.local",
+            headers=_auth_header("root@test.local", role="root-admin"),
+        )
+        assert direct_lookup.status_code == 200
+        lookup_rows = _extract_success_data(direct_lookup)
+        assert lookup_rows[0]["email"] == "breakglass@test.local"
+        assert lookup_rows[0]["is_emergency_root_admin"] is True
+
+        remove_attempt = client.post(
+            "/admin/settings/admin-emails",
+            json={"emails": ["root@test.local"], "reason": "Проверка защиты аварийного доступа"},
+            headers=_auth_header("root@test.local", role="root-admin"),
+        )
+        assert remove_attempt.status_code == 400
+        payload = _extract_error_payload(remove_attempt)
+        assert payload["error"]["code"] == "emergency_root_admin_protected"
+
+        with open(env_path, encoding="utf-8") as fh:
+            assert "breakglass@test.local" not in fh.read()
+
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+    finally:
+        if prev_admin_emails is None:
+            os.environ.pop("ADMIN_EMAILS", None)
+        else:
+            os.environ["ADMIN_EMAILS"] = prev_admin_emails
+        if prev_emergency_email is None:
+            os.environ.pop("EMERGENCY_ROOT_ADMIN_EMAIL", None)
+        else:
+            os.environ["EMERGENCY_ROOT_ADMIN_EMAIL"] = prev_emergency_email
+        if prev_admin_password is None:
+            os.environ.pop("ADMIN_PASSWORD", None)
+        else:
+            os.environ["ADMIN_PASSWORD"] = prev_admin_password
+        if prev_env_file_path is None:
+            os.environ.pop("ENV_FILE_PATH", None)
+        else:
+            os.environ["ENV_FILE_PATH"] = prev_env_file_path
         if "env_path" in locals() and os.path.exists(env_path):
             os.remove(env_path)
 

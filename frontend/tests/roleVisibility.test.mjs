@@ -10,6 +10,8 @@ const appLayoutSource = await readFile(new URL("../src/components/layout/AppLayo
 const settingsSource = await readFile(new URL("../src/pages/SettingsPage.tsx", import.meta.url), "utf8");
 const permissionsSource = await readFile(new URL("../src/utils/permissions.ts", import.meta.url), "utf8");
 const debugSource = await readFile(new URL("../src/pages/UiDebugPage.tsx", import.meta.url), "utf8");
+const rootAdminsSource = await readFile(new URL("../src/pages/rootAdmins/RootAdminsPage.tsx", import.meta.url), "utf8");
+const selectableRowSource = await readFile(new URL("../src/components/ui/SelectableListRow.tsx", import.meta.url), "utf8");
 
 test("project routes use explicit permissions", () => {
   assert.match(appSource, /permission="projects\.edit"[\s\S]*?<ProjectNewPage/);
@@ -43,4 +45,12 @@ test("UI Debug is fixture-only and guarded by development flags", () => {
   assert.match(debugSource, /реальные права и данные не изменены/);
   assert.match(debugSource, /fixture_only/);
   assert.doesNotMatch(debugSource, /setToken|access_token|imperson/);
+});
+
+test("emergency root-admin is shown as protected and excluded from bulk removal", () => {
+  assert.match(rootAdminsSource, /is_emergency/);
+  assert.match(rootAdminsSource, /Аварийный root-admin/);
+  assert.match(rootAdminsSource, /checkboxDisabled=\{Boolean\(row\.is_emergency\)\}/);
+  assert.match(rootAdminsSource, /rows\.filter\(\(row\) => !row\.is_emergency\)/);
+  assert.match(selectableRowSource, /checkboxDisabled/);
 });

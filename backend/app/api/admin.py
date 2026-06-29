@@ -9,7 +9,9 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.admin_sync import (
+    get_emergency_root_admin_email,
     get_runtime_admin_emails,
+    is_emergency_root_admin_email,
     is_root_admin_email,
     parse_admin_emails,
     sync_admin_users,
@@ -213,6 +215,10 @@ def list_users(
     _admin: User = Depends(require_permission("users.manage")),
 ):
     query = db.query(User)
+    emergency_email = get_emergency_root_admin_email()
+    q_norm = q.strip().lower()
+    if emergency_email and q_norm != emergency_email:
+        query = query.filter(func.lower(User.email) != emergency_email)
     if status == "pending":
         query = query.filter(User.is_approved.is_(False), User.is_deleted.is_(False))
     elif status == "approved":
@@ -223,8 +229,8 @@ def list_users(
         if not include_deleted:
             query = query.filter(User.is_deleted.is_(False))
 
-    if q.strip():
-        query = query.filter(User.email.ilike(f"%{q.strip()}%"))
+    if q_norm:
+        query = query.filter(User.email.ilike(f"%{q_norm}%"))
 
     sort_field = {
         "id": User.id,
@@ -266,6 +272,7 @@ def list_users(
         base.update(
             {
                 "is_root_admin": is_root_admin_email(u.email),
+                "is_emergency_root_admin": is_emergency_root_admin_email(u.email),
                 "pending_requested_at": pending_requested_at_by_email.get(u.email.lower()),
                 "is_admin": u.is_admin,
                 "pending_unread": bool(pending_unread_by_user_id.get(u.id, False)),
@@ -662,6 +669,7 @@ def get_admin_emails_settings(
                 "email": email,
                 "in_db": email in db_profiles,
                 "profile": db_profiles.get(email),
+                "is_emergency": is_emergency_root_admin_email(email),
             }
             for email in page_emails
         ]
@@ -910,6 +918,16 @@ def update_admin_emails_settings(
         raise HTTPException(status_code=400, detail="At least one admin email is required")
     validate_admin_emails(normalized)
     current_runtime = get_runtime_admin_emails()
+    emergency_email = get_emergency_root_admin_email()
+    if emergency_email and emergency_email not in set(normalized):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "emergency_root_admin_protected",
+                "message": "Emergency root-admin cannot be removed from runtime access.",
+                "email": emergency_email,
+            },
+        )
     if admin.email.lower() not in set(normalized):
         raise HTTPException(status_code=400, detail="You cannot remove your own root-admin email")
     reason_mode = resolve_admin_emails_reason_mode(
@@ -920,7 +938,8 @@ def update_admin_emails_settings(
     reason = require_reason(payload.reason) if reason_mode == "required" else normalize_reason_text(payload.reason)
 
     write_admin_emails_to_env_file(normalized)
-    sync_result = sync_admin_users(db, normalized, admin_password=os.getenv("ADMIN_PASSWORD"))
+    runtime_after_write = get_runtime_admin_emails()
+    sync_result = sync_admin_users(db, runtime_after_write, admin_password=os.getenv("ADMIN_PASSWORD"))
 
     _log_admin_action(
         db,
@@ -930,7 +949,8 @@ def update_admin_emails_settings(
         target_user_id=None,
         meta_json={
             "old_admin_emails": current_runtime,
-            "new_admin_emails": normalized,
+            "new_admin_emails": runtime_after_write,
+            "emergency_root_admin_email": emergency_email,
             "created": sync_result.created,
             "promoted": sync_result.promoted,
             "demoted": sync_result.demoted,
@@ -941,18 +961,21 @@ def update_admin_emails_settings(
     )
     db.commit()
 
-    return success_response_payload(request, data={
-        "ok": True,
-        "admin_emails": normalized,
-        "sync": {
-            "created": sync_result.created,
-            "promoted": sync_result.promoted,
-            "demoted": sync_result.demoted,
-            "skipped_create_without_password": sync_result.skipped_create_without_password,
+    return success_response_payload(
+        request,
+        data={
+            "ok": True,
+            "admin_emails": runtime_after_write,
+            "sync": {
+                "created": sync_result.created,
+                "promoted": sync_result.promoted,
+                "demoted": sync_result.demoted,
+                "skipped_create_without_password": sync_result.skipped_create_without_password,
+            },
+            "note": "New admin emails are saved to .env and synced immediately.",
+            "reason_mode": reason_mode,
         },
-        "note": "New admin emails are saved to .env and synced immediately.",
-        "reason_mode": reason_mode,
-    })
+    )
 
 
 @router.get("/audit")
@@ -1273,7 +1296,5 @@ def bulk_users(
     increment_counter("admin_bulk_result_total", action=payload.action, changed=str(changed).lower())
 
     return success_response_payload(request, data={"ok": True, "results": results})
-
-
 
 

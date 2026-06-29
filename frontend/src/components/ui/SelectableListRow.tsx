@@ -11,6 +11,7 @@ export default function SelectableListRow({
   onOpen,
   highlighted = false,
   checkboxTitle,
+  checkboxDisabled = false,
   openLabel = "\u041e\u0442\u043a\u0440\u044b\u0442\u044c",
 }: {
   checked: boolean;
@@ -21,6 +22,7 @@ export default function SelectableListRow({
   onOpen: () => void;
   highlighted?: boolean;
   checkboxTitle?: string;
+  checkboxDisabled?: boolean;
   openLabel?: string;
 }) {
   return (
@@ -40,7 +42,7 @@ export default function SelectableListRow({
           onOpen();
         }}
       >
-        <input type="checkbox" checked={checked} onChange={onToggle} title={checkboxTitle} />
+        <input type="checkbox" checked={checked} onChange={onToggle} title={checkboxTitle} disabled={checkboxDisabled} />
         <div style={{ display: "grid", gap: 6 }}>
           <div style={{ fontWeight: 700 }}>{title}</div>
           {badges ? <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>{badges}</div> : null}

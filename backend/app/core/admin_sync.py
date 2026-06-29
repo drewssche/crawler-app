@@ -21,12 +21,28 @@ def parse_admin_emails(raw: str) -> list[str]:
 
 
 def get_runtime_admin_emails() -> list[str]:
-    return parse_admin_emails(os.getenv("ADMIN_EMAILS", ""))
+    emails = set(parse_admin_emails(os.getenv("ADMIN_EMAILS", "")))
+    emergency = get_emergency_root_admin_email()
+    if emergency:
+        emails.add(emergency)
+    return sorted(emails)
+
+
+def get_emergency_root_admin_email() -> str | None:
+    raw = normalize_email(os.getenv("EMERGENCY_ROOT_ADMIN_EMAIL", ""))
+    if raw and EMAIL_RE.match(raw):
+        return raw
+    return None
 
 
 def is_root_admin_email(email: str) -> bool:
     target = normalize_email(email)
     return target in set(get_runtime_admin_emails())
+
+
+def is_emergency_root_admin_email(email: str) -> bool:
+    emergency = get_emergency_root_admin_email()
+    return bool(emergency and normalize_email(email) == emergency)
 
 
 def validate_admin_emails(emails: list[str]) -> None:
@@ -124,7 +140,9 @@ def get_env_file_path() -> str:
 
 def write_admin_emails_to_env_file(admin_emails: list[str]) -> None:
     path = get_env_file_path()
-    value = ",".join(admin_emails)
+    emergency = get_emergency_root_admin_email()
+    writable_emails = [email for email in admin_emails if not emergency or email != emergency]
+    value = ",".join(writable_emails)
 
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -150,4 +168,4 @@ def write_admin_emails_to_env_file(admin_emails: list[str]) -> None:
         f.writelines(updated_lines)
 
     # Keep runtime env in sync to enforce root-admin checks immediately.
-    os.environ["ADMIN_EMAILS"] = ",".join(admin_emails)
+    os.environ["ADMIN_EMAILS"] = ",".join(writable_emails)
