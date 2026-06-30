@@ -102,6 +102,30 @@ export type ProjectSiteSummary = ProjectSite & {
   anomaly: ProjectSiteAnomaly;
 };
 
+export type ProjectSchedule = {
+  id: number | null;
+  project_id: number | null;
+  is_enabled: boolean;
+  frequency: "daily" | "weekly" | string;
+  time_of_day: string;
+  weekdays: number[];
+  timezone: string;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  paused_at: string | null;
+  last_skip_reason: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type ProjectScheduleInput = {
+  is_enabled: boolean;
+  frequency: "daily" | "weekly";
+  time_of_day: string;
+  weekdays: number[];
+  timezone: string;
+};
+
 export type ProjectSiteInput = {
   name: string;
   start_url: string;
@@ -119,6 +143,22 @@ export function listProjectSites(projectId: number): Promise<ProjectSite[]> {
 
 export function listProjectSiteSummaries(projectId: number): Promise<ProjectSiteSummary[]> {
   return apiGet<ProjectSiteSummary[]>(`/projects/${projectId}/sites/summary`);
+}
+
+export function getProjectSchedule(projectId: number): Promise<ProjectSchedule> {
+  return apiGet<ProjectSchedule>(`/projects/${projectId}/schedule`);
+}
+
+export function saveProjectSchedule(projectId: number, input: ProjectScheduleInput): Promise<ProjectSchedule> {
+  return apiPut<ProjectSchedule>(`/projects/${projectId}/schedule`, input);
+}
+
+export function pauseProjectSchedule(projectId: number): Promise<ProjectSchedule> {
+  return apiPost<ProjectSchedule>(`/projects/${projectId}/schedule/pause`, {});
+}
+
+export function resumeProjectSchedule(projectId: number): Promise<ProjectSchedule> {
+  return apiPost<ProjectSchedule>(`/projects/${projectId}/schedule/resume`, {});
 }
 
 export function createProjectSite(projectId: number, input: ProjectSiteInput): Promise<ProjectSite> {

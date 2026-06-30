@@ -27,6 +27,14 @@ from app.services.project_memberships import (
     visible_projects_query,
 )
 from app.services.project_quotas import enforce_project_create_quota, enforce_site_settings_quota
+from app.services.project_schedules import (
+    get_project_schedule,
+    pause_project_schedule,
+    resume_project_schedule,
+    run_due_schedules,
+    serialize_project_schedule,
+    upsert_project_schedule,
+)
 from app.services.scan_retention import delete_rendered_snapshot_artifacts_for_project
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -39,6 +47,14 @@ class ProjectMemberPayload(BaseModel):
 
 class ProjectMemberRolePayload(BaseModel):
     role: str
+
+
+class ProjectSchedulePayload(BaseModel):
+    is_enabled: bool = True
+    frequency: str = "daily"
+    time_of_day: str = Field(default="09:00", min_length=5, max_length=5)
+    weekdays: list[int] = Field(default_factory=list, max_length=7)
+    timezone: str = Field(default="UTC", min_length=1, max_length=80)
 
 
 def _project_out(project: Project, site: ProjectSite | None = None) -> dict:
@@ -240,6 +256,16 @@ def list_projects_summary(
     return success_response_payload(request, data=data)
 
 
+@router.post("/schedules/run-due")
+def run_due_project_schedules(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("audit.view")),
+):
+    # current_user dependency intentionally guards this operational endpoint.
+    _ = current_user
+    return run_due_schedules(db)
+
+
 @router.get("/{project_id}", response_model=ProjectOut)
 def get_project(
     project_id: int,
@@ -257,6 +283,87 @@ def get_project(
         .first()
     )
     return _project_out(obj, site)
+
+
+@router.get("/{project_id}/schedule")
+def read_project_schedule(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("data.view")),
+):
+    obj = db.get(Project, project_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    require_project_read(db, project_id=project_id, user=current_user)
+    return serialize_project_schedule(get_project_schedule(db, project_id=project_id))
+
+
+@router.put("/{project_id}/schedule")
+def save_project_schedule(
+    project_id: int,
+    payload: ProjectSchedulePayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    obj = db.get(Project, project_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    require_project_write(db, project_id=project_id, user=current_user)
+    schedule = upsert_project_schedule(
+        db,
+        project_id=project_id,
+        actor_user_id=current_user.id,
+        is_enabled=payload.is_enabled,
+        frequency=payload.frequency,
+        time_of_day=payload.time_of_day,
+        weekdays=payload.weekdays,
+        timezone_name=payload.timezone,
+    )
+    return serialize_project_schedule(schedule)
+
+
+@router.post("/{project_id}/schedule/pause")
+def pause_schedule(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    obj = db.get(Project, project_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    require_project_write(db, project_id=project_id, user=current_user)
+    schedule = get_project_schedule(db, project_id=project_id)
+    if schedule is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "project_schedule_not_found",
+                "message": "Расписание проекта ещё не настроено.",
+            },
+        )
+    return serialize_project_schedule(pause_project_schedule(db, schedule=schedule, actor_user_id=current_user.id))
+
+
+@router.post("/{project_id}/schedule/resume")
+def resume_schedule(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    obj = db.get(Project, project_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    require_project_write(db, project_id=project_id, user=current_user)
+    schedule = get_project_schedule(db, project_id=project_id)
+    if schedule is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "project_schedule_not_found",
+                "message": "Расписание проекта ещё не настроено.",
+            },
+        )
+    return serialize_project_schedule(resume_project_schedule(db, schedule=schedule, actor_user_id=current_user.id))
 
 
 @router.get("/{project_id}/members")

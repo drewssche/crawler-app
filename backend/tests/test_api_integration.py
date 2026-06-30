@@ -24,6 +24,7 @@ from app.db.models.event_feed import EventFeed
 from app.db.models.login_history import LoginHistory
 from app.db.models.project import Project
 from app.db.models.project_membership import ProjectMembership
+from app.db.models.project_schedule import ProjectSchedule
 from app.db.models.project_site import ProjectSite
 from app.db.models.page import Page
 from app.db.models.page_retry_attempt import PageRetryAttempt
@@ -4491,3 +4492,197 @@ def test_update_admin_emails_noop_allows_empty_reason():
             os.environ["ENV_FILE_PATH"] = prev_env_file_path
         if "env_path" in locals() and os.path.exists(env_path):
             os.remove(env_path)
+
+
+def test_project_schedule_contract_save_pause_resume_and_validate():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="schedule-owner@test.local", role="editor", is_approved=True))
+        project = Project(name="Scheduled project", start_url="https://scheduled.test")
+        db.add(project)
+        db.flush()
+        _grant_project_role_by_email(db, project, "schedule-owner@test.local")
+        _add_primary_site(db, project)
+        db.commit()
+        project_id = project.id
+
+    client = TestClient(app)
+    headers = _auth_header("schedule-owner@test.local", role="editor")
+
+    empty = client.get(f"/projects/{project_id}/schedule", headers=headers)
+    assert empty.status_code == 200
+    assert empty.json()["is_enabled"] is False
+    assert empty.json()["next_run_at"] is None
+
+    saved = client.put(
+        f"/projects/{project_id}/schedule",
+        json={
+            "is_enabled": True,
+            "frequency": "weekly",
+            "time_of_day": "10:30",
+            "weekdays": [0, 2, 4],
+            "timezone": "Europe/Minsk",
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200
+    schedule = saved.json()
+    assert schedule["is_enabled"] is True
+    assert schedule["frequency"] == "weekly"
+    assert schedule["time_of_day"] == "10:30"
+    assert schedule["weekdays"] == [0, 2, 4]
+    assert schedule["timezone"] == "Europe/Minsk"
+    assert schedule["next_run_at"] is not None
+
+    invalid = client.put(
+        f"/projects/{project_id}/schedule",
+        json={
+            "is_enabled": True,
+            "frequency": "weekly",
+            "time_of_day": "10:30",
+            "weekdays": [],
+            "timezone": "Mars/Base",
+        },
+        headers=headers,
+    )
+    assert invalid.status_code == 422
+
+    paused = client.post(f"/projects/{project_id}/schedule/pause", headers=headers)
+    assert paused.status_code == 200
+    assert paused.json()["is_enabled"] is False
+    assert paused.json()["next_run_at"] is None
+    assert paused.json()["paused_at"] is not None
+
+    resumed = client.post(f"/projects/{project_id}/schedule/resume", headers=headers)
+    assert resumed.status_code == 200
+    assert resumed.json()["is_enabled"] is True
+    assert resumed.json()["next_run_at"] is not None
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_due_project_schedule_enqueues_jobs_once_and_moves_next_run():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="schedule-run@test.local", role="admin", is_approved=True))
+        project = Project(name="Due schedule", start_url="https://due-schedule.test")
+        db.add(project)
+        db.flush()
+        _grant_project_role_by_email(db, project, "schedule-run@test.local")
+        site = _add_primary_site(db, project)
+        due_at = datetime.utcnow() - timedelta(minutes=1)
+        db.add(
+            ProjectSchedule(
+                project_id=project.id,
+                is_enabled=True,
+                frequency="daily",
+                time_of_day="09:00",
+                timezone="UTC",
+                next_run_at=due_at,
+                updated_by_user_id=db.query(User).filter(User.email == "schedule-run@test.local").one().id,
+            )
+        )
+        db.commit()
+        project_id = project.id
+        site_id = site.id
+
+    client = TestClient(app)
+    response = client.post(
+        "/projects/schedules/run-due",
+        headers=_auth_header("schedule-run@test.local", role="admin"),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["checked"] == 1
+    assert payload["results"][0]["enqueued"] == 1
+    assert payload["results"][0]["skipped"] is None
+
+    with SessionLocal() as db:
+        jobs = db.query(CrawlerRunJob).filter(CrawlerRunJob.project_site_id == site_id).all()
+        assert len(jobs) == 1
+        assert jobs[0].status == "QUEUED"
+        schedule = db.query(ProjectSchedule).filter(ProjectSchedule.project_id == project_id).one()
+        assert schedule.next_run_at is not None
+        assert schedule.next_run_at > due_at
+
+    duplicate = client.post(
+        "/projects/schedules/run-due",
+        headers=_auth_header("schedule-run@test.local", role="admin"),
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["checked"] == 0
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_due_project_schedule_skips_when_project_has_active_job():
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="schedule-skip@test.local", role="admin", is_approved=True))
+        project = Project(name="Skip active", start_url="https://skip-active.test")
+        db.add(project)
+        db.flush()
+        _grant_project_role_by_email(db, project, "schedule-skip@test.local")
+        site = _add_primary_site(db, project)
+        due_at = datetime.utcnow() - timedelta(minutes=1)
+        db.add(
+            CrawlerRunJob(
+                project_id=project.id,
+                project_site_id=site.id,
+                kind="site_run",
+                status="QUEUED",
+                scheduled_at=due_at,
+                created_at=due_at,
+                updated_at=due_at,
+            )
+        )
+        db.add(
+            ProjectSchedule(
+                project_id=project.id,
+                is_enabled=True,
+                frequency="daily",
+                time_of_day="09:00",
+                timezone="UTC",
+                next_run_at=due_at,
+            )
+        )
+        db.commit()
+        project_id = project.id
+        site_id = site.id
+
+    client = TestClient(app)
+    response = client.post(
+        "/projects/schedules/run-due",
+        headers=_auth_header("schedule-skip@test.local", role="admin"),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["checked"] == 1
+    assert payload["results"][0]["enqueued"] == 0
+    assert payload["results"][0]["skipped"] == "active_run_or_job"
+
+    with SessionLocal() as db:
+        assert db.query(CrawlerRunJob).filter(CrawlerRunJob.project_site_id == site_id).count() == 1
+        schedule = db.query(ProjectSchedule).filter(ProjectSchedule.project_id == project_id).one()
+        assert schedule.last_skip_reason == "active_run_or_job"
+        assert schedule.next_run_at > due_at
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()

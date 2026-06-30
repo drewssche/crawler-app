@@ -54,7 +54,7 @@ test("project disclosure blocks persist collapsed state locally", () => {
   assert.match(source, /storageKey="structure-legend"/);
 });
 
-test("settings contain real project parameters without a fake schedule save control", () => {
+test("settings contain real project parameters and a saved schedule contract", () => {
   assert.match(source, /activeTab === "settings"/);
   assert.match(source, /activeSettingsSection/);
   assert.match(source, /ProjectSettingsSectionId/);
@@ -62,6 +62,12 @@ test("settings contain real project parameters without a fake schedule save cont
   assert.match(source, /title: "Сайты"/);
   assert.match(source, /title: "Участники"/);
   assert.match(source, />Расписание</);
+  assert.match(source, /getProjectSchedule/);
+  assert.match(source, /saveProjectSchedule/);
+  assert.match(source, /pauseProjectSchedule/);
+  assert.match(source, /resumeProjectSchedule/);
+  assert.match(source, /Сохранить расписание/);
+  assert.doesNotMatch(source, /Manual-only/);
   assert.match(source, />Опасная зона</);
   assert.match(source, /setActiveSettingsSection/);
   assert.match(source, /aria-pressed=\{activeSettingsSection === item\.id\}/);
@@ -74,7 +80,6 @@ test("settings contain real project parameters without a fake schedule save cont
   assert.match(sitesSource, /Добавить сайт/);
   assert.match(sitesSource, /updateProjectSite/);
   assert.match(source, /Опасная зона/);
-  assert.doesNotMatch(source, /Сохранить расписание/);
 });
 
 test("project settings internals use chip controls instead of native selects", () => {

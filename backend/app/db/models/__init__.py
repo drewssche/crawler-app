@@ -2,6 +2,7 @@ from .user import User  # noqa: F401
 from .project import Project  # noqa: F401
 from .project_membership import ProjectMembership  # noqa: F401
 from .project_site import ProjectSite  # noqa: F401
+from .project_schedule import ProjectSchedule  # noqa: F401
 from .crawl_persona import CrawlPersona  # noqa: F401
 from .crawl_persona_login_capture import CrawlPersonaLoginCapture  # noqa: F401
 from .run import Run  # noqa: F401

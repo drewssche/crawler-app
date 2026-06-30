@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode, type SyntheticEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
+  getProjectSchedule,
   listProjectSitePersonas,
   listProjectSiteSummaries,
+  pauseProjectSchedule,
+  resumeProjectSchedule,
+  saveProjectSchedule,
   type CrawlPersonaSummary,
+  type ProjectSchedule,
+  type ProjectScheduleInput,
   type ProjectSiteSummary,
 } from "../api/projectSites";
 import {
@@ -235,6 +241,35 @@ type StructureViewFilter = "all" | "added" | "error";
 type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "redirect" | "error";
 
 const PROJECT_DISCLOSURE_STORAGE_PREFIX = "crawler.projectDashboard.disclosure.";
+const WEEKDAY_OPTIONS = [
+  { value: 0, label: "Пн" },
+  { value: 1, label: "Вт" },
+  { value: 2, label: "Ср" },
+  { value: 3, label: "Чт" },
+  { value: 4, label: "Пт" },
+  { value: 5, label: "Сб" },
+  { value: 6, label: "Вс" },
+];
+
+function defaultProjectScheduleInput(): ProjectScheduleInput {
+  return {
+    is_enabled: false,
+    frequency: "daily",
+    time_of_day: "09:00",
+    weekdays: [0],
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  };
+}
+
+function scheduleToInput(schedule: ProjectSchedule): ProjectScheduleInput {
+  return {
+    is_enabled: schedule.is_enabled,
+    frequency: schedule.frequency === "weekly" ? "weekly" : "daily",
+    time_of_day: schedule.time_of_day || "09:00",
+    weekdays: schedule.weekdays.length > 0 ? schedule.weekdays : [0],
+    timezone: schedule.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  };
+}
 
 type StructureRow = {
   url: string;
@@ -580,6 +615,10 @@ export default function ProjectDashboardPage() {
   const [runPending, setRunPending] = useState(false);
   const [projectRunPending, setProjectRunPending] = useState(false);
   const [projectRunResult, setProjectRunResult] = useState<ProjectRunBatch | null>(null);
+  const [projectSchedule, setProjectSchedule] = useState<ProjectSchedule | null>(null);
+  const [scheduleForm, setScheduleForm] = useState<ProjectScheduleInput>(() => defaultProjectScheduleInput());
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleError, setScheduleError] = useState("");
   const [, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -691,10 +730,13 @@ export default function ProjectDashboardPage() {
       apiGet<ProjectDetails>(`/projects/${id}`),
       listProjectSiteSummaries(Number(id)),
       apiGet<ActiveProjectJobsResponse>(`/runs/active-jobs/by-project/${id}`),
+      getProjectSchedule(Number(id)),
     ])
-      .then(([nextProject, nextSites, activeJobs]) => {
+      .then(([nextProject, nextSites, activeJobs, nextSchedule]) => {
         setProject(nextProject);
         setSites(nextSites);
+        setProjectSchedule(nextSchedule);
+        setScheduleForm(scheduleToInput(nextSchedule));
         setSelectedSiteId(nextSites.find((site) => site.is_enabled)?.id ?? nextSites[0]?.id ?? null);
         setPendingCrawlerJobs(pendingJobsFromActiveProjectJobs(activeJobs, nextSites));
       })
@@ -864,6 +906,56 @@ export default function ProjectDashboardPage() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [runPending, projectRunPending, pendingCrawlerJobs]);
+
+  async function handleSaveSchedule() {
+    if (!project || scheduleSaving) return;
+    setScheduleSaving(true);
+    setScheduleError("");
+    try {
+      const next = await saveProjectSchedule(project.id, scheduleForm);
+      setProjectSchedule(next);
+      setScheduleForm(scheduleToInput(next));
+      showRunToast({
+        title: next.is_enabled ? "Расписание сохранено" : "Расписание сохранено выключенным",
+        body: next.next_run_at ? `Следующий запуск: ${formatOperationalDateTime(next.next_run_at)}.` : "Автозапуск выключен.",
+        accent: "success",
+      });
+    } catch (e) {
+      setScheduleError(e instanceof Error ? e.message : "Не удалось сохранить расписание.");
+    } finally {
+      setScheduleSaving(false);
+    }
+  }
+
+  async function handlePauseSchedule() {
+    if (!project || scheduleSaving) return;
+    setScheduleSaving(true);
+    setScheduleError("");
+    try {
+      const next = await pauseProjectSchedule(project.id);
+      setProjectSchedule(next);
+      setScheduleForm(scheduleToInput(next));
+    } catch (e) {
+      setScheduleError(e instanceof Error ? e.message : "Не удалось поставить расписание на паузу.");
+    } finally {
+      setScheduleSaving(false);
+    }
+  }
+
+  async function handleResumeSchedule() {
+    if (!project || scheduleSaving) return;
+    setScheduleSaving(true);
+    setScheduleError("");
+    try {
+      const next = await resumeProjectSchedule(project.id);
+      setProjectSchedule(next);
+      setScheduleForm(scheduleToInput(next));
+    } catch (e) {
+      setScheduleError(e instanceof Error ? e.message : "Не удалось включить расписание.");
+    } finally {
+      setScheduleSaving(false);
+    }
+  }
 
   async function handleStartRun() {
     const selectedSite = sites.find((site) => site.id === selectedSiteId);
@@ -2272,7 +2364,7 @@ export default function ProjectDashboardPage() {
                     {([
                       { id: "sites", title: "Сайты", meta: `${sites.length} сайт(а)`, tone: "info" },
                       { id: "members", title: "Участники", meta: "Права", tone: "neutral" },
-                      { id: "schedule", title: "Расписание", meta: "Manual-only", tone: "neutral" },
+                      { id: "schedule", title: "Расписание", meta: projectSchedule?.is_enabled ? "Включено" : "Пауза", tone: projectSchedule?.is_enabled ? "info" : "neutral" },
                       { id: "danger", title: "Опасная зона", meta: "Удаление", tone: "danger" },
                     ] satisfies Array<{ id: ProjectSettingsSectionId; title: string; meta: string; tone: "info" | "neutral" | "danger" }>).map((item) => (
                       <Card
@@ -2325,21 +2417,147 @@ export default function ProjectDashboardPage() {
               )}
 
               {activeSettingsSection === "schedule" && (
-                <Card variant="hint">
-                  <div style={{ display: "grid", gap: 10 }}>
+                <Card>
+                  <div style={{ display: "grid", gap: 12 }}>
                     <SectionHeaderRow
                       title={<div style={{ fontWeight: 800 }}>Расписание</div>}
-                      actions={<AccentPill tone="neutral">Manual-only</AccentPill>}
+                      actions={
+                        <AccentPill tone={projectSchedule?.is_enabled ? "success" : "neutral"}>
+                          {projectSchedule?.is_enabled ? "Автозапуск включён" : "На паузе"}
+                        </AccentPill>
+                      }
                     />
-                    <div>
+                    {scheduleError && <StatusText tone="danger">{scheduleError}</StatusText>}
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <MetaText opacity={0.72}>Автозапуск:</MetaText>
+                        <CardActionButton
+                          compact
+                          active={scheduleForm.is_enabled}
+                          onClick={() => setScheduleForm((current) => ({ ...current, is_enabled: true }))}
+                        >
+                          Включён
+                        </CardActionButton>
+                        <CardActionButton
+                          compact
+                          active={!scheduleForm.is_enabled}
+                          onClick={() => setScheduleForm((current) => ({ ...current, is_enabled: false }))}
+                        >
+                          Пауза
+                        </CardActionButton>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <MetaText opacity={0.72}>Частота:</MetaText>
+                        <CardActionButton
+                          compact
+                          active={scheduleForm.frequency === "daily"}
+                          onClick={() => setScheduleForm((current) => ({ ...current, frequency: "daily", weekdays: [] }))}
+                        >
+                          Каждый день
+                        </CardActionButton>
+                        <CardActionButton
+                          compact
+                          active={scheduleForm.frequency === "weekly"}
+                          onClick={() => setScheduleForm((current) => ({ ...current, frequency: "weekly", weekdays: current.weekdays.length ? current.weekdays : [0] }))}
+                        >
+                          По дням недели
+                        </CardActionButton>
+                      </div>
+                      {scheduleForm.frequency === "weekly" && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                          {WEEKDAY_OPTIONS.map((day) => (
+                            <CardActionButton
+                              key={day.value}
+                              compact
+                              active={scheduleForm.weekdays.includes(day.value)}
+                              onClick={() => {
+                                setScheduleForm((current) => {
+                                  const next = current.weekdays.includes(day.value)
+                                    ? current.weekdays.filter((value) => value !== day.value)
+                                    : [...current.weekdays, day.value].sort();
+                                  return { ...current, weekdays: next.length ? next : current.weekdays };
+                                });
+                              }}
+                            >
+                              {day.label}
+                            </CardActionButton>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+                        <label style={{ display: "grid", gap: 4 }}>
+                          <MetaText opacity={0.72}>Время запуска</MetaText>
+                          <input
+                            type="time"
+                            value={scheduleForm.time_of_day}
+                            onChange={(event) => setScheduleForm((current) => ({ ...current, time_of_day: event.target.value }))}
+                            style={{
+                              borderRadius: 10,
+                              border: "1px solid rgba(255,255,255,0.24)",
+                              background: "rgba(255,255,255,0.06)",
+                              color: "inherit",
+                              padding: "8px 10px",
+                            }}
+                          />
+                        </label>
+                        <label style={{ display: "grid", gap: 4 }}>
+                          <MetaText opacity={0.72}>Timezone</MetaText>
+                          <input
+                            value={scheduleForm.timezone}
+                            onChange={(event) => setScheduleForm((current) => ({ ...current, timezone: event.target.value }))}
+                            placeholder="Europe/Minsk"
+                            style={{
+                              borderRadius: 10,
+                              border: "1px solid rgba(255,255,255,0.24)",
+                              background: "rgba(255,255,255,0.06)",
+                              color: "inherit",
+                              padding: "8px 10px",
+                            }}
+                          />
+                        </label>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <AccentPill tone="neutral">
+                          Следующий запуск: {projectSchedule?.next_run_at ? formatOperationalDateTime(projectSchedule.next_run_at) : "не запланирован"}
+                        </AccentPill>
+                        {projectSchedule?.last_run_at && (
+                          <AccentPill tone="neutral">Последний запуск: {formatOperationalDateTime(projectSchedule.last_run_at)}</AccentPill>
+                        )}
+                        {projectSchedule?.last_skip_reason && (
+                          <AccentPill tone="warning">Пропуск: {projectSchedule.last_skip_reason}</AccentPill>
+                        )}
+                      </div>
+                    </div>
+                    <CardFooterActions>
                       <CardActionButton
                         variant="primary"
+                        onClick={() => void handleSaveSchedule()}
+                        disabled={scheduleSaving}
+                      >
+                        {scheduleSaving ? "Сохраняем..." : "Сохранить расписание"}
+                      </CardActionButton>
+                      {projectSchedule?.is_enabled ? (
+                        <CardActionButton
+                          onClick={() => void handlePauseSchedule()}
+                          disabled={scheduleSaving || !projectSchedule?.id}
+                        >
+                          Пауза
+                        </CardActionButton>
+                      ) : (
+                        <CardActionButton
+                          onClick={() => void handleResumeSchedule()}
+                          disabled={scheduleSaving || !projectSchedule?.id}
+                        >
+                          Включить
+                        </CardActionButton>
+                      )}
+                      <CardActionButton
                         onClick={() => void handleStartRun()}
                         disabled={runPending || hasRunning}
                       >
                         {hasRunning ? "Прогон выполняется" : "Запустить сейчас"}
                       </CardActionButton>
-                    </div>
+                    </CardFooterActions>
                   </div>
                 </Card>
               )}
