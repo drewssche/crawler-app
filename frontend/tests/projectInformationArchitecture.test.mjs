@@ -181,8 +181,11 @@ test("structure can show separate sections for every access context", () => {
   assert.match(source, /structureMultiContextEnabled/);
   assert.match(source, /multiContextRunPairs/);
   assert.match(source, /multiContextStructureSections/);
+  assert.match(source, /activeMultiContextStructureRunId/);
+  assert.match(source, /activeMultiContextStructureSection/);
+  assert.match(source, /gridTemplateColumns: "repeat\(auto-fit, minmax\(220px, 1fr\)\)"/);
   assert.match(source, /Для выбранного сайта пока нет готовых структур по контекстам доступа/);
-  assert.match(source, /handleOpenPageContextForRun\(section\.run\.id, url\)/);
+  assert.match(source, /handleOpenPageContextForRun\(activeMultiContextStructureSection\.run\.id, url\)/);
 });
 
 test("full page inspector keeps the snapshot and a scrollable section report visible together", () => {

@@ -594,6 +594,7 @@ export default function ProjectDashboardPage() {
   const [lastRunPages, setLastRunPages] = useState<ProjectPage[]>([]);
   const [prevRunPages, setPrevRunPages] = useState<ProjectPage[]>([]);
   const [multiContextStructureSets, setMultiContextStructureSets] = useState<MultiContextStructureSet[]>([]);
+  const [activeMultiContextStructureRunId, setActiveMultiContextStructureRunId] = useState<number | null>(null);
   const [pageContextOpen, setPageContextOpen] = useState(false);
   const [pageContextLoading, setPageContextLoading] = useState(false);
   const [pageContextError, setPageContextError] = useState("");
@@ -1390,6 +1391,23 @@ export default function ProjectDashboardPage() {
     ),
     [multiContextStructureSections],
   );
+  useEffect(() => {
+    if (!structureMultiContextEnabled || multiContextStructureSections.length === 0) {
+      setActiveMultiContextStructureRunId(null);
+      return;
+    }
+    setActiveMultiContextStructureRunId((current) => (
+      current !== null && multiContextStructureSections.some((section) => section.run.id === current)
+        ? current
+        : multiContextStructureSections[0].run.id
+    ));
+  }, [multiContextStructureSections, structureMultiContextEnabled]);
+  const activeMultiContextStructureSection = useMemo(
+    () => multiContextStructureSections.find((section) => section.run.id === activeMultiContextStructureRunId)
+      || multiContextStructureSections[0]
+      || null,
+    [activeMultiContextStructureRunId, multiContextStructureSections],
+  );
   const problemPagesCount = useMemo(
     () => lastRunPages.filter(
       (row) => Boolean(row.fetch_error_code) || (row.final_status_code || row.status_code) >= 400,
@@ -2023,27 +2041,73 @@ export default function ProjectDashboardPage() {
                   )}
                   {structureMultiContextEnabled && multiContextStructureSections.length > 0 && (
                     <div style={{ display: "grid", gap: 10 }}>
-                      {multiContextStructureSections.map((section) => (
-                        <Card key={section.run.id} style={{ padding: 10, display: "grid", gap: 8 }}>
-                          <SectionHeaderRow
-                            title={
-                              <div>
-                                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                        {multiContextStructureSections.map((section) => (
+                          <Card
+                            key={section.run.id}
+                            interactive
+                            role="button"
+                            tabIndex={0}
+                            aria-pressed={activeMultiContextStructureSection?.run.id === section.run.id}
+                            onClick={() => setActiveMultiContextStructureRunId(section.run.id)}
+                            onKeyDown={(event) => {
+                              if (event.key !== "Enter" && event.key !== " ") return;
+                              event.preventDefault();
+                              setActiveMultiContextStructureRunId(section.run.id);
+                            }}
+                            style={{
+                              display: "grid",
+                              gap: 6,
+                              cursor: "pointer",
+                              padding: 10,
+                              borderColor: activeMultiContextStructureSection?.run.id === section.run.id
+                                ? "rgba(120,166,255,0.78)"
+                                : undefined,
+                              background: activeMultiContextStructureSection?.run.id === section.run.id
+                                ? "rgba(120,166,255,0.1)"
+                                : undefined,
+                            }}
+                          >
+                            <SectionHeaderRow
+                              title={
+                                <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                                   <span style={{ fontWeight: 800 }}>{section.personaLabel}</span>
                                   <AccentPill tone="info">run #{section.run.id}</AccentPill>
-                                </div>
-                                <MetaText opacity={0.68}>
-                                  {formatRunTitle(section.run.started_at)} · {section.rows.length} страниц · изменений {section.counts.changed} · ошибок {section.counts.error}
-                                </MetaText>
+                                </span>
+                              }
+                              actions={<RunRuntimePill runtime={section.run.crawl_runtime} />}
+                            />
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                              <AccentPill tone="neutral">{section.rows.length} страниц</AccentPill>
+                              <AccentPill tone={section.counts.changed > 0 ? "warning" : "neutral"}>
+                                {section.counts.changed} изменений
+                              </AccentPill>
+                              <AccentPill tone={section.counts.error > 0 ? "danger" : "neutral"}>
+                                {section.counts.error} ошибок
+                              </AccentPill>
+                              {section.filteredRows.length !== section.rows.length && (
+                                <AccentPill tone="info">показано {section.filteredRows.length}</AccentPill>
+                              )}
+                            </div>
+                            <MetaText opacity={0.68}>{formatRunTitle(section.run.started_at)}</MetaText>
+                          </Card>
+                        ))}
+                      </div>
+                      {activeMultiContextStructureSection && (
+                        <Card style={{ padding: 10, display: "grid", gap: 8 }}>
+                          <SectionHeaderRow
+                            title={
+                              <div style={{ fontWeight: 800 }}>
+                                Структура: {activeMultiContextStructureSection.personaLabel}
                               </div>
                             }
-                            actions={<RunRuntimePill runtime={section.run.crawl_runtime} />}
+                            actions={<RunRuntimePill runtime={activeMultiContextStructureSection.run.crawl_runtime} />}
                           />
-                          {section.filteredRows.length > 0 ? (
+                          {activeMultiContextStructureSection.filteredRows.length > 0 ? (
                             <ProjectStructureTree
-                              rows={section.filteredRows}
+                              rows={activeMultiContextStructureSection.filteredRows}
                               query={structureSearch}
-                              onPageSelect={(url) => void handleOpenPageContextForRun(section.run.id, url)}
+                              onPageSelect={(url) => void handleOpenPageContextForRun(activeMultiContextStructureSection.run.id, url)}
                               onDirectorySelect={(context) => {
                                 setPageContextOpen(false);
                                 setDirectoryContext(context);
@@ -2065,7 +2129,7 @@ export default function ProjectDashboardPage() {
                             </MetaText>
                           )}
                         </Card>
-                      ))}
+                      )}
                     </div>
                   )}
                   {!structureMultiContextEnabled && structureRows.length > 0 && structureRowsFiltered.length > 0 && (
