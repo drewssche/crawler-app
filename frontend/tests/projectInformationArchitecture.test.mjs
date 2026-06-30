@@ -294,8 +294,16 @@ test("compare page selection is searchable and mode controls are progressive", (
   assert.match(compareSource, /Найдено:/);
   assert.match(compareSource, /Показаны первые/);
   assert.match(compareSource, /Выбрано \{selectionProgress\}\/2/);
-  assert.match(compareSource, /Режимы сравнения появятся после выбора двух страниц/);
+  assert.match(compareSource, /compareStarted/);
+  assert.match(compareSource, /compareLoading/);
+  assert.match(compareSource, /autoMatchEnabled/);
+  assert.match(compareSource, /function startCompare/);
+  assert.match(compareSource, /Загружаем сравнение/);
+  assert.match(compareSource, /Автоподбор включён/);
+  assert.match(compareSource, /Автоподбор выключен/);
+  assert.match(compareSource, /Режимы сравнения появятся после выбора двух страниц и нажатия «Сравнить»/);
   assert.match(compareSource, /compare-work-area/);
+  assert.match(compareSource, /updateSide\(key, \(current\) => \(\{ \.\.\.current, url, snapshot: null, context: null, error: "" \}\)\)/);
   assert.match(cssSource, /compare-page-results/);
   assert.match(cssSource, /compare-visual-panel/);
   assert.match(cssSource, /resize: horizontal/);

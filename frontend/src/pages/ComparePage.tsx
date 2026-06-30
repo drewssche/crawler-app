@@ -122,7 +122,7 @@ function SnapshotSelector({
     <Card className="compare-selector-card">
       <SectionHeaderRow
         title={<div style={{ fontWeight: 800 }}>{label}</div>}
-        actions={side.snapshot ? <StatusText tone="success">Страница выбрана</StatusText> : <MetaText>Шаг 1</MetaText>}
+        actions={side.url ? <StatusText tone="success">Страница выбрана</StatusText> : <MetaText>Шаг 1</MetaText>}
       />
       <UiSelect
         value={side.siteId ?? ""}
@@ -208,7 +208,7 @@ function SnapshotSelector({
           )}
         </div>
       </div>
-      {side.loading && <MetaText>Загрузка snapshot...</MetaText>}
+      {side.loading && <MetaText>Загрузка...</MetaText>}
       {side.error && <StatusText tone="danger">{side.error}</StatusText>}
     </Card>
   );
@@ -691,6 +691,9 @@ export default function ComparePage() {
   const [mode, setMode] = useState<CompareMode>("visual");
   const [panelView, setPanelView] = useState<PanelView>("both");
   const [visualScale, setVisualScale] = useState<VisualScale>("overview");
+  const [compareStarted, setCompareStarted] = useState(false);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [autoMatchEnabled, setAutoMatchEnabled] = useState(true);
   const [blockPickerEnabled, setBlockPickerEnabled] = useState(false);
   const [selectedBlocks, setSelectedBlocks] = useState<{ left: ComparePickedElement | null; right: ComparePickedElement | null }>({ left: null, right: null });
   const [blockPickerNotice, setBlockPickerNotice] = useState("");
@@ -702,7 +705,16 @@ export default function ComparePage() {
     else setRight(updater);
   }, []);
 
+  const resetCompareWorkspace = useCallback(() => {
+    setCompareStarted(false);
+    setCompareLoading(false);
+    setBlockPickerEnabled(false);
+    setSelectedBlocks({ left: null, right: null });
+    setBlockPickerNotice("");
+  }, []);
+
   const selectSite = useCallback(async (key: SideKey, siteId: number) => {
+    resetCompareWorkspace();
     updateSide(key, () => ({ ...EMPTY_SIDE, siteId, loading: true }));
     try {
       const runs = (await listCompareRuns(siteId)).filter((run) => run.status === "FINISHED");
@@ -720,9 +732,10 @@ export default function ComparePage() {
     } catch (err) {
       updateSide(key, (current) => ({ ...current, loading: false, error: err instanceof Error ? err.message : "Ошибка загрузки." }));
     }
-  }, [updateSide]);
+  }, [resetCompareWorkspace, updateSide]);
 
   async function selectRun(key: SideKey, runId: number) {
+    resetCompareWorkspace();
     setSelectedBlocks((current) => ({ ...current, [key]: null }));
     updateSide(key, (current) => ({
       ...current,
@@ -744,6 +757,7 @@ export default function ComparePage() {
   }
 
   async function selectPersonaFilter(key: SideKey, personaId: number | "all") {
+    resetCompareWorkspace();
     const side = key === "left" ? left : right;
     const visibleRuns = personaId === "all"
       ? side.runs
@@ -772,19 +786,35 @@ export default function ComparePage() {
   }
 
   async function selectPage(key: SideKey, url: string) {
+    resetCompareWorkspace();
+    updateSide(key, (current) => ({ ...current, url, snapshot: null, context: null, error: "" }));
+  }
+
+  async function loadSideSnapshot(key: SideKey) {
     const side = key === "left" ? left : right;
-    if (!side.runId) return;
-    setSelectedBlocks((current) => ({ ...current, [key]: null }));
-    setBlockPickerNotice("");
-    updateSide(key, (current) => ({ ...current, url, snapshot: null, context: null, loading: true, error: "" }));
+    if (!side.runId || !side.url) return;
+    updateSide(key, (current) => ({ ...current, loading: true, error: "" }));
     try {
       const [snapshot, context] = await Promise.all([
-        getCompareSnapshot(side.runId, url),
-        getPageContext(side.runId, url),
+        getCompareSnapshot(side.runId, side.url),
+        getPageContext(side.runId, side.url),
       ]);
       updateSide(key, (current) => ({ ...current, snapshot, context, loading: false }));
     } catch (err) {
       updateSide(key, (current) => ({ ...current, loading: false, error: err instanceof Error ? err.message : "Snapshot недоступен." }));
+    }
+  }
+
+  async function startCompare() {
+    if (!left.runId || !right.runId || !left.url || !right.url) return;
+    resetCompareWorkspace();
+    setCompareStarted(true);
+    setCompareLoading(true);
+    setError("");
+    try {
+      await Promise.all([loadSideSnapshot("left"), loadSideSnapshot("right")]);
+    } finally {
+      setCompareLoading(false);
     }
   }
 
@@ -810,9 +840,10 @@ export default function ComparePage() {
     [left.snapshot, right.snapshot],
   );
   const changedLines = diff.filter((line) => line.kind !== "same").length;
-  const ready = Boolean(left.snapshot && right.snapshot);
+  const pagesPicked = Boolean(left.runId && right.runId && left.url && right.url);
+  const ready = compareStarted && Boolean(left.snapshot && right.snapshot);
   const inspectorReady = Boolean(left.context && right.context);
-  const selectionProgress = (left.snapshot ? 1 : 0) + (right.snapshot ? 1 : 0);
+  const selectionProgress = (left.url ? 1 : 0) + (right.url ? 1 : 0);
   const leftPersona = left.snapshot?.persona || left.runs.find((run) => run.id === left.runId)?.persona || null;
   const rightPersona = right.snapshot?.persona || right.runs.find((run) => run.id === right.runId)?.persona || null;
   const leftPersonaKey = leftPersona?.key || "guest";
@@ -841,12 +872,12 @@ export default function ComparePage() {
     return null;
   }, [left.snapshot, right.snapshot, selectedBlocks.left, selectedBlocks.right]);
   const rightSuggestion = useMemo(
-    () => left.url && right.pages.length ? suggestPageMatch(left.url, right.pages) : null,
-    [left.url, right.pages],
+    () => autoMatchEnabled && left.url && right.pages.length ? suggestPageMatch(left.url, right.pages) : null,
+    [autoMatchEnabled, left.url, right.pages],
   );
   const leftSuggestion = useMemo(
-    () => right.url && left.pages.length ? suggestPageMatch(right.url, left.pages) : null,
-    [right.url, left.pages],
+    () => autoMatchEnabled && right.url && left.pages.length ? suggestPageMatch(right.url, left.pages) : null,
+    [autoMatchEnabled, right.url, left.pages],
   );
 
   return (
@@ -873,7 +904,7 @@ export default function ComparePage() {
                 ]}
               />
             )
-            : <StatusText tone="muted">Выбрано {selectionProgress}/2</StatusText>
+            : <StatusText tone={selectionProgress === 2 ? "success" : "muted"}>Выбрано {selectionProgress}/2</StatusText>
         }
       />
       {error && <StatusText tone="danger">{error}</StatusText>}
@@ -901,7 +932,39 @@ export default function ComparePage() {
         />
       </div>
 
-      {(rightSuggestion || leftSuggestion) && (
+      <Card variant={pagesPicked ? "hint" : "default"} style={{ display: "grid", gap: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <StatusText tone={pagesPicked ? "success" : "muted"}>
+              {pagesPicked ? "Пара выбрана" : `Выберите две страницы · ${selectionProgress}/2`}
+            </StatusText>
+            <Button
+              size="sm"
+              variant="ghost"
+              active={autoMatchEnabled}
+              onClick={() => setAutoMatchEnabled((current) => !current)}
+            >
+              {autoMatchEnabled ? "Автоподбор включён" : "Автоподбор выключен"}
+            </Button>
+          </div>
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!pagesPicked || compareLoading}
+            onClick={() => void startCompare()}
+          >
+            {compareLoading ? "Загружаем сравнение..." : "Сравнить"}
+          </Button>
+        </div>
+        {compareLoading && (
+          <MetaText opacity={0.72}>Загружаем snapshots и контекст обеих страниц. После загрузки откроется рабочая область сравнения.</MetaText>
+        )}
+        {!ready && compareStarted && !compareLoading && (
+          <StatusText tone="warning">Не удалось загрузить обе стороны. Проверьте ошибки в карточках выбора и попробуйте снова.</StatusText>
+        )}
+      </Card>
+
+      {autoMatchEnabled && (rightSuggestion || leftSuggestion) && (
         <Card variant="hint" style={{ display: "grid", gap: 8 }}>
           <div style={{ fontWeight: 700 }}>Предложение пары</div>
           {rightSuggestion && rightSuggestion.page.url !== right.url && (
@@ -942,8 +1005,8 @@ export default function ComparePage() {
       {!ready && (
         <Card variant="hint">
           <MetaText>
-            Режимы сравнения появятся после выбора двух страниц. Так интерфейс не показывает переключатели,
-            которые ещё ни на что не влияют.
+            Режимы сравнения появятся после выбора двух страниц и нажатия «Сравнить».
+            Так интерфейс не показывает переключатели, которые ещё ни на что не влияют.
           </MetaText>
         </Card>
       )}
