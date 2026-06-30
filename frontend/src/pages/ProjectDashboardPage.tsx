@@ -251,6 +251,109 @@ type StructureRow = {
   h1: string;
 };
 
+type MultiContextStructureSet = {
+  personaId: number | null;
+  personaLabel: string;
+  run: ProjectRun;
+  previousRun: ProjectRun | null;
+  pages: ProjectPage[];
+  previousPages: ProjectPage[];
+};
+
+function buildStructureRowsFromPages({
+  currentPages,
+  previousPages,
+  selectedDomains,
+  includeDeleted,
+}: {
+  currentPages: ProjectPage[];
+  previousPages: ProjectPage[];
+  selectedDomains: string[];
+  includeDeleted: boolean;
+}): StructureRow[] {
+  const hasDomainFilter = selectedDomains.length > 0;
+  const prevByUrl = new Map<string, string>();
+  for (const row of previousPages) prevByUrl.set(row.url, row.html_hash || "");
+  const currentUrls = new Set<string>();
+  const rows: StructureRow[] = [];
+  for (const row of currentPages) {
+    const host = domainOf(row.url);
+    if (hasDomainFilter && !selectedDomains.includes(host)) continue;
+    currentUrls.add(row.url);
+    let status: StructureStatus = "unchanged";
+    if (row.fetch_error_code || (row.final_status_code || row.status_code) >= 400) status = "error";
+    else if (row.redirect_chain_json && row.redirect_chain_json.length > 1) status = "redirect";
+    else if (!prevByUrl.has(row.url)) status = "added";
+    else if ((prevByUrl.get(row.url) || "") !== (row.html_hash || "")) status = "changed";
+    rows.push({
+      url: row.url,
+      finalUrl: row.final_url,
+      domain: host,
+      status,
+      statusCode: row.status_code,
+      finalStatusCode: row.final_status_code,
+      fetchErrorCode: row.fetch_error_code,
+      fetchErrorMessage: row.fetch_error_message,
+      batchNo: row.crawl_batch_no,
+      title: row.title || "",
+      description: row.description || "",
+      h1: row.h1 || "",
+    });
+  }
+  if (includeDeleted) {
+    for (const row of previousPages) {
+      const host = domainOf(row.url);
+      if (hasDomainFilter && !selectedDomains.includes(host)) continue;
+      if (currentUrls.has(row.url)) continue;
+      rows.push({
+        url: row.url,
+        finalUrl: row.final_url,
+        domain: host,
+        status: "deleted",
+        statusCode: 0,
+        finalStatusCode: row.final_status_code,
+        fetchErrorCode: row.fetch_error_code,
+        fetchErrorMessage: row.fetch_error_message,
+        batchNo: null,
+        title: row.title || "",
+        description: row.description || "",
+        h1: row.h1 || "",
+      });
+    }
+  }
+  rows.sort((a, b) => a.url.localeCompare(b.url));
+  return rows;
+}
+
+function filterStructureRows(rows: StructureRow[], filter: StructureViewFilter, search: string): StructureRow[] {
+  const q = search.trim().toLowerCase();
+  return rows.filter((row) => {
+    if (filter !== "all" && row.status !== filter) return false;
+    if (!q) return true;
+    return [
+      row.url,
+      row.finalUrl || "",
+      row.domain,
+      row.status,
+      String(row.statusCode || ""),
+      String(row.finalStatusCode || ""),
+      row.fetchErrorCode || "",
+      row.fetchErrorMessage || "",
+      row.title,
+      row.description,
+      row.h1,
+    ].some((value) => value.toLowerCase().includes(q));
+  });
+}
+
+function structureCounts(rows: StructureRow[]) {
+  return {
+    added: rows.filter((row) => row.status === "added").length,
+    error: rows.filter((row) => row.status === "error").length,
+    changed: rows.filter((row) => row.status === "changed").length,
+  };
+}
+
 function readStoredDisclosureState(storageKey: string, defaultOpen: boolean): boolean {
   if (typeof window === "undefined") return defaultOpen;
   const stored = window.localStorage.getItem(`${PROJECT_DISCLOSURE_STORAGE_PREFIX}${storageKey}`);
@@ -490,10 +593,12 @@ export default function ProjectDashboardPage() {
   const [pagesError, setPagesError] = useState("");
   const [lastRunPages, setLastRunPages] = useState<ProjectPage[]>([]);
   const [prevRunPages, setPrevRunPages] = useState<ProjectPage[]>([]);
+  const [multiContextStructureSets, setMultiContextStructureSets] = useState<MultiContextStructureSet[]>([]);
   const [pageContextOpen, setPageContextOpen] = useState(false);
   const [pageContextLoading, setPageContextLoading] = useState(false);
   const [pageContextError, setPageContextError] = useState("");
   const [pageContext, setPageContext] = useState<PageContext | null>(null);
+  const [pageContextRunId, setPageContextRunId] = useState<number | null>(null);
   const [directoryContext, setDirectoryContext] = useState<ProjectStructureDirectoryContext | null>(null);
   const [pageRetryPending, setPageRetryPending] = useState(false);
   const [pageRetryMessage, setPageRetryMessage] = useState("");
@@ -615,6 +720,7 @@ export default function ProjectDashboardPage() {
     setStructureSearch("");
     setStructureViewFilter("all");
     setPageContextOpen(false);
+    setPageContextRunId(null);
     setDirectoryContext(null);
   }, [selectedViewPersonaId, selectedSiteId]);
 
@@ -915,9 +1021,10 @@ export default function ProjectDashboardPage() {
     }
   }
 
-  async function handleOpenPageContext(url: string) {
-    if (structureRunId === null) return;
+  async function handleOpenPageContextForRun(runId: number | null, url: string) {
+    if (runId === null) return;
     setDirectoryContext(null);
+    setPageContextRunId(runId);
     setPageContextOpen(true);
     setPageContextLoading(true);
     setPageContextError("");
@@ -925,7 +1032,7 @@ export default function ProjectDashboardPage() {
     setPageRetrySucceeded(null);
     setPageContext(null);
     try {
-      setPageContext(await getPageContext(structureRunId, url));
+      setPageContext(await getPageContext(runId, url));
     } catch (e) {
       setPageContextError(
         e instanceof ApiError && e.status === 404
@@ -937,13 +1044,18 @@ export default function ProjectDashboardPage() {
     }
   }
 
+  async function handleOpenPageContext(url: string) {
+    await handleOpenPageContextForRun(structureRunId, url);
+  }
+
   async function handleRetryCurrentPage() {
-    if (structureRunId === null || !pageContext || pageRetryPending) return;
+    const retryRunId = pageContextRunId ?? structureRunId;
+    if (retryRunId === null || !pageContext || pageRetryPending) return;
     setPageRetryPending(true);
     setPageRetryMessage("");
     setPageRetrySucceeded(null);
     try {
-      const result = await retryProblemPages(structureRunId, [pageContext.page.url]);
+      const result = await retryProblemPages(retryRunId, [pageContext.page.url]);
       const succeeded = result.succeeded > 0;
       const personaLabel = getRetryPersonaLabel(result, pageContext.page.persona?.label);
       setPageRetrySucceeded(succeeded);
@@ -954,7 +1066,7 @@ export default function ProjectDashboardPage() {
             ? `Повторено как «${personaLabel}»: лимит повторных попыток исчерпан.`
             : `Повторено как «${personaLabel}»: проверка завершена, но ошибка сохранилась.`,
       );
-      setPageContext(await getPageContext(structureRunId, pageContext.page.url));
+      setPageContext(await getPageContext(retryRunId, pageContext.page.url));
     } catch (e) {
       setPageRetrySucceeded(false);
       setPageRetryMessage(e instanceof Error ? e.message : "Не удалось повторно проверить страницу.");
@@ -1043,13 +1155,41 @@ export default function ProjectDashboardPage() {
   );
   const hasDomainFilter = selectedDomains.length > 0;
   const activeDomainCount = hasDomainFilter ? selectedDomains.length : domains.length;
-  const enabledPersonas = sitePersonas.filter((persona) => persona.is_enabled !== false);
-  const lastRun = runs[0] || null;
-  const completedRunsWithPages = runs.filter(
-    (run) => run.id > 0 && run.status !== "RUNNING" && run.pages_total > 0,
+  const enabledPersonas = useMemo(
+    () => sitePersonas.filter((persona) => persona.is_enabled !== false),
+    [sitePersonas],
   );
+  const lastRun = runs[0] || null;
+  const completedRunsWithPages = useMemo(
+    () => runs.filter((run) => run.id > 0 && run.status !== "RUNNING" && run.pages_total > 0),
+    [runs],
+  );
+  const structureMultiContextEnabled = selectedViewPersonaId === "all";
   const structureRun = completedRunsWithPages[0] || null;
   const previousStructureRun = completedRunsWithPages[1] || null;
+  const multiContextRunPairs = useMemo(() => {
+    if (!structureMultiContextEnabled) return [];
+    const groups = new Map<number, ProjectRun[]>();
+    for (const run of completedRunsWithPages) {
+      const personaId = run.crawl_persona_id || run.persona?.id || 0;
+      const current = groups.get(personaId) || [];
+      current.push(run);
+      groups.set(personaId, current);
+    }
+    return enabledPersonas
+      .map((persona) => {
+        const personaRuns = groups.get(persona.id || 0) || [];
+        const run = personaRuns[0] || null;
+        if (!run) return null;
+        return {
+          personaId: persona.id || null,
+          personaLabel: persona.label,
+          run,
+          previousRun: personaRuns[1] || null,
+        };
+      })
+      .filter(Boolean) as Array<{ personaId: number | null; personaLabel: string; run: ProjectRun; previousRun: ProjectRun | null }>;
+  }, [completedRunsWithPages, enabledPersonas, structureMultiContextEnabled]);
   const liveStructureRun = runs.find((run) => run.id > 0 && run.status === "RUNNING") || null;
   const displayedStructureRun = liveStructureRun || structureRun;
   const structureIsLive = liveStructureRun !== null;
@@ -1112,6 +1252,50 @@ export default function ProjectDashboardPage() {
 
   useEffect(() => {
     if (activeTab !== "main") return;
+    if (structureMultiContextEnabled) {
+      setLastRunPages([]);
+      setPrevRunPages([]);
+      if (multiContextRunPairs.length === 0) {
+        setMultiContextStructureSets([]);
+        setPagesLoading(false);
+        return;
+      }
+      let cancelled = false;
+      async function loadMultiContextPages(silent = false) {
+        if (!silent) setPagesLoading(true);
+        if (!silent) setPagesError("");
+        try {
+          const nextSets = await Promise.all(
+            multiContextRunPairs.map(async (item) => {
+              const [pages, previousPages] = await Promise.all([
+                fetchRunPages(item.run.id),
+                item.previousRun ? fetchRunPages(item.previousRun.id) : Promise.resolve([] as ProjectPage[]),
+              ]);
+              return {
+                personaId: item.personaId,
+                personaLabel: item.personaLabel,
+                run: item.run,
+                previousRun: item.previousRun,
+                pages,
+                previousPages,
+              };
+            }),
+          );
+          if (cancelled) return;
+          setMultiContextStructureSets(nextSets);
+        } catch (e) {
+          if (cancelled) return;
+          setPagesError(String(e));
+        } finally {
+          if (!cancelled && !silent) setPagesLoading(false);
+        }
+      }
+      void loadMultiContextPages();
+      return () => {
+        cancelled = true;
+      };
+    }
+    setMultiContextStructureSets([]);
     if (structureRunId === null) {
       setLastRunPages([]);
       setPrevRunPages([]);
@@ -1148,7 +1332,7 @@ export default function ProjectDashboardPage() {
       cancelled = true;
       if (timer !== null) window.clearInterval(timer);
     };
-  }, [activeTab, structureRunId, previousStructureRunId, structureIsLive]);
+  }, [activeTab, structureRunId, previousStructureRunId, structureIsLive, structureMultiContextEnabled, multiContextRunPairs]);
 
   useEffect(() => {
     setStructureRetryResultByUrl({});
@@ -1159,86 +1343,52 @@ export default function ProjectDashboardPage() {
   }, [selectedSiteId, structureRunId]);
 
   const structureRows = useMemo<StructureRow[]>(() => {
-    const prevByUrl = new Map<string, string>();
-    for (const row of prevRunPages) prevByUrl.set(row.url, row.html_hash || "");
-    const currentUrls = new Set<string>();
-    const rows: StructureRow[] = [];
-    for (const row of lastRunPages) {
-      const host = domainOf(row.url);
-      if (hasDomainFilter && !selectedDomains.includes(host)) continue;
-      currentUrls.add(row.url);
-      let status: StructureStatus = "unchanged";
-      if (row.fetch_error_code || (row.final_status_code || row.status_code) >= 400) status = "error";
-      else if (row.redirect_chain_json && row.redirect_chain_json.length > 1) status = "redirect";
-      else if (!prevByUrl.has(row.url)) status = "added";
-      else if ((prevByUrl.get(row.url) || "") !== (row.html_hash || "")) status = "changed";
-      rows.push({
-        url: row.url,
-        finalUrl: row.final_url,
-        domain: host,
-        status,
-        statusCode: row.status_code,
-        finalStatusCode: row.final_status_code,
-        fetchErrorCode: row.fetch_error_code,
-        fetchErrorMessage: row.fetch_error_message,
-        batchNo: row.crawl_batch_no,
-        title: row.title || "",
-        description: row.description || "",
-        h1: row.h1 || "",
-      });
-    }
-    if (!structureIsLive) {
-      for (const row of prevRunPages) {
-        const host = domainOf(row.url);
-        if (hasDomainFilter && !selectedDomains.includes(host)) continue;
-        if (currentUrls.has(row.url)) continue;
-        rows.push({
-          url: row.url,
-          finalUrl: row.final_url,
-          domain: host,
-          status: "deleted",
-          statusCode: 0,
-          finalStatusCode: row.final_status_code,
-          fetchErrorCode: row.fetch_error_code,
-          fetchErrorMessage: row.fetch_error_message,
-          batchNo: null,
-          title: row.title || "",
-          description: row.description || "",
-          h1: row.h1 || "",
-        });
-      }
-    }
-    rows.sort((a, b) => a.url.localeCompare(b.url));
-    return rows;
-  }, [hasDomainFilter, lastRunPages, prevRunPages, selectedDomains, structureIsLive]);
+    return buildStructureRowsFromPages({
+      currentPages: lastRunPages,
+      previousPages: prevRunPages,
+      selectedDomains,
+      includeDeleted: !structureIsLive,
+    });
+  }, [lastRunPages, prevRunPages, selectedDomains, structureIsLive]);
 
   const structureRowsFiltered = useMemo(() => {
-    const q = structureSearch.trim().toLowerCase();
-    return structureRows.filter((row) => {
-      if (structureViewFilter !== "all" && row.status !== structureViewFilter) return false;
-      if (!q) return true;
-      return [
-        row.url,
-        row.finalUrl || "",
-        row.domain,
-        row.status,
-        String(row.statusCode || ""),
-        String(row.finalStatusCode || ""),
-        row.fetchErrorCode || "",
-        row.fetchErrorMessage || "",
-        row.title,
-        row.description,
-        row.h1,
-      ].some((value) => value.toLowerCase().includes(q));
-    });
+    return filterStructureRows(structureRows, structureViewFilter, structureSearch);
   }, [structureRows, structureSearch, structureViewFilter]);
   const structureStatusCounts = useMemo(
-    () => ({
-      added: structureRows.filter((row) => row.status === "added").length,
-      error: structureRows.filter((row) => row.status === "error").length,
-      changed: structureRows.filter((row) => row.status === "changed").length,
-    }),
+    () => structureCounts(structureRows),
     [structureRows],
+  );
+  const multiContextStructureSections = useMemo(
+    () => multiContextStructureSets.map((set) => {
+      const rows = buildStructureRowsFromPages({
+        currentPages: set.pages,
+        previousPages: set.previousPages,
+        selectedDomains,
+        includeDeleted: true,
+      });
+      return {
+        ...set,
+        rows,
+        filteredRows: filterStructureRows(rows, structureViewFilter, structureSearch),
+        counts: structureCounts(rows),
+      };
+    }),
+    [multiContextStructureSets, selectedDomains, structureSearch, structureViewFilter],
+  );
+  const multiContextStructureRowsTotal = useMemo(
+    () => multiContextStructureSections.reduce((total, section) => total + section.rows.length, 0),
+    [multiContextStructureSections],
+  );
+  const multiContextStructureCounts = useMemo(
+    () => multiContextStructureSections.reduce(
+      (total, section) => ({
+        added: total.added + section.counts.added,
+        error: total.error + section.counts.error,
+        changed: total.changed + section.counts.changed,
+      }),
+      { added: 0, error: 0, changed: 0 },
+    ),
+    [multiContextStructureSections],
   );
   const problemPagesCount = useMemo(
     () => lastRunPages.filter(
@@ -1740,7 +1890,7 @@ export default function ProjectDashboardPage() {
                       </ProjectPersistentDetails>
                     </Card>
                   )}
-                  {!structureUpdatePending && structureRun && (
+                  {!structureMultiContextEnabled && !structureUpdatePending && structureRun && (
                     <Card
                       variant={structureStatusCounts.error > 0 ? "warning" : "hint"}
                       style={{ padding: 10, display: "grid", gap: 8 }}
@@ -1820,16 +1970,16 @@ export default function ProjectDashboardPage() {
                     </Card>
                   )}
                   <SectionHeaderRow
-                    title={<ListTotalMeta label="Страницы в структуре" total={structureRows.length} />}
+                    title={<ListTotalMeta label="Страницы в структуре" total={structureMultiContextEnabled ? multiContextStructureRowsTotal : structureRows.length} />}
                     actions={
-                      structureRows.length > 0 ? (
+                      (structureMultiContextEnabled ? multiContextStructureRowsTotal : structureRows.length) > 0 ? (
                         <SegmentedControl
                           value={structureViewFilter}
                           onChange={setStructureViewFilter}
                           options={[
-                            { value: "all", label: `Все · ${structureRows.length}` },
-                            { value: "added", label: `Новые · ${structureStatusCounts.added}` },
-                            { value: "error", label: `Ошибки · ${structureStatusCounts.error}` },
+                            { value: "all", label: `Все · ${structureMultiContextEnabled ? multiContextStructureRowsTotal : structureRows.length}` },
+                            { value: "added", label: `Новые · ${structureMultiContextEnabled ? multiContextStructureCounts.added : structureStatusCounts.added}` },
+                            { value: "error", label: `Ошибки · ${structureMultiContextEnabled ? multiContextStructureCounts.error : structureStatusCounts.error}` },
                           ]}
                         />
                       ) : undefined
@@ -1859,14 +2009,66 @@ export default function ProjectDashboardPage() {
                       />
                     </>
                   )}
-                  {!pagesLoading && structureRows.length === 0 && (
+                  {!pagesLoading && !structureMultiContextEnabled && structureRows.length === 0 && (
                     <MetaText>
                       {structureUpdatePending
                         ? "Первый прогон ещё выполняется — здесь появятся найденные страницы после его завершения."
                         : "Структура пока недоступна: выполните как минимум один прогон."}
                     </MetaText>
                   )}
-                  {structureRows.length > 0 && structureRowsFiltered.length > 0 && (
+                  {!pagesLoading && structureMultiContextEnabled && multiContextStructureRowsTotal === 0 && (
+                    <MetaText>
+                      Для выбранного сайта пока нет готовых структур по контекстам доступа.
+                    </MetaText>
+                  )}
+                  {structureMultiContextEnabled && multiContextStructureSections.length > 0 && (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {multiContextStructureSections.map((section) => (
+                        <Card key={section.run.id} style={{ padding: 10, display: "grid", gap: 8 }}>
+                          <SectionHeaderRow
+                            title={
+                              <div>
+                                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                  <span style={{ fontWeight: 800 }}>{section.personaLabel}</span>
+                                  <AccentPill tone="info">run #{section.run.id}</AccentPill>
+                                </div>
+                                <MetaText opacity={0.68}>
+                                  {formatRunTitle(section.run.started_at)} · {section.rows.length} страниц · изменений {section.counts.changed} · ошибок {section.counts.error}
+                                </MetaText>
+                              </div>
+                            }
+                            actions={<RunRuntimePill runtime={section.run.crawl_runtime} />}
+                          />
+                          {section.filteredRows.length > 0 ? (
+                            <ProjectStructureTree
+                              rows={section.filteredRows}
+                              query={structureSearch}
+                              onPageSelect={(url) => void handleOpenPageContextForRun(section.run.id, url)}
+                              onDirectorySelect={(context) => {
+                                setPageContextOpen(false);
+                                setDirectoryContext(context);
+                              }}
+                              canRetry={false}
+                              retryingUrl={null}
+                              retryResultByUrl={{}}
+                              onRetryPage={() => undefined}
+                              live={false}
+                              currentBatchNo={null}
+                            />
+                          ) : (
+                            <MetaText>
+                              {structureViewFilter === "added"
+                                ? "В этом контексте нет новых страниц."
+                                : structureViewFilter === "error"
+                                  ? "В этом контексте нет страниц с ошибками."
+                                  : "По текущему поиску в этом контексте совпадений не найдено."}
+                            </MetaText>
+                          )}
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                  {!structureMultiContextEnabled && structureRows.length > 0 && structureRowsFiltered.length > 0 && (
                     <ProjectStructureTree
                       rows={structureRowsFiltered}
                       query={structureSearch}
@@ -1883,7 +2085,7 @@ export default function ProjectDashboardPage() {
                       currentBatchNo={liveStructureRun?.current_batch_no ?? null}
                     />
                   )}
-                  {structureRows.length > 0 && structureRowsFiltered.length === 0 && (
+                  {!structureMultiContextEnabled && structureRows.length > 0 && structureRowsFiltered.length === 0 && (
                     <MetaText>
                       {structureViewFilter === "added"
                         ? "В текущем срезе нет новых страниц."
@@ -2112,6 +2314,7 @@ export default function ProjectDashboardPage() {
         onClose={() => {
           setPageContextOpen(false);
           setPageContextError("");
+          setPageContextRunId(null);
         }}
       />
       <DirectoryContextDrawer

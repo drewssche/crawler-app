@@ -143,7 +143,9 @@ test("site anomaly UX distinguishes baseline, normal and anomaly states", () => 
 });
 
 test("structure opens an on-demand page context drawer with SEO and broken links", () => {
-  assert.match(source, /getPageContext\(structureRunId, url\)/);
+  assert.match(source, /handleOpenPageContextForRun/);
+  assert.match(source, /getPageContext\(runId, url\)/);
+  assert.match(source, /pageContextRunId \?\? structureRunId/);
   assert.match(source, /PageContextDrawer/);
   assert.match(source, /title\?: string \| null/);
   assert.match(source, /description\?: string \| null/);
@@ -172,6 +174,15 @@ test("structure opens an on-demand page context drawer with SEO and broken links
   assert.match(pageDrawerSource, /Без значений cookies, токенов/);
   assert.match(pageDrawerSource, /Открыть полный анализ/);
   assert.match(source, /\/inspect\?run=/);
+});
+
+test("structure can show separate sections for every access context", () => {
+  assert.match(source, /MultiContextStructureSet/);
+  assert.match(source, /structureMultiContextEnabled/);
+  assert.match(source, /multiContextRunPairs/);
+  assert.match(source, /multiContextStructureSections/);
+  assert.match(source, /Для выбранного сайта пока нет готовых структур по контекстам доступа/);
+  assert.match(source, /handleOpenPageContextForRun\(section\.run\.id, url\)/);
 });
 
 test("full page inspector keeps the snapshot and a scrollable section report visible together", () => {
