@@ -33,7 +33,6 @@ import ProjectStructureTree, {
 import SegmentedControl from "../components/ui/SegmentedControl";
 import SectionHeaderRow from "../components/ui/SectionHeaderRow";
 import ToastHost, { type ToastItem } from "../components/ui/ToastHost";
-import UiSelect from "../components/ui/UiSelect";
 import { MetaText, StatusText } from "../components/ui/StatusText";
 import { formatOperationalDateTime, formatRunTitle } from "../utils/datetime";
 import { invalidateProjectsCache } from "../utils/projectListCache";
@@ -235,9 +234,13 @@ const PROJECT_DISCLOSURE_STORAGE_PREFIX = "crawler.projectDashboard.disclosure."
 
 type StructureRow = {
   url: string;
+  finalUrl: string | null;
   domain: string;
   status: StructureStatus;
   statusCode: number;
+  finalStatusCode: number | null;
+  fetchErrorCode: string | null;
+  fetchErrorMessage: string | null;
   batchNo: number | null;
 };
 
@@ -521,7 +524,7 @@ export default function ProjectDashboardPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
   const [activeTab, setActiveTab] = useState<ProjectTab>("main");
-  const [selectedDomain, setSelectedDomain] = useState<string>("all");
+  const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
   const [structureSearch, setStructureSearch] = useState("");
   const [structureViewFilter, setStructureViewFilter] = useState<StructureViewFilter>("all");
   const [pagesLoading, setPagesLoading] = useState(false);
@@ -1079,6 +1082,9 @@ export default function ProjectDashboardPage() {
     () => parseDomains(selectedSite?.allowed_domains_csv || ""),
     [selectedSite?.allowed_domains_csv],
   );
+  const hasDomainFilter = selectedDomains.length > 0;
+  const activeDomainCount = hasDomainFilter ? selectedDomains.length : domains.length;
+  const enabledPersonas = sitePersonas.filter((persona) => persona.is_enabled !== false);
   const lastRun = runs[0] || null;
   const completedRunsWithPages = runs.filter(
     (run) => run.id > 0 && run.status !== "RUNNING" && run.pages_total > 0,
@@ -1141,11 +1147,9 @@ export default function ProjectDashboardPage() {
     };
   }, [selectedSiteId, selectedSite?.name, selectedSite?.default_persona?.label, canViewOperations]);
 
-  const domainOptions = useMemo(() => ["all", ...domains], [domains]);
-
   useEffect(() => {
-    if (!domainOptions.includes(selectedDomain)) setSelectedDomain("all");
-  }, [domainOptions, selectedDomain]);
+    setSelectedDomains((current) => current.filter((domain) => domains.includes(domain)));
+  }, [domains]);
 
   useEffect(() => {
     if (activeTab !== "main") return;
@@ -1202,7 +1206,7 @@ export default function ProjectDashboardPage() {
     const rows: StructureRow[] = [];
     for (const row of lastRunPages) {
       const host = domainOf(row.url);
-      if (selectedDomain !== "all" && host !== selectedDomain) continue;
+      if (hasDomainFilter && !selectedDomains.includes(host)) continue;
       currentUrls.add(row.url);
       let status: StructureStatus = "unchanged";
       if (row.fetch_error_code || (row.final_status_code || row.status_code) >= 400) status = "error";
@@ -1211,35 +1215,53 @@ export default function ProjectDashboardPage() {
       else if ((prevByUrl.get(row.url) || "") !== (row.html_hash || "")) status = "changed";
       rows.push({
         url: row.url,
+        finalUrl: row.final_url,
         domain: host,
         status,
         statusCode: row.status_code,
+        finalStatusCode: row.final_status_code,
+        fetchErrorCode: row.fetch_error_code,
+        fetchErrorMessage: row.fetch_error_message,
         batchNo: row.crawl_batch_no,
       });
     }
     if (!structureIsLive) {
       for (const row of prevRunPages) {
         const host = domainOf(row.url);
-        if (selectedDomain !== "all" && host !== selectedDomain) continue;
+        if (hasDomainFilter && !selectedDomains.includes(host)) continue;
         if (currentUrls.has(row.url)) continue;
         rows.push({
           url: row.url,
+          finalUrl: row.final_url,
           domain: host,
           status: "deleted",
           statusCode: 0,
+          finalStatusCode: row.final_status_code,
+          fetchErrorCode: row.fetch_error_code,
+          fetchErrorMessage: row.fetch_error_message,
           batchNo: null,
         });
       }
     }
     rows.sort((a, b) => a.url.localeCompare(b.url));
     return rows;
-  }, [lastRunPages, prevRunPages, selectedDomain, structureIsLive]);
+  }, [hasDomainFilter, lastRunPages, prevRunPages, selectedDomains, structureIsLive]);
 
   const structureRowsFiltered = useMemo(() => {
     const q = structureSearch.trim().toLowerCase();
     return structureRows.filter((row) => {
       if (structureViewFilter !== "all" && row.status !== structureViewFilter) return false;
-      return !q || row.url.toLowerCase().includes(q);
+      if (!q) return true;
+      return [
+        row.url,
+        row.finalUrl || "",
+        row.domain,
+        row.status,
+        String(row.statusCode || ""),
+        String(row.finalStatusCode || ""),
+        row.fetchErrorCode || "",
+        row.fetchErrorMessage || "",
+      ].some((value) => value.toLowerCase().includes(q));
     });
   }, [structureRows, structureSearch, structureViewFilter]);
   const structureStatusCounts = useMemo(
@@ -1275,37 +1297,40 @@ export default function ProjectDashboardPage() {
                 }
                 actions={canRunCrawler ? (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <label
+                    <div
                       style={{
-                        display: "grid",
-                        gap: 3,
-                        minWidth: 220,
+                        display: "flex",
+                        gap: 6,
+                        alignItems: "center",
+                        flexWrap: "wrap",
                         maxWidth: 320,
                         flex: "1 1 220px",
                       }}
                       title="Контекст определяет, как crawler открывает выбранный сайт: гостем или с подключённой сессией роли."
                     >
-                      <MetaText opacity={0.72}>Контекст запуска</MetaText>
-                      <UiSelect
-                        value={selectedRunPersonaId ?? ""}
-                        disabled={sitePersonasLoading || runPending || projectRunPending || hasRunning || Boolean(selectedPendingJob) || !selectedSite?.is_enabled}
-                        onChange={(event) => setSelectedRunPersonaId(Number(event.target.value) || null)}
-                      >
-                        {sitePersonasLoading && <option value="">Загрузка...</option>}
-                        {!sitePersonasLoading && sitePersonas.length === 0 && (
-                          <option value={selectedSite?.default_persona?.id ?? ""}>
-                            {selectedSite?.default_persona?.label || "Гость"}
-                          </option>
-                        )}
-                        {!sitePersonasLoading && sitePersonas
-                          .filter((persona) => persona.is_enabled !== false)
-                          .map((persona) => (
-                            <option key={persona.id} value={persona.id}>
-                              {persona.label}{personaOptionSuffix(persona)}
-                            </option>
-                          ))}
-                      </UiSelect>
-                    </label>
+                      <MetaText opacity={0.72}>Запуск:</MetaText>
+                      {sitePersonasLoading && <AccentPill tone="neutral">Загрузка...</AccentPill>}
+                      {!sitePersonasLoading && enabledPersonas.length === 0 && (
+                        <AccentPill tone="info">{selectedSite?.default_persona?.label || "Гость"}</AccentPill>
+                      )}
+                      {!sitePersonasLoading && enabledPersonas.map((persona) => (
+                        <CardActionButton
+                          key={persona.id}
+                          compact
+                          active={selectedRunPersonaId === persona.id}
+                          disabled={runPending || projectRunPending || hasRunning || Boolean(selectedPendingJob) || !selectedSite?.is_enabled}
+                          onClick={() => setSelectedRunPersonaId(persona.id)}
+                          title={personaOptionSuffix(persona).trim() || undefined}
+                        >
+                          {persona.label}
+                        </CardActionButton>
+                      ))}
+                      {selectedRunPersona && selectedRunLaunchIssue && (
+                        <StatusText tone="warning" style={{ fontSize: 12 }}>
+                          {selectedRunLaunchIssue}
+                        </StatusText>
+                      )}
+                    </div>
                     <CardActionButton
                       variant="ghost"
                       onClick={() => navigate(`/projects/${project.id}/compare`, { state: { projectName: project.name } })}
@@ -1575,19 +1600,74 @@ export default function ProjectDashboardPage() {
                             {bulkRetryPending ? "Проверяем..." : `Повторить проблемные как ${structureRun?.persona?.label || "Гость"} · ${problemPagesCount}`}
                           </CardActionButton>
                         )}
-                        <UiSelect
-                          value={selectedDomain}
-                          onChange={(e) => setSelectedDomain(e.target.value)}
-                          style={{ minWidth: 180 }}
-                        >
-                          <option value="all">Домен: все</option>
-                          {domains.map((d) => (
-                            <option key={d} value={d}>{d}</option>
-                          ))}
-                        </UiSelect>
                       </div>
                     )}
                   />
+                  <Card variant="default" style={{ padding: 10, display: "grid", gap: 8 }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <MetaText opacity={0.72}>Контекст:</MetaText>
+                      <CardActionButton
+                        compact
+                        active={selectedViewPersonaId === "all"}
+                        disabled={sitePersonasLoading}
+                        onClick={() => setSelectedViewPersonaId("all")}
+                      >
+                        Все
+                      </CardActionButton>
+                      {enabledPersonas.map((persona) => (
+                        <CardActionButton
+                          key={persona.id}
+                          compact
+                          active={selectedViewPersonaId === persona.id}
+                          disabled={sitePersonasLoading}
+                          onClick={() => setSelectedViewPersonaId(persona.id)}
+                          title={persona.kind !== "guest" && !persona.has_secrets ? "Сессия ещё не подключена." : undefined}
+                        >
+                          {persona.label}
+                        </CardActionButton>
+                      ))}
+                    </div>
+                    {domains.length > 1 && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <MetaText opacity={0.72}>Домены:</MetaText>
+                        <CardActionButton
+                          compact
+                          active={!hasDomainFilter}
+                          onClick={() => setSelectedDomains([])}
+                        >
+                          Все · {domains.length}
+                        </CardActionButton>
+                        {domains.map((domain) => {
+                          const active = !hasDomainFilter || selectedDomains.includes(domain);
+                          return (
+                            <CardActionButton
+                              key={domain}
+                              compact
+                              active={active}
+                              onClick={() => {
+                                setSelectedDomains((current) => {
+                                  if (current.length === 0) {
+                                    return domains.filter((item) => item !== domain);
+                                  }
+                                  if (current.includes(domain)) {
+                                    const next = current.filter((item) => item !== domain);
+                                    return next.length === domains.length ? [] : next;
+                                  }
+                                  const next = [...current, domain];
+                                  return next.length === domains.length ? [] : next;
+                                });
+                              }}
+                            >
+                              {domain}
+                            </CardActionButton>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <MetaText opacity={0.62}>
+                      Показано: {selectedViewPersona ? selectedViewPersona.label : "все контексты"} · домены {hasDomainFilter ? activeDomainCount : "все"}.
+                    </MetaText>
+                  </Card>
                   {structureUpdatePending && (
                     <Card variant="hint" style={{ padding: 10, display: "grid", gap: 6 }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -1807,7 +1887,7 @@ export default function ProjectDashboardPage() {
                       <ClearableInput
                         value={structureSearch}
                         onChange={setStructureSearch}
-                        placeholder="Поиск по URL/пути (meta-поиск добавим после подключения snapshots)..."
+                        placeholder="Поиск по URL, final URL, домену, HTTP-статусу или ошибке..."
                       />
                     </>
                   )}
