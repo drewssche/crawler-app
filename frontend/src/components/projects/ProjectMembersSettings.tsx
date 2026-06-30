@@ -14,10 +14,10 @@ import CardActionButton from "../ui/CardActionButton";
 import CardFooterActions from "../ui/CardFooterActions";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import HighlightedText from "../ui/HighlightedText";
+import ChipPicker from "../ui/ChipPicker";
 import RelevanceBadge from "../ui/RelevanceBadge";
 import SectionHeaderRow from "../ui/SectionHeaderRow";
 import { MetaText, StatusText } from "../ui/StatusText";
-import UiSelect from "../ui/UiSelect";
 import { roleBadgeMeta } from "../users/userBadgeCatalog";
 import type { DisplayRole } from "../../utils/roles";
 
@@ -46,6 +46,12 @@ const roleMeta = Object.fromEntries(ROLE_OPTIONS.map((item) => [item.value, item
   ProjectMemberRole,
   (typeof ROLE_OPTIONS)[number]
 >;
+
+const ROLE_PICKER_OPTIONS = ROLE_OPTIONS.map((item) => ({
+  value: item.value,
+  label: item.label,
+  title: item.hint,
+}));
 
 const inputStyle = {
   width: "100%",
@@ -286,7 +292,7 @@ export default function ProjectMembersSettings({ projectId, compactHeader = fals
 
         <Card variant="hint" style={{ display: "grid", gap: 10 }}>
           <div style={{ fontWeight: 700 }}>Добавить участника</div>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(150px, 220px) auto", gap: 8, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(220px, auto) auto", gap: 10, alignItems: "start" }}>
             <div style={{ position: "relative", display: "grid", gap: 6 }}>
               <input
                 value={email}
@@ -370,15 +376,13 @@ export default function ProjectMembersSettings({ projectId, compactHeader = fals
                 </StatusText>
               )}
             </div>
-            <UiSelect
+            <ChipPicker
+              ariaLabel="Роль нового участника"
               value={role}
               disabled={pending === "new"}
-              onChange={(event) => setRole(event.target.value as ProjectMemberRole)}
-            >
-              {ROLE_OPTIONS.map((item) => (
-                <option key={item.value} value={item.value}>{item.label}</option>
-              ))}
-            </UiSelect>
+              options={ROLE_PICKER_OPTIONS}
+              onChange={setRole}
+            />
             <CardActionButton
               variant="primary"
               disabled={pending === "new" || Boolean(addBlockedReason)}
@@ -415,17 +419,18 @@ export default function ProjectMembersSettings({ projectId, compactHeader = fals
                 }
                 actions={<RolePill role={member.role} />}
               />
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 220px) auto", gap: 8, alignItems: "center" }}>
-                <UiSelect
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, auto) auto", gap: 10, alignItems: "center" }}>
+                <ChipPicker
+                  ariaLabel={`Роль участника ${member.email}`}
                   value={member.role}
                   disabled={pending === member.id}
-                  title={isLastOwner ? "Последнего владельца нельзя понизить." : undefined}
-                  onChange={(event) => void handleRoleChange(member, event.target.value as ProjectMemberRole)}
-                >
-                  {ROLE_OPTIONS.map((item) => (
-                    <option key={item.value} value={item.value}>{item.label}</option>
-                  ))}
-                </UiSelect>
+                  options={ROLE_PICKER_OPTIONS.map((item) => ({
+                    ...item,
+                    disabled: isLastOwner && item.value !== "owner",
+                    title: isLastOwner && item.value !== "owner" ? "Последнего владельца нельзя понизить." : item.title,
+                  }))}
+                  onChange={(nextRole) => void handleRoleChange(member, nextRole)}
+                />
                 <CardFooterActions>
                   <CardActionButton
                     variant="danger"

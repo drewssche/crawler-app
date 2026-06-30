@@ -76,6 +76,15 @@ test("settings contain real project parameters without a fake schedule save cont
   assert.doesNotMatch(source, /Сохранить расписание/);
 });
 
+test("project settings internals use chip controls instead of native selects", () => {
+  assert.doesNotMatch(sitesSource, /UiSelect/);
+  assert.doesNotMatch(membersSource, /UiSelect/);
+  assert.match(sitesSource, /ChipPicker/);
+  assert.match(membersSource, /ChipPicker/);
+  assert.match(membersSource, /ariaLabel="Роль нового участника"/);
+  assert.match(sitesSource, /ariaLabel="Тип персоны"/);
+});
+
 test("project members are added through searchable user combobox with highlight and states", () => {
   assert.match(membersSource, /role="combobox"/);
   assert.match(membersSource, /\/admin\/users\?status=all&q=/);

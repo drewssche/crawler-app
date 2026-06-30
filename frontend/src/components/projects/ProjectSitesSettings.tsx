@@ -28,12 +28,12 @@ import { formatQuotaError, isQuotaError } from "../../utils/quotaErrors";
 import Card from "../ui/Card";
 import CardActionButton from "../ui/CardActionButton";
 import CardFooterActions from "../ui/CardFooterActions";
+import ChipPicker from "../ui/ChipPicker";
 import ConfirmDialog from "../ui/ConfirmDialog";
 import SectionHeaderRow from "../ui/SectionHeaderRow";
 import AccentPill from "../ui/AccentPill";
 import { MetaText, StatusText } from "../ui/StatusText";
 import SiteScopeFields from "./SiteScopeFields";
-import UiSelect from "../ui/UiSelect";
 import { formatOperationalDateTime } from "../../utils/datetime";
 
 type Draft = {
@@ -68,9 +68,29 @@ const textAreaStyle = {
 type PersonaDraft = {
   key: string;
   label: string;
-  kind: string;
+  kind: PersonaDraftKind;
   description: string;
 };
+
+type PersonaDraftKind = "authenticated" | "partner" | "other";
+
+const PERSONA_KIND_OPTIONS: Array<{ value: PersonaDraftKind; label: string; title: string }> = [
+  {
+    value: "authenticated",
+    label: "Авторизованный",
+    title: "Обычный пользователь с авторизацией: cookies/session применяются при прогоне.",
+  },
+  {
+    value: "partner",
+    label: "Партнёр",
+    title: "Отдельный доступ партнёра или клиента, если сайт показывает ему другой контент.",
+  },
+  {
+    value: "other",
+    label: "Другая роль",
+    title: "Произвольный контекст доступа для нестандартного сценария.",
+  },
+];
 
 type ManagedLoginReadiness = {
   ready?: boolean;
@@ -650,15 +670,13 @@ function ProjectSitePersonasPanel({
             </label>
             <label style={{ display: "grid", gap: 6 }}>
               <span>Тип</span>
-              <UiSelect
+              <ChipPicker
+                ariaLabel="Тип персоны"
                 value={draft.kind}
                 disabled={pending === "new"}
-                onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value }))}
-              >
-                <option value="authenticated">Авторизованный пользователь</option>
-                <option value="partner">Партнёр</option>
-                <option value="other">Другая роль</option>
-              </UiSelect>
+                options={PERSONA_KIND_OPTIONS}
+                onChange={(kind) => setDraft((current) => ({ ...current, kind }))}
+              />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
               <span>Ключ</span>
