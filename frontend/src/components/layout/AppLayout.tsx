@@ -9,6 +9,13 @@ import { getProjectsCached } from "../../utils/projectListCache";
 import { useAuth } from "../../hooks/auth";
 import { hasPermission } from "../../utils/permissions";
 
+const SIDEBAR_LEFT_COLLAPSED_STORAGE_KEY = "crawler.sidebarLeft.collapsed";
+
+function readSidebarLeftCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(SIDEBAR_LEFT_COLLAPSED_STORAGE_KEY) === "1";
+}
+
 function normalizeProjectLabel(name: string | null | undefined, fallbackId?: number): string {
   const raw = (name || "").trim();
   if (!raw) {
@@ -37,6 +44,7 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const [leftCollapsed, setLeftCollapsed] = useState(() => readSidebarLeftCollapsed());
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [projectCrumbLabel, setProjectCrumbLabel] = useState<string | null>(null);
 
@@ -132,6 +140,16 @@ export default function AppLayout() {
     navigate(parent);
   }
 
+  function toggleLeftSidebar() {
+    setLeftCollapsed((current) => {
+      const next = !current;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(SIDEBAR_LEFT_COLLAPSED_STORAGE_KEY, next ? "1" : "0");
+      }
+      return next;
+    });
+  }
+
   return (
     <div
       style={{
@@ -140,9 +158,9 @@ export default function AppLayout() {
           ? "minmax(0, 1fr)"
           : canViewEvents
             ? rightCollapsed
-              ? "260px minmax(0, 1fr) 68px"
-              : "260px minmax(0, 1fr) 320px"
-            : "260px minmax(0, 1fr)",
+              ? `${leftCollapsed ? 68 : 260}px minmax(0, 1fr) 68px`
+              : `${leftCollapsed ? 68 : 260}px minmax(0, 1fr) 320px`
+            : `${leftCollapsed ? 68 : 260}px minmax(0, 1fr)`,
         gap: focusWorkspaceMode ? 0 : 16,
         width: "100vw",
         height: "100vh",
@@ -151,8 +169,8 @@ export default function AppLayout() {
       }}
     >
       {!focusWorkspaceMode && (
-        <aside style={{ padding: 16, boxSizing: "border-box", minHeight: 0 }}>
-          <SidebarLeft />
+        <aside style={{ padding: leftCollapsed ? 8 : 16, boxSizing: "border-box", minHeight: 0, transition: "padding 220ms cubic-bezier(0.2, 0.8, 0.2, 1)" }}>
+          <SidebarLeft collapsed={leftCollapsed} onToggleCollapsed={toggleLeftSidebar} />
         </aside>
       )}
 

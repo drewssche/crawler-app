@@ -12,6 +12,8 @@ const directoryDrawerSource = await readFile(new URL("../src/components/projects
 const structureSource = await readFile(new URL("../src/components/ui/ProjectStructureTree.tsx", import.meta.url), "utf8");
 const compareSource = await readFile(new URL("../src/pages/ComparePage.tsx", import.meta.url), "utf8");
 const layoutSource = await readFile(new URL("../src/components/layout/AppLayout.tsx", import.meta.url), "utf8");
+const sidebarLeftSource = await readFile(new URL("../src/components/layout/SidebarLeft.tsx", import.meta.url), "utf8");
+const sidebarRightSource = await readFile(new URL("../src/components/layout/SidebarRight.tsx", import.meta.url), "utf8");
 const inspectorSource = await readFile(new URL("../src/pages/PageInspectorPage.tsx", import.meta.url), "utf8");
 const reportSource = await readFile(new URL("../src/components/projects/PageInspectionReport.tsx", import.meta.url), "utf8");
 const safeSnapshotSource = await readFile(new URL("../src/utils/safeSnapshotDocument.ts", import.meta.url), "utf8");
@@ -318,6 +320,24 @@ test("compare layout keeps page info next to its own side and preserves central 
   assert.match(reportSource, /idPrefix = "inspector"/);
   assert.match(cssSource, /grid-template-columns: minmax\(240px, 0\.42fr\) minmax\(0, 1fr\) minmax\(0, 1fr\) minmax\(240px, 0\.42fr\)/);
   assert.match(cssSource, /compare-workspace-grid\.is-both \.compare-central-stage/);
+});
+
+test("sidebars support compact workspace and event-center view modes", () => {
+  assert.match(layoutSource, /leftCollapsed/);
+  assert.match(layoutSource, /SIDEBAR_LEFT_COLLAPSED_STORAGE_KEY/);
+  assert.match(layoutSource, /<SidebarLeft collapsed=\{leftCollapsed\}/);
+  assert.match(sidebarLeftSource, /collapsed: boolean/);
+  assert.match(sidebarLeftSource, /Развернуть левое меню/);
+  assert.match(sidebarLeftSource, /Свернуть левое меню/);
+  assert.match(sidebarRightSource, /SidebarRightViewMode = "both" \| "notifications" \| "activity"/);
+  assert.match(sidebarRightSource, /SIDEBAR_RIGHT_VIEW_STORAGE_KEY/);
+  assert.match(sidebarRightSource, /viewMode === "both"/);
+  assert.match(sidebarRightSource, /viewMode === "notifications"/);
+  assert.match(sidebarRightSource, /viewMode === "activity"/);
+  assert.match(sidebarRightSource, /Оба/);
+  assert.match(sidebarRightSource, /Увед\./);
+  assert.match(sidebarRightSource, /Лента/);
+  assert.match(sidebarRightSource, /gridTemplateRows: viewMode === "both" \? "1fr 1px 1fr" : "minmax\(0, 1fr\)"/);
 });
 
 test("page inspector exposes on-demand runtime consent audit", () => {

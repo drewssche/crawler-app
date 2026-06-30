@@ -18,7 +18,12 @@ import { getProjectRunBadgeMeta } from "../ui/projectRunBadgeMeta";
 import ScrollableRegion from "../ui/ScrollableRegion";
 import RoleBadge from "../ui/RoleBadge";
 
-export default function SidebarLeft() {
+type Props = {
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+};
+
+export default function SidebarLeft({ collapsed, onToggleCollapsed }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout, refreshMe } = useAuth();
@@ -64,6 +69,62 @@ export default function SidebarLeft() {
   const canOpenSettings = hasPermission(user?.role, "users.manage");
   const canEditProjects = hasPermission(user?.role, "projects.edit");
 
+  if (collapsed) {
+    return (
+      <aside
+        style={{
+          border: "1px solid #3333",
+          borderRadius: 16,
+          padding: 8,
+          boxSizing: "border-box",
+          display: "grid",
+          gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+          gap: 8,
+          height: "100%",
+          justifyItems: "center",
+        }}
+      >
+        <Button
+          onClick={onToggleCollapsed}
+          size="sm"
+          variant="accent"
+          title="Развернуть левое меню"
+          style={{ width: 34, minWidth: 34, height: 34, minHeight: 34, padding: 0 }}
+        >
+          ☰
+        </Button>
+        <img src={appLogo} alt="Crawler logo" width={34} height={34} style={{ display: "block" }} />
+        <div style={{ display: "grid", gap: 8, alignContent: "start", width: "100%" }}>
+          <Button onClick={() => navigate("/")} variant="accent" active={inWorkspace} title="Рабочая область" style={{ width: "100%", minWidth: 0, paddingInline: 0 }}>
+            Р
+          </Button>
+          {canOpenSettings && (
+            <Button onClick={() => navigate("/settings")} variant="accent" active={inSettings} title="Настройки" style={{ width: "100%", minWidth: 0, paddingInline: 0 }}>
+              Н
+            </Button>
+          )}
+          {canEditProjects && (
+            <Button onClick={() => navigate("/projects/new")} variant="primary" active={location.pathname.startsWith("/projects/new")} title="Создать проект" style={{ width: "100%", minWidth: 0, paddingInline: 0 }}>
+              +
+            </Button>
+          )}
+        </div>
+        <Button
+          onClick={() => {
+            logout();
+            navigate("/login");
+          }}
+          size="sm"
+          variant="secondary"
+          title={`Выйти · ${user?.email ?? ""}`}
+          style={{ width: "100%", minWidth: 0, paddingInline: 0 }}
+        >
+          ⎋
+        </Button>
+      </aside>
+    );
+  }
+
   return (
     <aside
       style={{
@@ -76,6 +137,16 @@ export default function SidebarLeft() {
         height: "100%",
       }}
     >
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+        <Button
+          onClick={onToggleCollapsed}
+          size="sm"
+          variant="panel-toggle"
+          title="Свернуть левое меню"
+        >
+          Свернуть
+        </Button>
+      </div>
       <div>
         <div
           style={{

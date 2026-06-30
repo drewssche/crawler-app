@@ -44,6 +44,15 @@ type Props = {
 };
 
 const POLL_TOP_LIMIT = 20;
+const SIDEBAR_RIGHT_VIEW_STORAGE_KEY = "crawler.sidebarRight.viewMode";
+
+type SidebarRightViewMode = "both" | "notifications" | "activity";
+
+function readSidebarRightViewMode(): SidebarRightViewMode {
+  if (typeof window === "undefined") return "both";
+  const stored = window.localStorage.getItem(SIDEBAR_RIGHT_VIEW_STORAGE_KEY);
+  return stored === "notifications" || stored === "activity" || stored === "both" ? stored : "both";
+}
 
 function mergeWithTopWindow(previous: EventItem[], freshTop: EventItem[], targetLimit: number): EventItem[] {
   const limit = Math.max(POLL_TOP_LIMIT, targetLimit);
@@ -338,6 +347,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<string>("");
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [viewMode, setViewMode] = useState<SidebarRightViewMode>(() => readSidebarRightViewMode());
   const seenTopNotificationIdsRef = useRef<Set<number>>(new Set());
   const seenTopActionIdsRef = useRef<Set<number>>(new Set());
   const [contextItem, setContextItem] = useState<EventItem | null>(null);
@@ -356,6 +366,13 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
     reset: resetContextTask,
     setErrorMessage: setContextErrorMessage,
   } = useGuardedAsyncState();
+
+  function selectViewMode(nextMode: SidebarRightViewMode) {
+    setViewMode(nextMode);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(SIDEBAR_RIGHT_VIEW_STORAGE_KEY, nextMode);
+    }
+  }
 
   useEffect(() => {
     notificationsRef.current = notifications;
@@ -679,6 +696,8 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
     ),
     [lastUpdated, navigate],
   );
+  const showNotifications = viewMode === "both" || viewMode === "notifications";
+  const showActions = viewMode === "both" || viewMode === "activity";
 
   return (
     <>
@@ -698,8 +717,8 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
             position: "absolute",
             inset: 0,
             display: "grid",
-            placeItems: "start center",
-            paddingTop: 12,
+            placeItems: "start end",
+            padding: 12,
             opacity: collapsed ? 1 : 0,
             transform: collapsed ? "translateX(0)" : "translateX(12px)",
             transition: "opacity 180ms ease, transform 180ms ease",
@@ -715,7 +734,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
             inset: 0,
             padding: 12,
             display: "grid",
-            gridTemplateRows: "auto auto minmax(0, 1fr)",
+            gridTemplateRows: "auto auto auto minmax(0, 1fr)",
             gap: 10,
             opacity: collapsed ? 0 : 1,
             transform: collapsed ? "translateX(14px)" : "translateX(0)",
@@ -730,7 +749,28 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
 
           {sectionHeader}
 
-          <div style={{ overflow: "hidden", minHeight: 0, display: "grid", gridTemplateRows: "1fr 1px 1fr", gap: 10 }}>
+          <div className="sidebar-right-view-toggle" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
+            <Button size="sm" variant="panel-toggle" active={viewMode === "both"} onClick={() => selectViewMode("both")}>
+              Оба
+            </Button>
+            <Button size="sm" variant="panel-toggle" active={viewMode === "notifications"} onClick={() => selectViewMode("notifications")}>
+              Увед.
+            </Button>
+            <Button size="sm" variant="panel-toggle" active={viewMode === "activity"} onClick={() => selectViewMode("activity")}>
+              Лента
+            </Button>
+          </div>
+
+          <div
+            style={{
+              overflow: "hidden",
+              minHeight: 0,
+              display: "grid",
+              gridTemplateRows: viewMode === "both" ? "1fr 1px 1fr" : "minmax(0, 1fr)",
+              gap: 10,
+            }}
+          >
+            {showNotifications && (
             <ScrollableRegion style={{ display: "grid", gap: 6, alignContent: "start", gridAutoRows: "max-content", overflowX: "visible" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                 <div style={{ fontWeight: 700, fontSize: 13 }}>Уведомления</div>
@@ -747,9 +787,11 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
               ))}
               {notifications.length === 0 && <EmptyState text="Новых уведомлений нет." />}
             </ScrollableRegion>
+            )}
 
-            <div style={{ background: "#3333" }} />
+            {viewMode === "both" && <div style={{ background: "#3333" }} />}
 
+            {showActions && (
             <ScrollableRegion style={{ display: "grid", gap: 8, alignContent: "start", gridAutoRows: "max-content", overflowX: "visible" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontWeight: 700, fontSize: 13 }}>Лента действий</div>
@@ -769,6 +811,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
               ))}
               {actions.length === 0 && !error && <EmptyState text="Событий пока нет." />}
             </ScrollableRegion>
+            )}
           </div>
         </div>
       </aside>
