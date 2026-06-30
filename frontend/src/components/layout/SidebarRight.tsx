@@ -1,12 +1,13 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { markEventRead, setEventDismissed, setEventHandled, type EventItem } from "../../api/events";
-import { apiPost } from "../../api/client";
+import { apiGet, apiPost, isAbortError } from "../../api/client";
 import { useAuth } from "../../hooks/auth";
 import { runEventPrimaryAction } from "../../utils/eventPrimaryAction";
 import { formatApiTime, formatLocalDateTimeWithOffset } from "../../utils/datetime";
 import { UI_BULLET } from "../../utils/uiText";
 import { getEventRelevance } from "../../utils/relevance";
+import { hasPermission } from "../../utils/permissions";
 import {
   getMonitoringFocusMeta,
   loadMonitoringContext,
@@ -46,12 +47,45 @@ type Props = {
 const POLL_TOP_LIMIT = 20;
 const SIDEBAR_RIGHT_VIEW_STORAGE_KEY = "crawler.sidebarRight.viewMode";
 
-type SidebarRightViewMode = "both" | "notifications" | "activity";
+type SidebarRightViewMode = "both" | "notifications" | "activity" | "queue";
+
+type CrawlerJobSample = {
+  job_id: number;
+  run_id: number | null;
+  project_id: number;
+  project_site_id: number;
+  crawl_persona_id: number | null;
+  status: "QUEUED" | "RUNNING" | "CANCEL_REQUESTED" | string;
+  kind: string;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  attempts: number;
+  scheduled_at: string | null;
+  heartbeat_at: string | null;
+};
+
+type CrawlerReadiness = {
+  ready: boolean;
+  status: "ok" | "degraded" | string;
+  mode: "worker" | "synchronous" | string;
+  jobs?: {
+    total_active?: number;
+    queued?: number;
+    running?: number;
+    cancel_requested?: number;
+    sample?: CrawlerJobSample[];
+    diagnostics?: {
+      oldest_queued_age_seconds?: number | null;
+      stale_queued?: number;
+    };
+  };
+  issues?: Array<{ code: string; severity: string; message: string; count?: number }>;
+};
 
 function readSidebarRightViewMode(): SidebarRightViewMode {
   if (typeof window === "undefined") return "both";
   const stored = window.localStorage.getItem(SIDEBAR_RIGHT_VIEW_STORAGE_KEY);
-  return stored === "notifications" || stored === "activity" || stored === "both" ? stored : "both";
+  return stored === "notifications" || stored === "activity" || stored === "queue" || stored === "both" ? stored : "both";
 }
 
 function mergeWithTopWindow(previous: EventItem[], freshTop: EventItem[], targetLimit: number): EventItem[] {
@@ -111,6 +145,102 @@ function isSelfEvent(item: EventItem, currentUserEmail: string) {
     currentUserEmail,
   });
   return relevance === "self";
+}
+
+function formatSecondsCompact(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds)) return "—";
+  const safe = Math.max(0, Math.round(seconds));
+  if (safe < 60) return `${safe} сек`;
+  const minutes = Math.floor(safe / 60);
+  const rest = safe % 60;
+  if (minutes < 60) return rest ? `${minutes} мин ${rest} сек` : `${minutes} мин`;
+  const hours = Math.floor(minutes / 60);
+  const minuteRest = minutes % 60;
+  return minuteRest ? `${hours} ч ${minuteRest} мин` : `${hours} ч`;
+}
+
+function jobStatusLabel(status: string): string {
+  if (status === "QUEUED") return "В очереди";
+  if (status === "RUNNING") return "В работе";
+  if (status === "CANCEL_REQUESTED") return "Остановка";
+  return status;
+}
+
+function TaskQueueCard({ job, nowMs }: { job: CrawlerJobSample; nowMs: number }) {
+  const waitText = job.status === "QUEUED" && job.scheduled_at
+    ? formatSecondsCompact((nowMs - Date.parse(job.scheduled_at)) / 1000)
+    : "";
+  return (
+    <Card style={{ padding: 10, display: "grid", gap: 6 }}>
+      <SectionHeaderRow
+        title={<div style={{ fontWeight: 700, fontSize: 12 }}>Job #{job.job_id}</div>}
+        actions={<StatusText tone={job.status === "RUNNING" ? "success" : "muted"}>{jobStatusLabel(job.status)}</StatusText>}
+      />
+      <MetaText opacity={0.78}>
+        Проект #{job.project_id} · сайт #{job.project_site_id}
+        {job.run_id ? ` · run #${job.run_id}` : ""}
+      </MetaText>
+      <MetaText opacity={0.68}>
+        {job.kind}
+        {job.attempts > 0 ? ` · попытка ${job.attempts}` : ""}
+        {waitText ? ` · ждёт ${waitText}` : ""}
+      </MetaText>
+      {job.heartbeat_at && <MetaText opacity={0.62}>Heartbeat: {formatApiTime(job.heartbeat_at)}</MetaText>}
+    </Card>
+  );
+}
+
+function TaskQueuePanel({
+  readiness,
+  loading,
+  error,
+  canView,
+  nowMs,
+}: {
+  readiness: CrawlerReadiness | null;
+  loading: boolean;
+  error: string;
+  canView: boolean;
+  nowMs: number;
+}) {
+  if (!canView) {
+    return (
+      <ScrollableRegion style={{ display: "grid", gap: 8, alignContent: "start", gridAutoRows: "max-content", overflowX: "visible" }}>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>Очередь задач</div>
+        <EmptyState text="Операционная очередь доступна администратору." />
+      </ScrollableRegion>
+    );
+  }
+
+  const jobs = readiness?.jobs;
+  const sample = jobs?.sample || [];
+  return (
+    <ScrollableRegion style={{ display: "grid", gap: 8, alignContent: "start", gridAutoRows: "max-content", overflowX: "visible" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>Очередь задач</div>
+        <StatusText tone={readiness?.ready ? "success" : "warning"} style={{ fontSize: 12 }}>
+          {readiness ? (readiness.ready ? "Готово" : "Проверить") : loading ? "Загрузка" : "—"}
+        </StatusText>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
+        <Card style={{ padding: 8 }}><MetaText opacity={0.68}>Очередь</MetaText><div style={{ fontWeight: 800 }}>{jobs?.queued ?? 0}</div></Card>
+        <Card style={{ padding: 8 }}><MetaText opacity={0.68}>В работе</MetaText><div style={{ fontWeight: 800 }}>{jobs?.running ?? 0}</div></Card>
+        <Card style={{ padding: 8 }}><MetaText opacity={0.68}>Остановка</MetaText><div style={{ fontWeight: 800 }}>{jobs?.cancel_requested ?? 0}</div></Card>
+      </div>
+      {jobs?.diagnostics?.oldest_queued_age_seconds != null && (
+        <MetaText opacity={0.72}>Старейшая задача ждёт: {formatSecondsCompact(jobs.diagnostics.oldest_queued_age_seconds)}</MetaText>
+      )}
+      {loading && <MetaText>Обновляем очередь...</MetaText>}
+      {error && <StatusText tone="warning">{error}</StatusText>}
+      {readiness?.issues?.slice(0, 2).map((issue) => (
+        <StatusText key={issue.code} tone={issue.severity === "critical" ? "danger" : "warning"} style={{ fontSize: 12 }}>
+          {issue.message}
+        </StatusText>
+      ))}
+      {sample.map((job) => <TaskQueueCard key={job.job_id} job={job} nowMs={nowMs} />)}
+      {!loading && sample.length === 0 && !error && <EmptyState text="Активных задач crawler нет." />}
+    </ScrollableRegion>
+  );
 }
 
 function NotificationCard({
@@ -348,6 +478,10 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   const [lastUpdated, setLastUpdated] = useState<string>("");
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [viewMode, setViewMode] = useState<SidebarRightViewMode>(() => readSidebarRightViewMode());
+  const [crawlerReadiness, setCrawlerReadiness] = useState<CrawlerReadiness | null>(null);
+  const [crawlerReadinessLoading, setCrawlerReadinessLoading] = useState(false);
+  const [crawlerReadinessError, setCrawlerReadinessError] = useState("");
+  const [crawlerReadinessNowMs, setCrawlerReadinessNowMs] = useState(0);
   const seenTopNotificationIdsRef = useRef<Set<number>>(new Set());
   const seenTopActionIdsRef = useRef<Set<number>>(new Set());
   const [contextItem, setContextItem] = useState<EventItem | null>(null);
@@ -366,6 +500,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
     reset: resetContextTask,
     setErrorMessage: setContextErrorMessage,
   } = useGuardedAsyncState();
+  const canViewQueue = hasPermission(user?.role, "audit.view");
 
   function selectViewMode(nextMode: SidebarRightViewMode) {
     setViewMode(nextMode);
@@ -488,6 +623,38 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
       { emitCurrent: true },
     );
   }, [applyPolledData]);
+
+  useEffect(() => {
+    if (!canViewQueue || collapsed) return;
+    let active = true;
+    let controller: AbortController | null = null;
+
+    async function loadReadiness(silent = false) {
+      controller?.abort();
+      controller = new AbortController();
+      if (!silent) setCrawlerReadinessLoading(true);
+      try {
+        const data = await apiGet<CrawlerReadiness>("/crawler/readiness", { signal: controller.signal });
+        if (!active) return;
+        setCrawlerReadiness(data);
+        setCrawlerReadinessNowMs(Date.now());
+        setCrawlerReadinessError("");
+      } catch (err) {
+        if (!active || isAbortError(err)) return;
+        setCrawlerReadinessError(err instanceof Error ? err.message : "Не удалось загрузить очередь задач.");
+      } finally {
+        if (active && !silent) setCrawlerReadinessLoading(false);
+      }
+    }
+
+    void loadReadiness(false);
+    const timer = window.setInterval(() => void loadReadiness(true), 10000);
+    return () => {
+      active = false;
+      controller?.abort();
+      window.clearInterval(timer);
+    };
+  }, [canViewQueue, collapsed]);
   useEffect(() => {
     let active = true;
     getAuditActionCatalogCached()
@@ -698,6 +865,8 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   );
   const showNotifications = viewMode === "both" || viewMode === "notifications";
   const showActions = viewMode === "both" || viewMode === "activity";
+  const showQueue = viewMode === "both" || viewMode === "queue";
+  const sidebarContentRows = viewMode === "both" ? "1fr 1px 1fr 1px 1fr" : "minmax(0, 1fr)";
 
   return (
     <>
@@ -749,15 +918,18 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
 
           {sectionHeader}
 
-          <div className="sidebar-right-view-toggle" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
+          <div className="sidebar-right-view-toggle" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6 }}>
             <Button size="sm" variant="panel-toggle" active={viewMode === "both"} onClick={() => selectViewMode("both")}>
-              Оба
+              Все
             </Button>
             <Button size="sm" variant="panel-toggle" active={viewMode === "notifications"} onClick={() => selectViewMode("notifications")}>
               Увед.
             </Button>
             <Button size="sm" variant="panel-toggle" active={viewMode === "activity"} onClick={() => selectViewMode("activity")}>
               Лента
+            </Button>
+            <Button size="sm" variant="panel-toggle" active={viewMode === "queue"} onClick={() => selectViewMode("queue")}>
+              Очередь
             </Button>
           </div>
 
@@ -766,7 +938,7 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
               overflow: "hidden",
               minHeight: 0,
               display: "grid",
-              gridTemplateRows: viewMode === "both" ? "1fr 1px 1fr" : "minmax(0, 1fr)",
+              gridTemplateRows: sidebarContentRows,
               gap: 10,
             }}
           >
@@ -811,6 +983,18 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
               ))}
               {actions.length === 0 && !error && <EmptyState text="Событий пока нет." />}
             </ScrollableRegion>
+            )}
+
+            {viewMode === "both" && <div style={{ background: "#3333" }} />}
+
+            {showQueue && (
+              <TaskQueuePanel
+                readiness={crawlerReadiness}
+                loading={crawlerReadinessLoading}
+                error={crawlerReadinessError}
+                canView={canViewQueue}
+                nowMs={crawlerReadinessNowMs}
+              />
             )}
           </div>
         </div>

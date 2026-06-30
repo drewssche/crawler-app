@@ -372,15 +372,21 @@ test("sidebars support compact workspace and event-center view modes", () => {
   assert.match(sidebarLeftSource, /collapsed: boolean/);
   assert.match(sidebarLeftSource, /Развернуть левое меню/);
   assert.match(sidebarLeftSource, /Свернуть левое меню/);
-  assert.match(sidebarRightSource, /SidebarRightViewMode = "both" \| "notifications" \| "activity"/);
+  assert.match(sidebarRightSource, /SidebarRightViewMode = "both" \| "notifications" \| "activity" \| "queue"/);
   assert.match(sidebarRightSource, /SIDEBAR_RIGHT_VIEW_STORAGE_KEY/);
   assert.match(sidebarRightSource, /viewMode === "both"/);
   assert.match(sidebarRightSource, /viewMode === "notifications"/);
   assert.match(sidebarRightSource, /viewMode === "activity"/);
-  assert.match(sidebarRightSource, /Оба/);
+  assert.match(sidebarRightSource, /viewMode === "queue"/);
+  assert.match(sidebarRightSource, /crawlerReadiness/);
+  assert.match(sidebarRightSource, /\/crawler\/readiness/);
+  assert.match(sidebarRightSource, /TaskQueuePanel/);
+  assert.match(sidebarRightSource, /Очередь задач/);
+  assert.match(sidebarRightSource, /Все/);
   assert.match(sidebarRightSource, /Увед\./);
   assert.match(sidebarRightSource, /Лента/);
-  assert.match(sidebarRightSource, /gridTemplateRows: viewMode === "both" \? "1fr 1px 1fr" : "minmax\(0, 1fr\)"/);
+  assert.match(sidebarRightSource, /Очередь/);
+  assert.match(sidebarRightSource, /sidebarContentRows = viewMode === "both" \? "1fr 1px 1fr 1px 1fr" : "minmax\(0, 1fr\)"/);
 });
 
 test("page inspector exposes on-demand runtime consent audit", () => {
