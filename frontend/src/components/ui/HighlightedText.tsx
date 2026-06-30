@@ -41,8 +41,9 @@ export default function HighlightedText({
           {chunk.hit ? (
             <mark
               style={{
-                background: "rgba(106,160,255,0.28)",
-                color: "inherit",
+                background: "rgba(255, 214, 102, 0.34)",
+                color: "#fff3bf",
+                border: "1px solid rgba(255, 214, 102, 0.42)",
                 borderRadius: 4,
                 padding: "0 2px",
               }}

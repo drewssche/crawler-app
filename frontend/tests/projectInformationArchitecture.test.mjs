@@ -20,6 +20,7 @@ const safeSnapshotSource = await readFile(new URL("../src/utils/safeSnapshotDocu
 const quotaErrorsSource = await readFile(new URL("../src/utils/quotaErrors.ts", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../src/index.css", import.meta.url), "utf8");
 const renderedSnapshotSource = await readFile(new URL("../src/components/projects/RenderedSnapshotView.tsx", import.meta.url), "utf8");
+const highlightedTextSource = await readFile(new URL("../src/components/ui/HighlightedText.tsx", import.meta.url), "utf8");
 
 test("project page exposes the consolidated three-tab information architecture", () => {
   for (const label of ["Основная", "История", "Настройки"]) {
@@ -94,6 +95,12 @@ test("project members are added through searchable user combobox with highlight 
   assert.match(membersSource, /Ожидает подтверждения/);
   assert.match(membersSource, /Пользователь не найден/);
   assert.match(membersSource, /userLookupNoMatch/);
+});
+
+test("shared search highlight uses visible warm contrast", () => {
+  assert.match(highlightedTextSource, /rgba\(255, 214, 102, 0\.34\)/);
+  assert.match(highlightedTextSource, /#fff3bf/);
+  assert.match(highlightedTextSource, /rgba\(255, 214, 102, 0\.42\)/);
 });
 
 test("project creation uses explicit site cards instead of a shared domains textarea", () => {
