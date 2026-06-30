@@ -277,8 +277,8 @@ function ProjectPersistentDetails({
   }
 
   return (
-    <details open={open} onToggle={handleToggle}>
-      <summary style={summaryStyle}>{summary}</summary>
+    <details className="project-persistent-details" open={open} onToggle={handleToggle}>
+      <summary className="project-persistent-summary" style={summaryStyle}>{summary}</summary>
       {children}
     </details>
   );

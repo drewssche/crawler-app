@@ -322,6 +322,17 @@ test("compare layout keeps page info next to its own side and preserves central 
   assert.match(cssSource, /compare-workspace-grid\.is-both \.compare-central-stage/);
 });
 
+test("interactive controls expose consistent hover and keyboard focus polish", () => {
+  assert.match(cssSource, /\.interactive-row:focus-visible/);
+  assert.match(cssSource, /\.project-persistent-summary:hover/);
+  assert.match(cssSource, /\.project-persistent-summary:focus-visible/);
+  assert.match(cssSource, /\.compare-page-result:focus-visible/);
+  assert.match(cssSource, /\.element-picker-toggle:hover:not\(:disabled\)/);
+  assert.match(cssSource, /\.inspector-details:hover/);
+  assert.match(source, /className="project-persistent-details"/);
+  assert.match(source, /className="project-persistent-summary"/);
+});
+
 test("sidebars support compact workspace and event-center view modes", () => {
   assert.match(layoutSource, /leftCollapsed/);
   assert.match(layoutSource, /SIDEBAR_LEFT_COLLAPSED_STORAGE_KEY/);

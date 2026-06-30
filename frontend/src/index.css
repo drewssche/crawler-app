@@ -243,12 +243,24 @@ button:focus-visible {
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .compare-page-result:hover,
 .compare-page-result.is-selected {
   border-color: rgba(120,166,255,0.54);
   background: rgba(120,166,255,0.12);
+  box-shadow: 0 0 0 1px rgba(120,166,255,0.18) inset;
+}
+
+.compare-page-result:hover {
+  transform: translateY(-1px);
+}
+
+.compare-page-result:focus-visible {
+  outline: none;
+  border-color: rgba(120,166,255,0.72);
+  box-shadow: 0 0 0 2px rgba(120,166,255,0.24);
 }
 
 .compare-page-result-main {
@@ -291,6 +303,19 @@ button:focus-visible {
   line-height: 1.2;
   padding: 6px 10px;
   cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.element-picker-toggle:hover:not(:disabled) {
+  border-color: rgba(120,166,255,0.68);
+  background: rgba(120,166,255,0.16);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.18);
+  transform: translateY(-1px);
+}
+
+.element-picker-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(120,166,255,0.28);
 }
 
 .element-picker-toggle.is-active {
@@ -553,6 +578,7 @@ button:focus-visible {
   border-radius: 10px;
   padding: 8px 10px;
   background: rgba(255,255,255,0.025);
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .inspector-details > summary {
@@ -560,6 +586,25 @@ button:focus-visible {
   font-size: 12px;
   font-weight: 700;
   opacity: 0.82;
+  border-radius: 8px;
+  transition: color 160ms ease, opacity 160ms ease, background-color 160ms ease;
+}
+
+.inspector-details:hover,
+.inspector-details:focus-within {
+  border-color: rgba(120,166,255,0.32);
+  background: rgba(120,166,255,0.045);
+}
+
+.inspector-details > summary:hover,
+.inspector-details > summary:focus-visible {
+  color: #cfe0ff;
+  opacity: 1;
+}
+
+.inspector-details > summary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(120,166,255,0.22);
 }
 
 .rendered-snapshot-shell {
@@ -748,6 +793,35 @@ button:focus-visible {
   border-color: rgba(106, 160, 255, 0.38) !important;
   box-shadow: 0 0 0 1px rgba(106, 160, 255, 0.18) inset;
   transform: translateY(-1px);
+}
+
+.interactive-row:focus-visible {
+  outline: none;
+  border-color: rgba(106, 160, 255, 0.65) !important;
+  box-shadow: 0 0 0 2px rgba(106, 160, 255, 0.24) inset;
+}
+
+.project-persistent-details {
+  border-radius: 10px;
+}
+
+.project-persistent-summary {
+  border-radius: 8px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+}
+
+.project-persistent-summary:hover {
+  color: #cfe0ff;
+  background: rgba(120,166,255,0.07);
+}
+
+.project-persistent-summary:focus-visible {
+  outline: none;
+  color: #eaf2ff;
+  background: rgba(120,166,255,0.08);
+  box-shadow: 0 0 0 2px rgba(120,166,255,0.22);
 }
 
 .interactive-row.project-row:hover {
