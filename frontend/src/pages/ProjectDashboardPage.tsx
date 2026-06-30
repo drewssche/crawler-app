@@ -1946,22 +1946,42 @@ export default function ProjectDashboardPage() {
                 <div style={{ display: "grid", gap: 8 }}>
                   {runs.map((run) => (
                     <Card key={run.id} style={{ padding: 10 }}>
-                      <div style={{ display: "grid", gap: 6 }}>
+                      <div style={{ display: "grid", gap: 8 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                           <div style={{ fontWeight: 700 }}>{formatRunTitle(run.started_at)}</div>
                           <ProjectRunBadge status={run.status} />
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                          <MetaText>Контекст просмотра: {run.persona?.label || "Гость"}</MetaText>
+                          <AccentPill tone="info" title="Контекст доступа, под которым crawler открывал страницы.">
+                            {run.persona?.label || "Гость"}
+                          </AccentPill>
                           <RunRuntimePill runtime={run.crawl_runtime} />
+                          <AccentPill tone="neutral" title="Сколько страниц попало в результат этого прогона.">
+                            {run.pages_total} страниц
+                          </AccentPill>
+                          <AccentPill tone={run.pages_changed > 0 ? "warning" : "neutral"} title="Сколько страниц изменилось относительно предыдущего сравнимого результата.">
+                            {run.pages_changed} изменений
+                          </AccentPill>
+                          <AccentPill tone={run.status === "FAILED" ? "danger" : "neutral"} title="Длительность по времени старта и завершения.">
+                            {formatDuration(run.started_at, run.finished_at)}
+                          </AccentPill>
                         </div>
-                        <MetaText>Старт: {formatOperationalDateTime(run.started_at)}</MetaText>
-                        <MetaText>Завершение: {run.finished_at ? formatOperationalDateTime(run.finished_at) : "еще выполняется"}</MetaText>
-                        <MetaText>Длительность: {formatDuration(run.started_at, run.finished_at)}</MetaText>
-                        <MetaText>Страниц: {run.pages_total}, изменений: {run.pages_changed}</MetaText>
-                        {run.status === "FAILED" && run.failure_message && (
-                          <StatusText tone="danger">{run.failure_message}</StatusText>
-                        )}
+                        <ProjectPersistentDetails
+                          storageKey={`history-run-${run.id}`}
+                          summary="Детали"
+                          summaryStyle={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
+                        >
+                          <div style={{ display: "grid", gap: 5, marginTop: 8 }}>
+                            <MetaText>Старт: {formatOperationalDateTime(run.started_at)}</MetaText>
+                            <MetaText>Завершение: {run.finished_at ? formatOperationalDateTime(run.finished_at) : "ещё выполняется"}</MetaText>
+                            <MetaText>Обнаружено страниц: {run.pages_discovered}</MetaText>
+                            {run.current_url && <MetaText>Текущий URL: {run.current_url}</MetaText>}
+                            {run.failure_code && <MetaText>Код ошибки: {run.failure_code}</MetaText>}
+                            {run.failure_message && (
+                              <StatusText tone="danger">{run.failure_message}</StatusText>
+                            )}
+                          </div>
+                        </ProjectPersistentDetails>
                       </div>
                     </Card>
                   ))}

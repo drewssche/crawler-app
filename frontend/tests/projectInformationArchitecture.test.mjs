@@ -346,6 +346,10 @@ test("project run history exposes crawl runtime explicitly", () => {
   assert.match(source, /Browser runtime/);
   assert.match(source, /HTTP runtime/);
   assert.match(source, /crawl_runtime/);
+  assert.match(source, /storageKey=\{`history-run-\$\{run\.id\}`\}/);
+  assert.match(source, /run\.pages_total\} страниц/);
+  assert.match(source, /run\.pages_changed\} изменений/);
+  assert.doesNotMatch(source, /Контекст просмотра: \{run\.persona/);
 });
 
 test("project quota failures are explained as user-facing limits", () => {
