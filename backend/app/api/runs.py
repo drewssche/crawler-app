@@ -99,13 +99,36 @@ class StartSiteRunIn(BaseModel):
     crawl_persona_id: int | None = None
 
 
-def _extract_html_title(html: str | None) -> str:
+def _extract_page_search_meta(html: str | None) -> dict[str, str]:
     if not html:
-        return ""
-    title = BeautifulSoup(html, "html.parser").title
-    if not title or not title.string:
-        return ""
-    return title.string.strip()
+        return {"title": "", "description": "", "h1": ""}
+    soup = BeautifulSoup(html, "html.parser")
+    title = soup.title.string.strip() if soup.title and soup.title.string else ""
+    description_tag = soup.find("meta", attrs={"name": lambda value: value and value.lower() == "description"})
+    description = str(description_tag.get("content") or "").strip() if description_tag else ""
+    h1 = soup.find("h1")
+    h1_text = h1.get_text(" ", strip=True) if h1 else ""
+    return {"title": title, "description": description, "h1": h1_text}
+
+
+def _serialize_page_list_item(page: Page) -> dict[str, Any]:
+    search_meta = _extract_page_search_meta(page.html)
+    return {
+        "id": page.id,
+        "run_id": page.run_id,
+        "url": page.url,
+        "status_code": page.status_code,
+        "content_type": page.content_type,
+        "html_hash": page.html_hash,
+        "final_url": page.final_url,
+        "final_status_code": page.final_status_code,
+        "redirect_chain_json": page.redirect_chain_json,
+        "fetch_error_code": page.fetch_error_code,
+        "fetch_error_message": page.fetch_error_message,
+        "response_time_ms": page.response_time_ms,
+        "crawl_batch_no": page.crawl_batch_no,
+        **search_meta,
+    }
 
 
 def _serialize_run(run: Run, persona: CrawlPersona | None = None) -> dict:
@@ -1918,9 +1941,14 @@ def list_pages(
     query = db.query(Page).filter(Page.run_id == run_id).order_by(Page.id.asc())
     paged = paginate_query(query, page=page, page_size=page_size)
     if page is None:
-        return paged
+        return [_serialize_page_list_item(item) for item in paged]
     items, total, safe_page, safe_page_size = paged
-    return build_paged_response(items=items, total=total, page=safe_page, page_size=safe_page_size)
+    return build_paged_response(
+        items=[_serialize_page_list_item(item) for item in items],
+        total=total,
+        page=safe_page,
+        page_size=safe_page_size,
+    )
 
 
 @router.get("/{run_id}/page-catalog")
@@ -1945,7 +1973,7 @@ def list_page_catalog(
             "url": row.url,
             "status_code": row.status_code,
             "html_hash": row.html_hash,
-            "title": _extract_html_title(row.html),
+            "title": _extract_page_search_meta(row.html)["title"],
         }
         for row in rows
     ]

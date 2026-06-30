@@ -93,6 +93,9 @@ type ProjectPage = {
   fetch_error_message: string | null;
   redirect_chain_json: Array<{ url: string; status_code: number; location: string | null }> | null;
   crawl_batch_no: number | null;
+  title?: string | null;
+  description?: string | null;
+  h1?: string | null;
 };
 
 type ProjectRunResult = {
@@ -243,6 +246,9 @@ type StructureRow = {
   fetchErrorCode: string | null;
   fetchErrorMessage: string | null;
   batchNo: number | null;
+  title: string;
+  description: string;
+  h1: string;
 };
 
 function readStoredDisclosureState(storageKey: string, defaultOpen: boolean): boolean {
@@ -1176,6 +1182,9 @@ export default function ProjectDashboardPage() {
         fetchErrorCode: row.fetch_error_code,
         fetchErrorMessage: row.fetch_error_message,
         batchNo: row.crawl_batch_no,
+        title: row.title || "",
+        description: row.description || "",
+        h1: row.h1 || "",
       });
     }
     if (!structureIsLive) {
@@ -1193,6 +1202,9 @@ export default function ProjectDashboardPage() {
           fetchErrorCode: row.fetch_error_code,
           fetchErrorMessage: row.fetch_error_message,
           batchNo: null,
+          title: row.title || "",
+          description: row.description || "",
+          h1: row.h1 || "",
         });
       }
     }
@@ -1214,6 +1226,9 @@ export default function ProjectDashboardPage() {
         String(row.finalStatusCode || ""),
         row.fetchErrorCode || "",
         row.fetchErrorMessage || "",
+        row.title,
+        row.description,
+        row.h1,
       ].some((value) => value.toLowerCase().includes(q));
     });
   }, [structureRows, structureSearch, structureViewFilter]);
@@ -1840,7 +1855,7 @@ export default function ProjectDashboardPage() {
                       <ClearableInput
                         value={structureSearch}
                         onChange={setStructureSearch}
-                        placeholder="Поиск по URL, final URL, домену, HTTP-статусу или ошибке..."
+                        placeholder="Поиск по URL, title, description, H1, final URL, HTTP-статусу или ошибке..."
                       />
                     </>
                   )}

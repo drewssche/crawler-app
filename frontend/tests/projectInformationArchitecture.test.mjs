@@ -129,6 +129,13 @@ test("site anomaly UX distinguishes baseline, normal and anomaly states", () => 
 test("structure opens an on-demand page context drawer with SEO and broken links", () => {
   assert.match(source, /getPageContext\(structureRunId, url\)/);
   assert.match(source, /PageContextDrawer/);
+  assert.match(source, /title\?: string \| null/);
+  assert.match(source, /description\?: string \| null/);
+  assert.match(source, /h1\?: string \| null/);
+  assert.match(source, /row\.title/);
+  assert.match(source, /row\.description/);
+  assert.match(source, /row\.h1/);
+  assert.match(source, /Поиск по URL, title, description, H1/);
   assert.match(structureSource, /onPageSelect\(node\.url\)/);
   assert.match(structureSource, /onDirectorySelect/);
   assert.doesNotMatch(structureSource, /window\.open\(node\.url/);

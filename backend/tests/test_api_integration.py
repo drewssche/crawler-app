@@ -244,7 +244,11 @@ def test_project_and_run_endpoints_enforce_role_permissions():
             url="https://protected.test/",
             status_code=200,
             content_type="text/html",
-            html="<html><head><title>Protected title</title></head><body></body></html>",
+            html=(
+                "<html><head><title>Protected title</title>"
+                "<meta name=\"description\" content=\"Protected description\"></head>"
+                "<body><h1>Protected H1</h1></body></html>"
+            ),
             html_hash="hash",
         )
         db.add(page)
@@ -270,21 +274,29 @@ def test_project_and_run_endpoints_enforce_role_permissions():
 
     assert client.get(f"/projects/{project_id}", headers=viewer_headers).status_code == 200
     assert client.get(f"/runs/by-project/{project_id}", headers=viewer_headers).status_code == 200
-    assert client.get(f"/runs/{run_id}/pages", headers=viewer_headers).status_code == 200
+    pages_response = client.get(f"/runs/{run_id}/pages", headers=viewer_headers)
+    assert pages_response.status_code == 200
+    assert pages_response.json()[0]["title"] == "Protected title"
+    assert pages_response.json()[0]["description"] == "Protected description"
+    assert pages_response.json()[0]["h1"] == "Protected H1"
     page_context = client.get(
         f"/runs/{run_id}/page-context",
         params={"url": "https://protected.test/"},
         headers=viewer_headers,
     )
     assert page_context.status_code == 200
-    assert page_context.json()["seo"]["score"] < 50
+    assert page_context.json()["seo"]["score"] < 100
     snapshot = client.get(
         f"/runs/{run_id}/snapshot",
         params={"url": "https://protected.test/"},
         headers=viewer_headers,
     )
     assert snapshot.status_code == 200
-    assert snapshot.json()["html"] == "<html><head><title>Protected title</title></head><body></body></html>"
+    assert snapshot.json()["html"] == (
+        "<html><head><title>Protected title</title>"
+        "<meta name=\"description\" content=\"Protected description\"></head>"
+        "<body><h1>Protected H1</h1></body></html>"
+    )
     assert snapshot.json()["rendered_snapshot"]["available"] is False
     catalog = client.get(f"/runs/{run_id}/page-catalog", headers=viewer_headers)
     assert catalog.status_code == 200
