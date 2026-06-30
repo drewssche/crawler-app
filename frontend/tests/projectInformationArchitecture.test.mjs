@@ -183,6 +183,9 @@ test("structure can show separate sections for every access context", () => {
   assert.match(source, /multiContextStructureSections/);
   assert.match(source, /activeMultiContextStructureRunId/);
   assert.match(source, /activeMultiContextStructureSection/);
+  assert.match(source, /domainPickerSearch/);
+  assert.match(source, /structure-domain-picker/);
+  assert.match(source, /Найти домен/);
   assert.match(source, /gridTemplateColumns: "repeat\(auto-fit, minmax\(220px, 1fr\)\)"/);
   assert.match(source, /Для выбранного сайта пока нет готовых структур по контекстам доступа/);
   assert.match(source, /handleOpenPageContextForRun\(activeMultiContextStructureSection\.run\.id, url\)/);

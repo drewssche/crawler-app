@@ -587,6 +587,7 @@ export default function ProjectDashboardPage() {
   const [activeTab, setActiveTab] = useState<ProjectTab>("main");
   const [activeSettingsSection, setActiveSettingsSection] = useState<ProjectSettingsSectionId>("sites");
   const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
+  const [domainPickerSearch, setDomainPickerSearch] = useState("");
   const [structureSearch, setStructureSearch] = useState("");
   const [structureViewFilter, setStructureViewFilter] = useState<StructureViewFilter>("all");
   const [pagesLoading, setPagesLoading] = useState(false);
@@ -1156,6 +1157,11 @@ export default function ProjectDashboardPage() {
   );
   const hasDomainFilter = selectedDomains.length > 0;
   const activeDomainCount = hasDomainFilter ? selectedDomains.length : domains.length;
+  const filteredDomainOptions = useMemo(() => {
+    const q = domainPickerSearch.trim().toLowerCase();
+    if (!q) return domains;
+    return domains.filter((domain) => domain.toLowerCase().includes(q));
+  }, [domainPickerSearch, domains]);
   const enabledPersonas = useMemo(
     () => sitePersonas.filter((persona) => persona.is_enabled !== false),
     [sitePersonas],
@@ -1249,6 +1255,7 @@ export default function ProjectDashboardPage() {
 
   useEffect(() => {
     setSelectedDomains((current) => current.filter((domain) => domains.includes(domain)));
+    setDomainPickerSearch("");
   }, [domains]);
 
   useEffect(() => {
@@ -1764,41 +1771,63 @@ export default function ProjectDashboardPage() {
                       ))}
                     </div>
                     {domains.length > 1 && (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                        <MetaText opacity={0.72}>Домены:</MetaText>
-                        <CardActionButton
-                          compact
-                          active={!hasDomainFilter}
-                          onClick={() => setSelectedDomains([])}
-                        >
-                          Все · {domains.length}
-                        </CardActionButton>
-                        {domains.map((domain) => {
-                          const active = !hasDomainFilter || selectedDomains.includes(domain);
-                          return (
+                      <ProjectPersistentDetails
+                        storageKey="structure-domain-picker"
+                        summary={
+                          <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <span>Домены</span>
+                            <AccentPill tone={hasDomainFilter ? "info" : "neutral"}>
+                              {hasDomainFilter ? `${activeDomainCount} из ${domains.length}` : `все · ${domains.length}`}
+                            </AccentPill>
+                          </span>
+                        }
+                        summaryStyle={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
+                      >
+                        <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                          <ClearableInput
+                            value={domainPickerSearch}
+                            onChange={setDomainPickerSearch}
+                            placeholder="Найти домен..."
+                          />
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                             <CardActionButton
-                              key={domain}
                               compact
-                              active={active}
-                              onClick={() => {
-                                setSelectedDomains((current) => {
-                                  if (current.length === 0) {
-                                    return domains.filter((item) => item !== domain);
-                                  }
-                                  if (current.includes(domain)) {
-                                    const next = current.filter((item) => item !== domain);
-                                    return next.length === domains.length ? [] : next;
-                                  }
-                                  const next = [...current, domain];
-                                  return next.length === domains.length ? [] : next;
-                                });
-                              }}
+                              active={!hasDomainFilter}
+                              onClick={() => setSelectedDomains([])}
                             >
-                              {domain}
+                              Все · {domains.length}
                             </CardActionButton>
-                          );
-                        })}
-                      </div>
+                            {filteredDomainOptions.map((domain) => {
+                              const active = !hasDomainFilter || selectedDomains.includes(domain);
+                              return (
+                                <CardActionButton
+                                  key={domain}
+                                  compact
+                                  active={active}
+                                  onClick={() => {
+                                    setSelectedDomains((current) => {
+                                      if (current.length === 0) {
+                                        return domains.filter((item) => item !== domain);
+                                      }
+                                      if (current.includes(domain)) {
+                                        const next = current.filter((item) => item !== domain);
+                                        return next.length === domains.length ? [] : next;
+                                      }
+                                      const next = [...current, domain];
+                                      return next.length === domains.length ? [] : next;
+                                    });
+                                  }}
+                                >
+                                  {domain}
+                                </CardActionButton>
+                              );
+                            })}
+                          </div>
+                          {filteredDomainOptions.length === 0 && (
+                            <MetaText opacity={0.68}>Совпадений по доменам не найдено.</MetaText>
+                          )}
+                        </div>
+                      </ProjectPersistentDetails>
                     )}
                     <MetaText opacity={0.62}>
                       Показано: {selectedViewPersona ? selectedViewPersona.label : "все контексты"} · домены {hasDomainFilter ? activeDomainCount : "все"}.
