@@ -226,6 +226,7 @@ type ActiveProjectJobsResponse = {
 };
 
 type ProjectTab = "main" | "history" | "settings";
+type ProjectSettingsSectionId = "sites" | "members" | "schedule" | "danger";
 type StructureViewFilter = "all" | "added" | "error";
 
 type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "redirect" | "error";
@@ -280,55 +281,6 @@ function ProjectPersistentDetails({
       <summary style={summaryStyle}>{summary}</summary>
       {children}
     </details>
-  );
-}
-
-function ProjectSettingsSection({
-  storageKey,
-  title,
-  description,
-  meta,
-  defaultOpen = false,
-  variant = "default",
-  children,
-}: {
-  storageKey: string;
-  title: string;
-  description: ReactNode;
-  meta?: ReactNode;
-  defaultOpen?: boolean;
-  variant?: "default" | "hint" | "warning" | "danger";
-  children: ReactNode;
-}) {
-  return (
-    <Card variant={variant} style={{ display: "grid", gap: 10 }}>
-      <ProjectPersistentDetails
-        storageKey={`settings-${storageKey}`}
-        defaultOpen={defaultOpen}
-        summary={
-          <>
-            <div>
-              <div style={{ fontWeight: 800 }}>{title}</div>
-              <MetaText opacity={0.68}>{description}</MetaText>
-            </div>
-            {meta ? <div>{meta}</div> : null}
-          </>
-        }
-        summaryStyle={{
-          cursor: "pointer",
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 10,
-          flexWrap: "wrap",
-          alignItems: "center",
-          listStyle: "none",
-        }}
-      >
-        <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-          {children}
-        </div>
-      </ProjectPersistentDetails>
-    </Card>
   );
 }
 
@@ -524,6 +476,7 @@ export default function ProjectDashboardPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
   const [activeTab, setActiveTab] = useState<ProjectTab>("main");
+  const [activeSettingsSection, setActiveSettingsSection] = useState<ProjectSettingsSectionId>("sites");
   const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
   const [structureSearch, setStructureSearch] = useState("");
   const [structureViewFilter, setStructureViewFilter] = useState<StructureViewFilter>("all");
@@ -1999,75 +1952,106 @@ export default function ProjectDashboardPage() {
 
           {activeTab === "settings" && canEditProject && (
             <div style={{ display: "grid", gap: 12 }}>
-              <ProjectSettingsSection
-                storageKey="sites"
-                title="Сайты и контексты доступа"
-                description="Домены, области мониторинга, personas и сессии crawler для этого проекта."
-                meta={<AccentPill tone="info">{sites.length} сайт(а)</AccentPill>}
-                defaultOpen
-              >
-                <ProjectSitesSettings
-                  projectId={project.id}
-                  compactHeader
-                  onChanged={() => {
-                    void loadSiteSummaries(project.id, true);
-                  }}
-                />
-              </ProjectSettingsSection>
-
-              <ProjectSettingsSection
-                storageKey="members"
-                title="Участники и права"
-                description="Кто видит проект, кто может запускать crawler и кто управляет доступами."
-                meta={<AccentPill tone="neutral">Права проекта</AccentPill>}
-              >
-                <ProjectMembersSettings projectId={project.id} compactHeader />
-              </ProjectSettingsSection>
-
-              <ProjectSettingsSection
-                storageKey="schedule"
-                title="Расписание"
-                description="Пока это ручной запуск. Автозапуск появится после backend-контракта расписаний."
-                meta={<AccentPill tone="neutral">Manual-only</AccentPill>}
-                variant="hint"
-              >
-                <div style={{ display: "grid", gap: 8 }}>
-                  <MetaText>
-                    Сейчас прогоны запускаются вручную. Автозапуск появится после backend-контракта расписаний и защиты от дублирующих запусков.
-                  </MetaText>
-                  <div>
-                    <CardActionButton
-                      variant="primary"
-                      onClick={() => void handleStartRun()}
-                      disabled={runPending || hasRunning}
-                    >
-                      {hasRunning ? "Прогон выполняется" : "Запустить сейчас"}
-                    </CardActionButton>
+              <Card>
+                <div style={{ display: "grid", gap: 10 }}>
+                  <SectionHeaderRow
+                    title={<div style={{ fontWeight: 800 }}>Настройки проекта</div>}
+                    actions={<AccentPill tone="neutral">{project.name}</AccentPill>}
+                  />
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8 }}>
+                    {([
+                      { id: "sites", title: "Сайты", meta: `${sites.length} сайт(а)`, tone: "info" },
+                      { id: "members", title: "Участники", meta: "Права", tone: "neutral" },
+                      { id: "schedule", title: "Расписание", meta: "Manual-only", tone: "neutral" },
+                      { id: "danger", title: "Опасная зона", meta: "Удаление", tone: "danger" },
+                    ] satisfies Array<{ id: ProjectSettingsSectionId; title: string; meta: string; tone: "info" | "neutral" | "danger" }>).map((item) => (
+                      <Card
+                        key={item.id}
+                        interactive
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={activeSettingsSection === item.id}
+                        variant={item.id === "danger" ? "danger" : "default"}
+                        onClick={() => setActiveSettingsSection(item.id)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          setActiveSettingsSection(item.id);
+                        }}
+                        style={{
+                          padding: 10,
+                          cursor: "pointer",
+                          borderColor: activeSettingsSection === item.id ? "rgba(120,166,255,0.78)" : undefined,
+                          background: activeSettingsSection === item.id ? "rgba(120,166,255,0.1)" : undefined,
+                          boxShadow: activeSettingsSection === item.id ? "0 0 0 1px rgba(120,166,255,0.22)" : undefined,
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                          <span style={{ fontWeight: 750 }}>{item.title}</span>
+                          <AccentPill tone={item.tone}>{item.meta}</AccentPill>
+                        </div>
+                      </Card>
+                    ))}
                   </div>
                 </div>
-              </ProjectSettingsSection>
+              </Card>
 
-              <ProjectSettingsSection
-                storageKey="danger-zone"
-                title="Опасная зона"
-                description="Необратимые действия по проекту. Здесь только операции, которые нельзя откатить."
-                meta={<AccentPill tone="danger">Требует внимания</AccentPill>}
-                variant="danger"
-              >
-                <div style={{ display: "grid", gap: 8 }}>
-                  <MetaText opacity={0.72}>
-                    Удаление проекта необратимо: будут удалены связанные прогоны и артефакты.
-                  </MetaText>
-                  <CardFooterActions>
-                    <CardActionButton
-                      variant="danger"
-                      onClick={() => setDeleteConfirmOpen(true)}
-                    >
-                      Удалить проект
-                    </CardActionButton>
-                  </CardFooterActions>
-                </div>
-              </ProjectSettingsSection>
+              {activeSettingsSection === "sites" && (
+                <Card>
+                  <ProjectSitesSettings
+                    projectId={project.id}
+                    compactHeader
+                    onChanged={() => {
+                      void loadSiteSummaries(project.id, true);
+                    }}
+                  />
+                </Card>
+              )}
+
+              {activeSettingsSection === "members" && (
+                <Card>
+                  <ProjectMembersSettings projectId={project.id} compactHeader />
+                </Card>
+              )}
+
+              {activeSettingsSection === "schedule" && (
+                <Card variant="hint">
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <SectionHeaderRow
+                      title={<div style={{ fontWeight: 800 }}>Расписание</div>}
+                      actions={<AccentPill tone="neutral">Manual-only</AccentPill>}
+                    />
+                    <div>
+                      <CardActionButton
+                        variant="primary"
+                        onClick={() => void handleStartRun()}
+                        disabled={runPending || hasRunning}
+                      >
+                        {hasRunning ? "Прогон выполняется" : "Запустить сейчас"}
+                      </CardActionButton>
+                    </div>
+                  </div>
+                </Card>
+              )}
+
+              {activeSettingsSection === "danger" && (
+                <Card variant="danger">
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <SectionHeaderRow
+                      title={<div style={{ fontWeight: 800 }}>Опасная зона</div>}
+                      actions={<AccentPill tone="danger">Требует внимания</AccentPill>}
+                    />
+                    <CardFooterActions>
+                      <CardActionButton
+                        variant="danger"
+                        onClick={() => setDeleteConfirmOpen(true)}
+                      >
+                        Удалить проект
+                      </CardActionButton>
+                    </CardFooterActions>
+                  </div>
+                </Card>
+              )}
             </div>
           )}
         </>

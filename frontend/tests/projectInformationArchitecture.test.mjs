@@ -53,13 +53,15 @@ test("project disclosure blocks persist collapsed state locally", () => {
 
 test("settings contain real project parameters without a fake schedule save control", () => {
   assert.match(source, /activeTab === "settings"/);
-  assert.match(source, /ProjectSettingsSection/);
-  assert.match(source, /title="Сайты и контексты доступа"/);
-  assert.match(source, /title="Участники и права"/);
-  assert.match(source, /title="Расписание"/);
-  assert.match(source, /title="Опасная зона"/);
-  assert.match(source, /storageKey="sites"/);
-  assert.match(source, /storageKey="members"/);
+  assert.match(source, /activeSettingsSection/);
+  assert.match(source, /ProjectSettingsSectionId/);
+  assert.doesNotMatch(source, /function ProjectSettingsSection/);
+  assert.match(source, /title: "Сайты"/);
+  assert.match(source, /title: "Участники"/);
+  assert.match(source, />Расписание</);
+  assert.match(source, />Опасная зона</);
+  assert.match(source, /setActiveSettingsSection/);
+  assert.match(source, /aria-pressed=\{activeSettingsSection === item\.id\}/);
   assert.match(source, /<ProjectSitesSettings[\s\S]*compactHeader/);
   assert.match(source, /<ProjectMembersSettings[\s\S]*compactHeader/);
   assert.match(sitesSource, /compactHeader/);
