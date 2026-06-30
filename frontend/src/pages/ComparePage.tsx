@@ -82,6 +82,7 @@ function SnapshotSelector({
   label,
   sites,
   side,
+  suggestedUrl,
   onSiteChange,
   onPersonaFilterChange,
   onRunChange,
@@ -91,6 +92,7 @@ function SnapshotSelector({
   label: string;
   sites: ProjectSite[];
   side: SideState;
+  suggestedUrl?: string | null;
   onSiteChange: (siteId: number) => void;
   onPersonaFilterChange: (personaId: number | "all") => void;
   onRunChange: (runId: number) => void;
@@ -122,7 +124,11 @@ function SnapshotSelector({
     <Card className="compare-selector-card">
       <SectionHeaderRow
         title={<div style={{ fontWeight: 800 }}>{label}</div>}
-        actions={side.url ? <StatusText tone="success">Страница выбрана</StatusText> : <MetaText>Шаг 1</MetaText>}
+        actions={
+          side.loading
+            ? <CompareLoadingDot label="Загрузка" />
+            : side.url ? <StatusText tone="success">Страница выбрана</StatusText> : <MetaText>Шаг 1</MetaText>
+        }
       />
       <UiSelect
         value={side.siteId ?? ""}
@@ -195,12 +201,19 @@ function SnapshotSelector({
             <button
               key={page.id}
               type="button"
-              className={`compare-page-result${page.url === side.url ? " is-selected" : ""}`}
+              className={[
+                "compare-page-result",
+                page.url === side.url ? "is-selected" : "",
+                suggestedUrl && page.url === suggestedUrl && page.url !== side.url ? "is-auto-suggested" : "",
+              ].filter(Boolean).join(" ")}
               onClick={() => onPageChange(page.url)}
             >
               <span className="compare-page-result-main">{page.title || page.url}</span>
               {page.title && <span className="compare-page-result-url">{page.url}</span>}
-              <span className="compare-page-result-meta">HTTP {page.status_code}</span>
+              <span className="compare-page-result-meta">
+                {suggestedUrl && page.url === suggestedUrl && page.url !== side.url ? "Автоподбор · " : ""}
+                HTTP {page.status_code}
+              </span>
             </button>
           ))}
           {side.pages.length > 0 && visiblePages.length === 0 && (
@@ -208,9 +221,23 @@ function SnapshotSelector({
           )}
         </div>
       </div>
-      {side.loading && <MetaText>Загрузка...</MetaText>}
+      {side.loading && (
+        <MetaText style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+          <span className="compare-loading-dot" aria-hidden />
+          Загружаем данные этой стороны...
+        </MetaText>
+      )}
       {side.error && <StatusText tone="danger">{side.error}</StatusText>}
     </Card>
+  );
+}
+
+function CompareLoadingDot({ label = "Загрузка" }: { label?: string }) {
+  return (
+    <span className="compare-loading-inline" role="status" aria-label={label}>
+      <span className="compare-loading-dot" aria-hidden />
+      <span>{label}</span>
+    </span>
   );
 }
 
@@ -914,6 +941,7 @@ export default function ComparePage() {
           label="Левая сторона"
           sites={sites}
           side={left}
+          suggestedUrl={leftSuggestion?.page.url || null}
           onSiteChange={(siteId) => void selectSite("left", siteId)}
           onPersonaFilterChange={(personaId) => void selectPersonaFilter("left", personaId)}
           onRunChange={(runId) => void selectRun("left", runId)}
@@ -924,6 +952,7 @@ export default function ComparePage() {
           label="Правая сторона"
           sites={sites}
           side={right}
+          suggestedUrl={rightSuggestion?.page.url || null}
           onSiteChange={(siteId) => void selectSite("right", siteId)}
           onPersonaFilterChange={(personaId) => void selectPersonaFilter("right", personaId)}
           onRunChange={(runId) => void selectRun("right", runId)}
@@ -953,11 +982,14 @@ export default function ComparePage() {
             disabled={!pagesPicked || compareLoading}
             onClick={() => void startCompare()}
           >
-            {compareLoading ? "Загружаем сравнение..." : "Сравнить"}
+            {compareLoading ? <CompareLoadingDot label="Готовим сравнение" /> : "Сравнить"}
           </Button>
         </div>
         {compareLoading && (
-          <MetaText opacity={0.72}>Загружаем snapshots и контекст обеих страниц. После загрузки откроется рабочая область сравнения.</MetaText>
+          <MetaText opacity={0.72} style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+            <span className="compare-loading-dot" aria-hidden />
+            Загружаем snapshots и контекст обеих страниц. После загрузки откроется рабочая область сравнения.
+          </MetaText>
         )}
         {!ready && compareStarted && !compareLoading && (
           <StatusText tone="warning">Не удалось загрузить обе стороны. Проверьте ошибки в карточках выбора и попробуйте снова.</StatusText>
@@ -1012,7 +1044,7 @@ export default function ComparePage() {
       )}
 
       {ready && (
-        <Card style={{ padding: 8 }}>
+        <Card className="compare-focus-toolbar" style={{ padding: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
             <SegmentedControl
               value={panelView}
@@ -1065,6 +1097,7 @@ export default function ComparePage() {
 
       {ready && left.snapshot && right.snapshot && (
         <>
+        <div className="compare-focus-workspace">
         <div className={`compare-workspace-grid compare-work-area ${panelView === "both" ? "is-both" : `is-single is-${panelView}`}`}>
           {panelView !== "right" && (
             <PageInfoPanel label="Инфо левой страницы" context={left.context} side="left" />
@@ -1216,6 +1249,7 @@ export default function ComparePage() {
             )}
           </div>
         </Card>
+        </div>
         </>
       )}
     </div>

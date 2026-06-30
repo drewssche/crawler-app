@@ -174,6 +174,23 @@ button:focus-visible {
   align-content: start;
 }
 
+.compare-loading-inline {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.compare-loading-dot {
+  width: 0.78em;
+  height: 0.78em;
+  border-radius: 999px;
+  border: 2px solid rgba(255,255,255,0.24);
+  border-top-color: rgba(255, 214, 102, 0.9);
+  animation: projectRunSpin 820ms linear infinite;
+  flex: 0 0 auto;
+}
+
 .compare-page-picker {
   display: grid;
   gap: 8px;
@@ -253,6 +270,12 @@ button:focus-visible {
   box-shadow: 0 0 0 1px rgba(120,166,255,0.18) inset;
 }
 
+.compare-page-result.is-auto-suggested {
+  border-color: rgba(255, 214, 102, 0.52);
+  background: rgba(255, 214, 102, 0.1);
+  box-shadow: 0 0 0 1px rgba(255, 214, 102, 0.14) inset;
+}
+
 .compare-page-result:hover {
   transform: translateY(-1px);
 }
@@ -282,6 +305,11 @@ button:focus-visible {
   white-space: nowrap;
   color: rgba(226,231,239,0.68);
   font-size: 12px;
+}
+
+.compare-focus-toolbar {
+  border-color: rgba(120,166,255,0.22);
+  background: rgba(10, 16, 28, 0.58);
 }
 
 .page-inspector-grid {
@@ -390,6 +418,17 @@ button:focus-visible {
   gap: 10px;
   min-width: 0;
   align-items: start;
+}
+
+.compare-focus-workspace {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(120,166,255,0.18);
+  background:
+    radial-gradient(circle at top, rgba(120,166,255,0.08), transparent 34rem),
+    rgba(5, 9, 17, 0.28);
 }
 
 .compare-workspace-grid.is-both {
@@ -953,6 +992,7 @@ button:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .project-run-spinner,
+  .compare-loading-dot,
   .project-run-live-stage,
   .structure-tree-row-live-added {
     animation: none;
