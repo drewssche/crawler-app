@@ -46,6 +46,9 @@ type Props = {
 
 const POLL_TOP_LIMIT = 20;
 const SIDEBAR_RIGHT_VIEW_STORAGE_KEY = "crawler.sidebarRight.viewMode";
+const EVENT_TOAST_SEEN_STORAGE_KEY = "crawler.eventCenter.seenToastIds.v1";
+const EVENT_TOAST_SEEN_LIMIT = 160;
+const eventToastSeenIds = new Set<number>();
 
 type SidebarRightViewMode = "both" | "notifications" | "activity" | "queue";
 
@@ -86,6 +89,37 @@ function readSidebarRightViewMode(): SidebarRightViewMode {
   if (typeof window === "undefined") return "both";
   const stored = window.localStorage.getItem(SIDEBAR_RIGHT_VIEW_STORAGE_KEY);
   return stored === "notifications" || stored === "activity" || stored === "queue" || stored === "both" ? stored : "both";
+}
+
+function readSeenEventToastIds(): Set<number> {
+  if (typeof window === "undefined") return new Set(eventToastSeenIds);
+  try {
+    const raw = window.sessionStorage.getItem(EVENT_TOAST_SEEN_STORAGE_KEY);
+    if (!raw) return new Set(eventToastSeenIds);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set(eventToastSeenIds);
+    for (const id of parsed) {
+      if (typeof id === "number" && Number.isFinite(id)) {
+        eventToastSeenIds.add(id);
+      }
+    }
+  } catch {
+    // Ignore corrupted session state; Event Center itself remains the source of truth.
+  }
+  return new Set(eventToastSeenIds);
+}
+
+function rememberEventToastSeen(id: number) {
+  eventToastSeenIds.add(id);
+  if (typeof window === "undefined") return;
+  try {
+    const ids = Array.from(eventToastSeenIds).slice(-EVENT_TOAST_SEEN_LIMIT);
+    eventToastSeenIds.clear();
+    for (const nextId of ids) eventToastSeenIds.add(nextId);
+    window.sessionStorage.setItem(EVENT_TOAST_SEEN_STORAGE_KEY, JSON.stringify(ids));
+  } catch {
+    // Storage can be unavailable in private/sandboxed contexts; in-memory dedupe still works for this mount.
+  }
 }
 
 function mergeWithTopWindow(previous: EventItem[], freshTop: EventItem[], targetLimit: number): EventItem[] {
@@ -482,8 +516,9 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   const [crawlerReadinessLoading, setCrawlerReadinessLoading] = useState(false);
   const [crawlerReadinessError, setCrawlerReadinessError] = useState("");
   const [crawlerReadinessNowMs, setCrawlerReadinessNowMs] = useState(0);
-  const seenTopNotificationIdsRef = useRef<Set<number>>(new Set());
-  const seenTopActionIdsRef = useRef<Set<number>>(new Set());
+  const seenTopNotificationIdsRef = useRef<Set<number>>(readSeenEventToastIds());
+  const seenTopActionIdsRef = useRef<Set<number>>(readSeenEventToastIds());
+  const initialEventSnapshotSeededRef = useRef(false);
   const [contextItem, setContextItem] = useState<EventItem | null>(null);
   const [monitoringFocus, setMonitoringFocus] = useState<FocusHistoryResponse | null>(null);
   const [monitoringFocusRangeMinutes, setMonitoringFocusRangeMinutes] = useState(60);
@@ -571,6 +606,18 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
   );
 
   const applyPolledData = useCallback((data: { notifications: EventItem[]; actions: EventItem[] }) => {
+    const allowToast = initialEventSnapshotSeededRef.current;
+    if (!initialEventSnapshotSeededRef.current) {
+      initialEventSnapshotSeededRef.current = true;
+      for (const item of data.notifications.slice(0, POLL_TOP_LIMIT)) {
+        seenTopNotificationIdsRef.current.add(item.id);
+        rememberEventToastSeen(item.id);
+      }
+      for (const item of data.actions.slice(0, POLL_TOP_LIMIT)) {
+        seenTopActionIdsRef.current.add(item.id);
+        rememberEventToastSeen(item.id);
+      }
+    }
     const nextNotifications = mergeWithTopWindow(notificationsRef.current, data.notifications, POLL_TOP_LIMIT);
     const nextActions = mergeWithTopWindow(actionsRef.current, data.actions, POLL_TOP_LIMIT);
     const notificationsChanged = !areEventListsEqual(notificationsRef.current, nextNotifications);
@@ -590,23 +637,25 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
 
     const topNotification = data.notifications[0];
     if (topNotification) {
-      const wasSeen = seenTopNotificationIdsRef.current.has(topNotification.id);
+      const wasSeen = seenTopNotificationIdsRef.current.has(topNotification.id) || eventToastSeenIds.has(topNotification.id);
       const suppressToast = topNotification.meta?.suppress_toast === true;
-      if (!wasSeen && collapsed && !suppressToast && !isSelfEvent(topNotification, user?.email ?? "")) {
+      if (allowToast && !wasSeen && collapsed && !suppressToast && !isSelfEvent(topNotification, user?.email ?? "")) {
         const toast = buildToastFromEvent(topNotification, "notification");
         setToasts((prev) => [toast, ...prev.filter((x) => x.id !== toast.id)]);
       }
       seenTopNotificationIdsRef.current.add(topNotification.id);
+      rememberEventToastSeen(topNotification.id);
     }
 
     const topAction = data.actions[0];
     if (topAction) {
-      const wasSeen = seenTopActionIdsRef.current.has(topAction.id);
-      if (!wasSeen && collapsed && !isSelfEvent(topAction, user?.email ?? "")) {
+      const wasSeen = seenTopActionIdsRef.current.has(topAction.id) || eventToastSeenIds.has(topAction.id);
+      if (allowToast && !wasSeen && collapsed && !isSelfEvent(topAction, user?.email ?? "")) {
         const toast = buildToastFromEvent(topAction, "action");
         setToasts((prev) => [toast, ...prev.filter((x) => x.id !== toast.id)]);
       }
       seenTopActionIdsRef.current.add(topAction.id);
+      rememberEventToastSeen(topAction.id);
     }
   }, [
     buildToastFromEvent,
@@ -889,8 +938,8 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
             placeItems: "start end",
             padding: 12,
             opacity: collapsed ? 1 : 0,
-            transform: collapsed ? "translateX(0)" : "translateX(12px)",
-            transition: "opacity 180ms ease, transform 180ms ease",
+            transform: "translateX(0)",
+            transition: "opacity 180ms ease",
             pointerEvents: collapsed ? "auto" : "none",
           }}
         >
@@ -906,8 +955,8 @@ export default function SidebarRight({ collapsed, onToggle }: Props) {
             gridTemplateRows: "auto auto auto minmax(0, 1fr)",
             gap: 10,
             opacity: collapsed ? 0 : 1,
-            transform: collapsed ? "translateX(14px)" : "translateX(0)",
-            transition: "opacity 180ms ease, transform 180ms ease",
+            transform: "translateX(0)",
+            transition: "opacity 180ms ease",
             pointerEvents: collapsed ? "none" : "auto",
           }}
         >

@@ -10,10 +10,16 @@ import { useAuth } from "../../hooks/auth";
 import { hasPermission } from "../../utils/permissions";
 
 const SIDEBAR_LEFT_COLLAPSED_STORAGE_KEY = "crawler.sidebarLeft.collapsed";
+const SIDEBAR_RIGHT_COLLAPSED_STORAGE_KEY = "crawler.sidebarRight.collapsed";
 
 function readSidebarLeftCollapsed(): boolean {
   if (typeof window === "undefined") return false;
   return window.localStorage.getItem(SIDEBAR_LEFT_COLLAPSED_STORAGE_KEY) === "1";
+}
+
+function readSidebarRightCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(SIDEBAR_RIGHT_COLLAPSED_STORAGE_KEY) === "1";
 }
 
 function normalizeProjectLabel(name: string | null | undefined, fallbackId?: number): string {
@@ -45,7 +51,7 @@ export default function AppLayout() {
   const location = useLocation();
   const { user } = useAuth();
   const [leftCollapsed, setLeftCollapsed] = useState(() => readSidebarLeftCollapsed());
-  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(() => readSidebarRightCollapsed());
   const [projectCrumbLabel, setProjectCrumbLabel] = useState<string | null>(null);
 
   const path = location.pathname.split("?")[0];
@@ -150,6 +156,16 @@ export default function AppLayout() {
     });
   }
 
+  function toggleRightSidebar() {
+    setRightCollapsed((current) => {
+      const next = !current;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(SIDEBAR_RIGHT_COLLAPSED_STORAGE_KEY, next ? "1" : "0");
+      }
+      return next;
+    });
+  }
+
   return (
     <div
       style={{
@@ -227,7 +243,7 @@ export default function AppLayout() {
             transition: "padding 220ms cubic-bezier(0.2, 0.8, 0.2, 1)",
           }}
         >
-          <SidebarRight collapsed={rightCollapsed} onToggle={() => setRightCollapsed((v) => !v)} />
+          <SidebarRight collapsed={rightCollapsed} onToggle={toggleRightSidebar} />
         </aside>
       )}
     </div>

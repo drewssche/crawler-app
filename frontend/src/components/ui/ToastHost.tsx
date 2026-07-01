@@ -179,21 +179,23 @@ export default function ToastHost({ items, onClose, autoCloseMs = 6000 }: Props)
             }
           }}
           style={{
-            width: 320,
+            width: 360,
             maxWidth: "86vw",
-            border: "1px solid #3333",
-            borderRadius: 12,
-            padding: 10,
+            border: "1px solid rgba(255,255,255,0.16)",
+            borderRadius: 16,
+            padding: 12,
             background:
               item.accent === "danger"
-                ? "linear-gradient(180deg, rgba(224,92,92,0.20), rgba(29,29,29,0.96))"
+                ? "linear-gradient(180deg, rgba(116,44,48,0.98), rgba(24,24,25,0.99))"
                 : item.accent === "success"
-                ? "linear-gradient(180deg, rgba(110,199,181,0.18), rgba(29,29,29,0.96))"
+                ? "linear-gradient(180deg, rgba(32,79,72,0.98), rgba(24,24,25,0.99))"
                 : item.accent === "warning"
-                ? "linear-gradient(180deg, rgba(240,168,94,0.18), rgba(29,29,29,0.96))"
+                ? "linear-gradient(180deg, rgba(93,66,35,0.98), rgba(24,24,25,0.99))"
                 : item.accent === "info"
-                ? "linear-gradient(180deg, rgba(106,160,255,0.18), rgba(29,29,29,0.96))"
-                : "#1d1d1d",
+                ? "linear-gradient(180deg, rgba(43,61,96,0.98), rgba(24,24,25,0.99))"
+                : "rgba(24,24,25,0.99)",
+            boxShadow: "0 18px 48px rgba(0,0,0,0.46), 0 0 0 1px rgba(255,255,255,0.04) inset",
+            backdropFilter: "blur(10px)",
             cursor: item.onClick ? "pointer" : "default",
             opacity: closingMap[item.id] ? 0 : enteredMap[item.id] ? 1 : 0,
             transform: closingMap[item.id]
@@ -231,8 +233,16 @@ export default function ToastHost({ items, onClose, autoCloseMs = 6000 }: Props)
               {"\u00d7"}
             </IconGhostButton>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, alignItems: "center" }}>
-            <div style={{ display: "flex", gap: 6, alignItems: "center", minHeight: 28 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10, marginTop: 10, alignItems: "center" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: item.actionLabel && item.secondaryActionLabel ? "1fr 1fr" : "minmax(128px, max-content)",
+                gap: 8,
+                alignItems: "center",
+                minHeight: 30,
+              }}
+            >
               {item.actionLabel && item.onAction ? (
                 <Button
                   onClick={(e) => {
@@ -242,6 +252,7 @@ export default function ToastHost({ items, onClose, autoCloseMs = 6000 }: Props)
                   }}
                   size="sm"
                   variant="secondary"
+                  style={{ minWidth: 128 }}
                 >
                   {item.actionLabel}
                 </Button>
@@ -255,13 +266,25 @@ export default function ToastHost({ items, onClose, autoCloseMs = 6000 }: Props)
                   }}
                   size="sm"
                   variant="ghost"
+                  style={{ minWidth: 128 }}
                 >
                   {item.secondaryActionLabel}
                 </Button>
               ) : null}
             </div>
-            <div style={{ width: 100, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.15)", overflow: "hidden" }}>
-              <div style={{ width: `${Math.round((progress[item.id] ?? 1) * 100)}%`, height: "100%", background: "#6aa0ff" }} />
+            <div style={{ width: 104, height: 18, display: "flex", alignItems: "center" }}>
+              <div style={{ width: "100%", height: 5, borderRadius: 999, background: "rgba(255,255,255,0.15)", overflow: "visible" }}>
+                <div
+                  className="toast-progress-fill"
+                  style={{
+                    width: `${Math.round((progress[item.id] ?? 1) * 100)}%`,
+                    height: "100%",
+                    minWidth: 12,
+                    borderRadius: 999,
+                    background: "linear-gradient(90deg, #6aa0ff, #a8c4ff)",
+                  }}
+                />
+              </div>
             </div>
           </div>
         </div>

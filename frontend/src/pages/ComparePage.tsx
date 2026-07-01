@@ -135,6 +135,7 @@ function SnapshotSelector({
             : side.url ? <StatusText tone="success">Страница выбрана</StatusText> : <MetaText>Шаг 1</MetaText>
         }
       />
+      <MetaText opacity={0.68}>1 · Сайт</MetaText>
       <UiSelect
         value={side.siteId ?? ""}
         onChange={(event) => onSiteChange(Number(event.target.value))}
@@ -143,22 +144,33 @@ function SnapshotSelector({
         <option value="" disabled>Выберите сайт</option>
         {sites.map((site) => <option key={site.id} value={site.id}>{site.name} · {site.start_url}</option>)}
       </UiSelect>
-      <UiSelect
-        value={side.personaFilterId}
-        onChange={(event) => {
-          const value = event.target.value;
-          onPersonaFilterChange(value === "all" ? "all" : Number(value));
-        }}
-        disabled={side.runs.length === 0}
-        style={{ width: "100%" }}
-      >
-        <option value="all">Все контексты доступа</option>
-        {personaOptions.map((persona) => (
-          <option key={persona.id} value={persona.id}>
-            {persona.label}
-          </option>
-        ))}
-      </UiSelect>
+      <div className="compare-chip-step">
+        <MetaText opacity={0.68}>2 · Контекст доступа</MetaText>
+        <div className="compare-chip-row" aria-label={`${label}: контекст доступа`}>
+          <Button
+            size="sm"
+            variant="ghost"
+            active={side.personaFilterId === "all"}
+            disabled={side.runs.length === 0}
+            onClick={() => onPersonaFilterChange("all")}
+          >
+            Все контексты доступа
+          </Button>
+          {personaOptions.map((persona) => (
+            <Button
+              key={persona.id}
+              size="sm"
+              variant="ghost"
+              active={side.personaFilterId === persona.id}
+              disabled={side.runs.length === 0}
+              onClick={() => onPersonaFilterChange(persona.id)}
+            >
+              {persona.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <MetaText opacity={0.68}>3 · Версия</MetaText>
       <UiSelect
         value={side.runId ?? ""}
         onChange={(event) => onRunChange(Number(event.target.value))}
@@ -177,6 +189,7 @@ function SnapshotSelector({
       )}
 
       <div className="compare-page-picker" aria-label={`${label}: выбор страницы`}>
+        <MetaText opacity={0.68}>4 · Страница</MetaText>
         <input
           value={side.pageQuery}
           onChange={(event) => onPageQueryChange(event.target.value)}

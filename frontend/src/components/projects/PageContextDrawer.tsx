@@ -12,6 +12,34 @@ function seoTone(status: "pass" | "warning" | "fail"): "success" | "warning" | "
   return "danger";
 }
 
+function ClampedMeta({
+  label,
+  value,
+  empty = "не задан",
+  lines = 2,
+}: {
+  label: string;
+  value?: string | null;
+  empty?: string;
+  lines?: number;
+}) {
+  const text = value || empty;
+  return (
+    <MetaText
+      title={text}
+      style={{
+        overflow: "hidden",
+        display: "-webkit-box",
+        WebkitLineClamp: lines,
+        WebkitBoxOrient: "vertical",
+        wordBreak: "break-word",
+      }}
+    >
+      {label}: {text}
+    </MetaText>
+  );
+}
+
 export default function PageContextDrawer({
   open,
   loading,
@@ -45,20 +73,32 @@ export default function PageContextDrawer({
     <SlidePanel open={open} width="min(620px, 94vw)" onClose={onClose}>
       <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
         <SectionHeaderRow
+          style={{ alignItems: "flex-start" }}
           title={
-            <div>
+            <div style={{ display: "grid", gap: 5, minWidth: 0 }}>
               <div style={{ fontSize: 18, fontWeight: 800 }}>Контекст страницы</div>
-              <MetaText opacity={0.68} style={{ wordBreak: "break-word" }}>{context?.page.url || ""}</MetaText>
+              <MetaText
+                opacity={0.68}
+                title={context?.page.url || ""}
+                style={{
+                  maxWidth: "min(360px, 58vw)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {context?.page.url || ""}
+              </MetaText>
             </div>
           }
           actions={
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: context ? "1fr 1fr" : "1fr", minWidth: context ? 220 : 96 }}>
               {context && (
-                <Button variant="accent" size="sm" onClick={onOpenFullAnalysis}>
+                <Button variant="accent" size="sm" onClick={onOpenFullAnalysis} style={{ width: "100%" }}>
                   Открыть полный анализ
                 </Button>
               )}
-              <Button variant="ghost" size="sm" onClick={onClose}>Закрыть</Button>
+              <Button variant="ghost" size="sm" onClick={onClose} style={{ width: "100%" }}>Закрыть</Button>
             </div>
           }
         />
@@ -83,12 +123,22 @@ export default function PageContextDrawer({
                   </Button>
                 }
               />
-              <MetaText>HTTP: {context.page.status_code} · {context.page.content_type || "тип неизвестен"}</MetaText>
-              <MetaText>Контекст просмотра: {context.page.persona?.label || "Гость"}</MetaText>
-              <MetaText>Title: {context.meta.title || "не задан"}</MetaText>
-              <MetaText>Description: {context.meta.description || "не задан"}</MetaText>
-              <MetaText>Canonical: {context.meta.canonical || "не задан"}</MetaText>
-              <MetaText>Robots: {context.meta.robots || "явные директивы отсутствуют"}</MetaText>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <StatusText tone={context.page.final_status_code >= 400 || context.page.fetch_error_code ? "danger" : "success"}>
+                  HTTP {context.page.final_status_code || context.page.status_code}
+                </StatusText>
+                <MetaText>{context.page.content_type || "тип неизвестен"}</MetaText>
+                <MetaText>Контекст: {context.page.persona?.label || "Гость"}</MetaText>
+              </div>
+              <ClampedMeta label="Title" value={context.meta.title} />
+              <ClampedMeta label="Description" value={context.meta.description} lines={3} />
+              <details className="inspector-details">
+                <summary>Meta и robots</summary>
+                <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                  <ClampedMeta label="Canonical" value={context.meta.canonical} />
+                  <ClampedMeta label="Robots" value={context.meta.robots} empty="явные директивы отсутствуют" />
+                </div>
+              </details>
               <details>
                 <summary style={{ cursor: "pointer", fontSize: 12, opacity: 0.78 }}>Технические детали</summary>
                 <MetaText style={{ marginTop: 6 }}>

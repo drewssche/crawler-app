@@ -10,6 +10,7 @@ export default function StructureLegendHint() {
   const rows = [
     { id: "added", cells: { icon: <StructureStatusIcon status="added" />, meaning: "Новая страница" } },
     { id: "changed", cells: { icon: <StructureStatusIcon status="changed" />, meaning: "Изменения в странице" } },
+    { id: "redirect", cells: { icon: <StructureStatusIcon status="redirect" />, meaning: "Перенаправление" } },
     { id: "deleted", cells: { icon: <StructureStatusIcon status="deleted" />, meaning: "Страница удалена" } },
     { id: "error", cells: { icon: <StructureStatusIcon status="error" />, meaning: "Ошибка ответа/доступа" } },
   ];

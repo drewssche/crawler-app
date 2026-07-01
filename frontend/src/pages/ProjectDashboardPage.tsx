@@ -1672,7 +1672,12 @@ export default function ProjectDashboardPage() {
     () => runs.filter((run) => run.id > 0 && run.status !== "RUNNING" && run.pages_total > 0),
     [runs],
   );
-  const structureMultiContextEnabled = selectedViewPersonaId === "all";
+  const structureMultiContextEnabled = selectedViewPersonaId === "all" && enabledPersonas.length > 1;
+  const structureViewLabel = selectedViewPersona
+    ? selectedViewPersona.label
+    : enabledPersonas.length === 1
+      ? enabledPersonas[0].label
+      : "все контексты";
   const structureRun = completedRunsWithPages[0] || null;
   const previousStructureRun = completedRunsWithPages[1] || null;
   const multiContextRunPairs = useMemo(() => {
@@ -1709,6 +1714,7 @@ export default function ProjectDashboardPage() {
   const scheduleEnabledSites = useMemo(() => sites.filter((site) => site.is_enabled), [sites]);
   const scheduleDisabledSitesCount = sites.length - scheduleEnabledSites.length;
   const readinessIssues = crawlerReadiness?.issues || [];
+  const showCrawlerReadinessPanel = canViewOperations && crawlerReadiness && (!crawlerReadiness.ready || readinessIssues.length > 0);
   const selectedRunLaunchIssue = personaLaunchIssue(selectedRunPersona);
   const structureUpdatePending = hasRunning || Boolean(selectedPendingJob) || runPending || projectRunPending;
   const structureRunId = displayedStructureRun?.id ?? null;
@@ -1935,22 +1941,36 @@ export default function ProjectDashboardPage() {
           <Card>
             <div style={{ display: "grid", gap: 10 }}>
               <SectionHeaderRow
+                style={{ alignItems: "flex-start" }}
                 title={
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <div style={{ fontWeight: 800, fontSize: 20 }}>{project.name}</div>
+                  <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
                     <ProjectRunBadge status={selectedPendingJob ? "QUEUED" : lastRun?.status} />
+                    <div
+                      title={project.name}
+                      style={{
+                        fontWeight: 800,
+                        fontSize: 22,
+                        lineHeight: 1.15,
+                        maxWidth: "min(58vw, 760px)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {project.name}
+                    </div>
                   </div>
                 }
                 actions={canRunCrawler ? (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "grid", gap: 8, justifyItems: "end", minWidth: 260 }}>
                     <div
                       style={{
                         display: "flex",
                         gap: 6,
                         alignItems: "center",
+                        justifyContent: "flex-end",
                         flexWrap: "wrap",
-                        maxWidth: 320,
-                        flex: "1 1 220px",
+                        maxWidth: 520,
                       }}
                       title="Контекст определяет, как crawler открывает выбранный сайт: гостем или с подключённой сессией роли."
                     >
@@ -1977,43 +1997,56 @@ export default function ProjectDashboardPage() {
                         </StatusText>
                       )}
                     </div>
-                    <CardActionButton
-                      variant="ghost"
-                      onClick={() => navigate(`/projects/${project.id}/compare`, { state: { projectName: project.name } })}
-                    >
-                      Сравнить страницы
-                    </CardActionButton>
-                    {projectHasMultipleSites && (
-                      <CardActionButton
-                        variant="secondary"
-                        onClick={() => void handleStartAllSites()}
-                        disabled={projectRunPending || runPending || pendingJobsCount > 0 || sites.every((site) => !site.is_enabled)}
-                        title={sites.every((site) => !site.is_enabled) ? "В проекте нет включённых сайтов." : undefined}
-                      >
-                        {projectRunPending ? "Ставим в очередь..." : pendingJobsCount > 0 ? `В очереди: ${pendingJobsCount}` : "Запустить все сайты"}
-                      </CardActionButton>
-                    )}
-                    <CardActionButton
-                      variant="primary"
-                      onClick={() => {
-                        void handleStartRun();
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: projectHasMultipleSites ? "repeat(3, minmax(150px, 1fr))" : "repeat(2, minmax(165px, 1fr))",
+                        gap: 8,
+                        width: "100%",
+                        maxWidth: projectHasMultipleSites ? 560 : 400,
                       }}
-                      disabled={runPending || projectRunPending || hasRunning || Boolean(selectedPendingJob) || !selectedSite?.is_enabled || Boolean(selectedRunLaunchIssue)}
-                      title={
-                        !selectedSite?.is_enabled
-                          ? "Включите выбранный сайт в настройках."
-                          : selectedRunLaunchIssue
-                            ? selectedRunLaunchIssue
-                          : selectedPendingJob ? "Выбранный сайт уже ожидает worker."
-                          : hasRunning ? "Выбранный сайт уже сканируется." : undefined
-                      }
                     >
-                      {runPending ? "Ставим в очередь..." : selectedPendingJob ? "Ожидает worker" : hasRunning ? "Прогон выполняется" : "Запустить выбранный сайт"}
-                    </CardActionButton>
+                      <CardActionButton
+                        variant="ghost"
+                        onClick={() => navigate(`/projects/${project.id}/compare`, { state: { projectName: project.name } })}
+                        style={{ width: "100%" }}
+                      >
+                        Сравнить страницы
+                      </CardActionButton>
+                      {projectHasMultipleSites && (
+                        <CardActionButton
+                          variant="secondary"
+                          onClick={() => void handleStartAllSites()}
+                          disabled={projectRunPending || runPending || pendingJobsCount > 0 || sites.every((site) => !site.is_enabled)}
+                          title={sites.every((site) => !site.is_enabled) ? "В проекте нет включённых сайтов." : undefined}
+                          style={{ width: "100%" }}
+                        >
+                          {projectRunPending ? "Ставим в очередь..." : pendingJobsCount > 0 ? `В очереди: ${pendingJobsCount}` : "Запустить все сайты"}
+                        </CardActionButton>
+                      )}
+                      <CardActionButton
+                        variant="primary"
+                        onClick={() => {
+                          void handleStartRun();
+                        }}
+                        disabled={runPending || projectRunPending || hasRunning || Boolean(selectedPendingJob) || !selectedSite?.is_enabled || Boolean(selectedRunLaunchIssue)}
+                        title={
+                          !selectedSite?.is_enabled
+                            ? "Включите выбранный сайт в настройках."
+                            : selectedRunLaunchIssue
+                              ? selectedRunLaunchIssue
+                            : selectedPendingJob ? "Выбранный сайт уже ожидает worker."
+                            : hasRunning ? "Выбранный сайт уже сканируется." : undefined
+                        }
+                        style={{ width: "100%" }}
+                      >
+                        {runPending ? "Ставим в очередь..." : selectedPendingJob ? "Ожидает worker" : hasRunning ? "Прогон выполняется" : "Запустить выбранный сайт"}
+                      </CardActionButton>
+                    </div>
                   </div>
                 ) : undefined}
               />
-              {canViewOperations && crawlerReadiness && (
+              {showCrawlerReadinessPanel && (
                 <Card
                   variant={crawlerReadiness.ready ? "hint" : "warning"}
                   style={{ padding: 10, display: "grid", gap: 8 }}
@@ -2084,7 +2117,7 @@ export default function ProjectDashboardPage() {
                   </ProjectPersistentDetails>
                 </Card>
               )}
-              {canViewOperations && (notificationDiagnostics || notificationDiagnosticsLoading || notificationDiagnosticsError) && (
+              {activeTab !== "settings" && canViewOperations && (notificationDiagnostics || notificationDiagnosticsLoading || notificationDiagnosticsError) && (
                 <Card
                   variant={notificationDiagnostics && notificationDiagnosticsTone(notificationDiagnostics) === "danger" ? "warning" : "hint"}
                   style={{ padding: 10, display: "grid", gap: 8 }}
@@ -2106,13 +2139,13 @@ export default function ProjectDashboardPage() {
                                 Telegram {notificationDiagnostics.telegram_configured ? "готов" : "не настроен"}
                               </AccentPill>
                               <MetaText opacity={0.82}>
-                                Очередь: <strong>{notificationDiagnostics.counts.queued}</strong> · Retry:{" "}
+                                Очередь: <strong>{notificationDiagnostics.counts.queued}</strong> · Повтор:{" "}
                                 <strong>{notificationDiagnostics.counts.retry_ready + notificationDiagnostics.counts.failed_waiting}</strong>
                               </MetaText>
                             </>
                           )}
                         </div>
-                        <MetaText opacity={0.72}>Диагностика доставки целей мониторинга · раскрыть детали</MetaText>
+                        <MetaText opacity={0.72}>Доставка уведомлений</MetaText>
                       </>
                     }
                     summaryStyle={{
@@ -2126,7 +2159,7 @@ export default function ProjectDashboardPage() {
                     }}
                   >
                     <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                      {notificationDiagnosticsLoading && <MetaText>Загружаем диагностику доставки...</MetaText>}
+                      {notificationDiagnosticsLoading && <MetaText>Загружаем доставку...</MetaText>}
                       {notificationDiagnosticsError && (
                         <StatusText tone="warning" style={{ fontSize: 12 }}>
                           {notificationDiagnosticsError}
@@ -2138,7 +2171,7 @@ export default function ProjectDashboardPage() {
                             {[
                               { label: "В очереди", value: notificationDiagnostics.counts.queued, tone: "info" as const },
                               { label: "Готовы к повтору", value: notificationDiagnostics.counts.retry_ready, tone: "warning" as const },
-                              { label: "Ждут backoff", value: notificationDiagnostics.counts.failed_waiting, tone: "warning" as const },
+                              { label: "Ждут паузу", value: notificationDiagnostics.counts.failed_waiting, tone: "warning" as const },
                               { label: "Отправлены", value: notificationDiagnostics.counts.sent, tone: "success" as const },
                               { label: "Остановлены", value: notificationDiagnostics.counts.dead, tone: "danger" as const },
                             ].map((item) => (
@@ -2146,28 +2179,11 @@ export default function ProjectDashboardPage() {
                                 <MetaText opacity={0.68}>{item.label}</MetaText>
                                 <div style={{ marginTop: 4, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                                   <strong style={{ fontSize: 22 }}>{item.value}</strong>
-                                  <AccentPill tone={item.tone}>{item.label}</AccentPill>
+                                  <AccentPill tone={item.tone}>{item.value > 0 ? "Есть" : "0"}</AccentPill>
                                 </div>
                               </Card>
                             ))}
                           </div>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                            <MetaText opacity={0.82}>
-                              Попыток на доставку: <strong>{notificationDiagnostics.max_attempts}</strong>
-                            </MetaText>
-                            <MetaText opacity={0.82}>
-                              Backoff:{" "}
-                              <strong>{notificationDiagnostics.retry_backoff_seconds.map((seconds) => formatSecondsCompact(seconds)).join(" → ") || "—"}</strong>
-                            </MetaText>
-                            <MetaText opacity={0.82}>
-                              Всего записей outbox: <strong>{notificationDiagnostics.total}</strong>
-                            </MetaText>
-                          </div>
-                          {(!notificationDiagnostics.smtp_configured || !notificationDiagnostics.telegram_configured) && (
-                            <StatusText tone="warning" style={{ fontSize: 12 }}>
-                              Ненастроенный канал не ломает проверку целей: доставка уйдёт в retry/backoff и будет видна в истории.
-                            </StatusText>
-                          )}
                         </>
                       )}
                     </div>
@@ -2304,26 +2320,28 @@ export default function ProjectDashboardPage() {
           {activeTab === "main" && (
             <>
               <Card>
-                <div style={{ display: "grid", gap: 10 }}>
-                  <SectionHeaderRow
-                    title={
-                      <div>
-                        <div style={{ fontWeight: 700 }}>Цели мониторинга</div>
-                        <MetaText opacity={0.68}>
-                          Сохранённые блоки страниц, которые crawler проверяет после успешных прогонов.
-                        </MetaText>
-                      </div>
-                    }
-                    actions={<ListTotalMeta label="Целей" total={selectedSiteMonitoringTargets.length} />}
-                  />
+                <ProjectPersistentDetails
+                  storageKey="monitoring-targets"
+                  defaultOpen={selectedSiteMonitoringTargets.length > 0}
+                  summary={
+                    <SectionHeaderRow
+                      title={<div style={{ fontWeight: 700 }}>Цели мониторинга</div>}
+                      actions={<ListTotalMeta label="Целей" total={selectedSiteMonitoringTargets.length} />}
+                      style={{ width: "100%" }}
+                    />
+                  }
+                  summaryStyle={{
+                    cursor: "pointer",
+                    listStyle: "none",
+                  }}
+                >
+                <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
                   {monitoringTargetsLoading && <MetaText>Загружаем цели...</MetaText>}
                   {monitoringTargetsError && <StatusText tone="danger">{monitoringTargetsError}</StatusText>}
                   {targetActionError && <StatusText tone="danger">{targetActionError}</StatusText>}
                   {!monitoringTargetsLoading && !monitoringTargetsError && selectedSiteMonitoringTargets.length === 0 && (
                     <Card variant="hint" style={{ padding: 10 }}>
-                      <MetaText>
-                        Целей пока нет. Откройте сравнение страниц, выделите нужный блок на визуальном снимке и нажмите «Сохранить цель».
-                      </MetaText>
+                      <MetaText>Целей пока нет.</MetaText>
                     </Card>
                   )}
                   {selectedSiteMonitoringTargets.length > 0 && (
@@ -2619,7 +2637,7 @@ export default function ProjectDashboardPage() {
                                               disabled={subscriptionActionPendingId === `preview-${subscription.id}` || subscriptionActionPendingId === `test-${subscription.id}`}
                                               onClick={() => void handlePreviewSubscription(subscription)}
                                             >
-                                              {subscriptionActionPendingId === `preview-${subscription.id}` ? "Готовим..." : "Preview"}
+                                              {subscriptionActionPendingId === `preview-${subscription.id}` ? "Готовим..." : "Предпросмотр"}
                                             </CardActionButton>
                                             <CardActionButton
                                               compact
@@ -2648,7 +2666,7 @@ export default function ProjectDashboardPage() {
                                         )}
                                         {preview && (
                                           <Card variant="hint" style={{ padding: 8, display: "grid", gap: 4 }}>
-                                            <MetaText opacity={0.7}>Preview сообщения</MetaText>
+                                            <MetaText opacity={0.7}>Предпросмотр сообщения</MetaText>
                                             <div style={{ fontWeight: 800 }}>{preview.subject}</div>
                                             <pre
                                               style={{
@@ -2731,6 +2749,7 @@ export default function ProjectDashboardPage() {
                     </div>
                   )}
                 </div>
+                </ProjectPersistentDetails>
               </Card>
               <Card>
                 <div style={{ display: "grid", gap: 10 }}>
@@ -2852,7 +2871,7 @@ export default function ProjectDashboardPage() {
                       </ProjectPersistentDetails>
                     )}
                     <MetaText opacity={0.62}>
-                      Показано: {selectedViewPersona ? selectedViewPersona.label : "все контексты"} · домены {hasDomainFilter ? activeDomainCount : "все"}.
+                      Показано: {structureViewLabel} · домены {hasDomainFilter ? activeDomainCount : "все"}.
                     </MetaText>
                   </Card>
                   {structureUpdatePending && (
@@ -2965,12 +2984,7 @@ export default function ProjectDashboardPage() {
                       style={{ padding: 10, display: "grid", gap: 8 }}
                     >
                       <SectionHeaderRow
-                        title={
-                          <div>
-                            <div style={{ fontWeight: 700 }}>Прогон завершён — структура готова</div>
-                            <MetaText opacity={0.68}>Последний готовый срез выбранного сайта.</MetaText>
-                          </div>
-                        }
+                        title={<div style={{ fontWeight: 700 }}>Прогон завершён — структура готова</div>}
                         actions={<ProjectRunBadge status={structureRun.status} />}
                       />
                       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12 }}>
@@ -2983,7 +2997,7 @@ export default function ProjectDashboardPage() {
                       </div>
                       <ProjectPersistentDetails
                         storageKey="structure-slice-details"
-                        summary="Детали среза"
+                        summary="Технические детали"
                         summaryStyle={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
                       >
                         <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
@@ -3039,7 +3053,7 @@ export default function ProjectDashboardPage() {
                     </Card>
                   )}
                   <SectionHeaderRow
-                    title={<ListTotalMeta label="Страницы в структуре" total={structureMultiContextEnabled ? multiContextStructureRowsTotal : structureRows.length} />}
+                    title={<ListTotalMeta label="Страницы" total={structureMultiContextEnabled ? multiContextStructureRowsTotal : structureRows.length} />}
                     actions={
                       (structureMultiContextEnabled ? multiContextStructureRowsTotal : structureRows.length) > 0 ? (
                         <SegmentedControl
@@ -3431,7 +3445,7 @@ export default function ProjectDashboardPage() {
                           />
                         </label>
                         <label style={{ display: "grid", gap: 4 }}>
-                          <MetaText opacity={0.72}>Timezone</MetaText>
+                          <MetaText opacity={0.72}>Часовой пояс</MetaText>
                           <input
                             value={scheduleForm.timezone}
                             onChange={(event) => setScheduleForm((current) => ({ ...current, timezone: event.target.value }))}

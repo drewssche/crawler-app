@@ -9,6 +9,13 @@ export type ProjectStructureRow = {
   url: string;
   status: StructureStatus;
   statusCode: number;
+  finalUrl?: string | null;
+  finalStatusCode?: number | null;
+  fetchErrorCode?: string | null;
+  fetchErrorMessage?: string | null;
+  title?: string | null;
+  description?: string | null;
+  h1?: string | null;
   batchNo: number | null;
 };
 
@@ -20,6 +27,13 @@ type TreeNode = {
   hasPage: boolean;
   pageStatus: StructureStatus | null;
   pageStatusCode: number;
+  pageFinalUrl: string | null;
+  pageFinalStatusCode: number | null;
+  pageFetchErrorCode: string;
+  pageFetchErrorMessage: string;
+  pageTitle: string;
+  pageDescription: string;
+  pageH1: string;
   pageBatchNo: number | null;
   children: TreeNode[];
   total: number;
@@ -57,6 +71,13 @@ function createNode(key: string, label: string, url: string, isDirectory: boolea
     hasPage: false,
     pageStatus: null,
     pageStatusCode: 0,
+    pageFinalUrl: null,
+    pageFinalStatusCode: null,
+    pageFetchErrorCode: "",
+    pageFetchErrorMessage: "",
+    pageTitle: "",
+    pageDescription: "",
+    pageH1: "",
     pageBatchNo: null,
     children: [],
     total: 0,
@@ -80,7 +101,38 @@ function markPage(node: TreeNode, row: ProjectStructureRow): void {
   node.hasPage = true;
   node.pageStatus = row.status;
   node.pageStatusCode = row.statusCode;
+  node.pageFinalUrl = row.finalUrl || null;
+  node.pageFinalStatusCode = row.finalStatusCode ?? null;
+  node.pageFetchErrorCode = row.fetchErrorCode || "";
+  node.pageFetchErrorMessage = row.fetchErrorMessage || "";
+  node.pageTitle = row.title || "";
+  node.pageDescription = row.description || "";
+  node.pageH1 = row.h1 || "";
   node.pageBatchNo = row.batchNo;
+}
+
+function normalizeSearchValue(value: string): string {
+  return value.toLocaleLowerCase("ru").replace(/ё/g, "е");
+}
+
+function firstSearchMatch(node: TreeNode, query: string): { label: string; value: string } | null {
+  const needle = normalizeSearchValue(query.trim());
+  if (!needle || !node.hasPage) return null;
+  const candidates = [
+    { label: "title", value: node.pageTitle },
+    { label: "description", value: node.pageDescription },
+    { label: "H1", value: node.pageH1 },
+    { label: "final URL", value: node.pageFinalUrl || "" },
+    { label: "HTTP", value: String(node.pageStatusCode || "") },
+    { label: "HTTP", value: String(node.pageFinalStatusCode || "") },
+    { label: "ошибка", value: node.pageFetchErrorCode },
+    { label: "ошибка", value: node.pageFetchErrorMessage },
+  ];
+  for (const candidate of candidates) {
+    if (!candidate.value) continue;
+    if (normalizeSearchValue(candidate.value).includes(needle)) return candidate;
+  }
+  return null;
 }
 
 function finalizeNode(node: TreeNode): TreeNode {
@@ -284,6 +336,7 @@ function TreeRow({
     ? node.children.slice(0, Math.max(NODE_BATCH_SIZE, visibleByNode[node.key] || NODE_BATCH_SIZE))
     : [];
   const hasMoreChildren = hasChildren && visibleChildren.length < node.children.length;
+  const searchMatch = firstSearchMatch(node, query);
 
   return (
     <div style={{ display: "grid", gap: 4 }}>
@@ -325,7 +378,23 @@ function TreeRow({
         >
           <HighlightedText value={node.label} query={query} />
         </button>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", fontSize: 12 }}>
+        {searchMatch && (
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: "#fff3bf",
+              fontSize: 12,
+              opacity: 0.92,
+            }}
+            title={`${searchMatch.label}: ${searchMatch.value}`}
+          >
+            {searchMatch.label}: <HighlightedText value={searchMatch.value} query={query} />
+          </span>
+        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", fontSize: 12, gridColumn: searchMatch ? undefined : "3 / 5" }}>
           {node.changed > 0 ? (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} title="Измененные элементы">
               <StructureStatusIcon status="changed" size={14} /> {node.changed}

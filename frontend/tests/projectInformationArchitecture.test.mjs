@@ -10,10 +10,12 @@ const siteCardsSource = await readFile(new URL("../src/components/projects/Proje
 const pageDrawerSource = await readFile(new URL("../src/components/projects/PageContextDrawer.tsx", import.meta.url), "utf8");
 const directoryDrawerSource = await readFile(new URL("../src/components/projects/DirectoryContextDrawer.tsx", import.meta.url), "utf8");
 const structureSource = await readFile(new URL("../src/components/ui/ProjectStructureTree.tsx", import.meta.url), "utf8");
+const structureLegendSource = await readFile(new URL("../src/components/ui/StructureLegendHint.tsx", import.meta.url), "utf8");
 const compareSource = await readFile(new URL("../src/pages/ComparePage.tsx", import.meta.url), "utf8");
 const layoutSource = await readFile(new URL("../src/components/layout/AppLayout.tsx", import.meta.url), "utf8");
 const sidebarLeftSource = await readFile(new URL("../src/components/layout/SidebarLeft.tsx", import.meta.url), "utf8");
 const sidebarRightSource = await readFile(new URL("../src/components/layout/SidebarRight.tsx", import.meta.url), "utf8");
+const toastHostSource = await readFile(new URL("../src/components/ui/ToastHost.tsx", import.meta.url), "utf8");
 const inspectorSource = await readFile(new URL("../src/pages/PageInspectorPage.tsx", import.meta.url), "utf8");
 const reportSource = await readFile(new URL("../src/components/projects/PageInspectionReport.tsx", import.meta.url), "utf8");
 const safeSnapshotSource = await readFile(new URL("../src/utils/safeSnapshotDocument.ts", import.meta.url), "utf8");
@@ -82,16 +84,16 @@ test("project page exposes saved monitoring targets with latest status and lazy 
   assert.match(source, /Последние доставки/);
   assert.match(source, /Следующая попытка/);
   assert.match(source, /Остановлено/);
-  assert.match(source, /Диагностика доставки целей мониторинга/);
+  assert.match(source, /Доставка уведомлений/);
   assert.match(source, /notificationDiagnostics/);
   assert.match(source, /Email \{notificationDiagnostics\.smtp_configured \? "готов" : "не настроен"\}/);
   assert.match(source, /Telegram \{notificationDiagnostics\.telegram_configured \? "готов" : "не настроен"\}/);
   assert.match(source, /Готовы к повтору/);
-  assert.match(source, /Ждут backoff/);
+  assert.match(source, /Ждут паузу/);
   assert.match(source, /Остановлены/);
   assert.match(source, /handlePreviewSubscription/);
   assert.match(source, /handleTestSendSubscription/);
-  assert.match(source, /Preview сообщения/);
+  assert.match(source, /Предпросмотр сообщения/);
   assert.match(source, /Тестовое уведомление отправлено/);
   assert.match(source, /loadTargetSubscriptions/);
   assert.match(source, /handleCreateSubscription/);
@@ -110,6 +112,31 @@ test("project page exposes saved monitoring targets with latest status and lazy 
   assert.match(monitoringTargetsSource, /testSendMonitoringTargetSubscription/);
   assert.match(monitoringTargetsSource, /\/runs\/monitoring-subscriptions\/\$\{subscriptionId\}\/test-send/);
   assert.match(monitoringTargetsSource, /\/runs\/monitoring-targets\/\$\{targetId\}\/checks/);
+});
+
+test("monitoring targets stay compact and settings avoid delivery-diagnostics flicker", () => {
+  assert.match(source, /storageKey="monitoring-targets"/);
+  assert.match(source, /defaultOpen=\{selectedSiteMonitoringTargets\.length > 0\}/);
+  assert.match(source, /Целей пока нет\./);
+  assert.doesNotMatch(source, /Откройте сравнение страниц, выделите нужный блок/);
+  assert.match(source, /activeTab !== "settings" && canViewOperations && \(notificationDiagnostics/);
+  assert.match(source, /Доставка уведомлений/);
+  assert.match(source, /Повтор:/);
+  assert.match(source, /Часовой пояс/);
+  assert.doesNotMatch(source, /Timezone/);
+});
+
+test("project header handles long names and keeps operational noise out of the happy path", () => {
+  assert.match(source, /maxWidth: "min\(58vw, 760px\)"/);
+  assert.match(source, /textOverflow: "ellipsis"/);
+  assert.match(source, /whiteSpace: "nowrap"/);
+  assert.match(source, /showCrawlerReadinessPanel/);
+  assert.match(source, /!crawlerReadiness\.ready \|\| readinessIssues\.length > 0/);
+  assert.match(source, /gridTemplateColumns: projectHasMultipleSites \? "repeat\(3, minmax\(150px, 1fr\)\)" : "repeat\(2, minmax\(165px, 1fr\)\)"/);
+  assert.doesNotMatch(source, /Диагностика доставки целей мониторинга/);
+  assert.doesNotMatch(source, /Ненастроенный канал не ломает проверку целей/);
+  assert.doesNotMatch(source, /Попыток на доставку/);
+  assert.doesNotMatch(source, /Всего записей outbox/);
 });
 
 test("project disclosure blocks persist collapsed state locally", () => {
@@ -235,7 +262,17 @@ test("structure opens an on-demand page context drawer with SEO and broken links
   assert.doesNotMatch(structureSource, /window\.open\(node\.url/);
   assert.match(source, /DirectoryContextDrawer/);
   assert.match(directoryDrawerSource, /Контекст раздела/);
+  assert.match(directoryDrawerSource, /Состояние раздела/);
+  assert.match(directoryDrawerSource, /directoryState/);
+  assert.match(directoryDrawerSource, /Страницы/);
+  assert.match(directoryDrawerSource, /Разделы/);
   assert.match(directoryDrawerSource, /Открыть раздел на сайте/);
+  assert.doesNotMatch(directoryDrawerSource, /Что находится в разделе/);
+  assert.doesNotMatch(directoryDrawerSource, /Сам раздел не имеет отдельного результата страницы/);
+  assert.match(pageDrawerSource, /function ClampedMeta/);
+  assert.match(pageDrawerSource, /WebkitLineClamp/);
+  assert.match(pageDrawerSource, /gridTemplateColumns: context \? "1fr 1fr" : "1fr"/);
+  assert.match(pageDrawerSource, /Meta и robots/);
   assert.match(pageDrawerSource, /SEO checklist/);
   assert.match(pageDrawerSource, /known_broken/);
   assert.match(pageDrawerSource, /Ассеты/);
@@ -254,7 +291,8 @@ test("structure opens an on-demand page context drawer with SEO and broken links
 
 test("structure can show separate sections for every access context", () => {
   assert.match(source, /MultiContextStructureSet/);
-  assert.match(source, /structureMultiContextEnabled/);
+  assert.match(source, /selectedViewPersonaId === "all" && enabledPersonas\.length > 1/);
+  assert.match(source, /structureViewLabel/);
   assert.match(source, /multiContextRunPairs/);
   assert.match(source, /multiContextStructureSections/);
   assert.match(source, /activeMultiContextStructureRunId/);
@@ -265,6 +303,11 @@ test("structure can show separate sections for every access context", () => {
   assert.match(source, /gridTemplateColumns: "repeat\(auto-fit, minmax\(220px, 1fr\)\)"/);
   assert.match(source, /Для выбранного сайта пока нет готовых структур по контекстам доступа/);
   assert.match(source, /handleOpenPageContextForRun\(activeMultiContextStructureSection\.run\.id, url\)/);
+  assert.match(structureLegendSource, /status="redirect"/);
+  assert.match(structureSource, /firstSearchMatch/);
+  assert.match(structureSource, /pageFinalUrl/);
+  assert.match(structureSource, /pageFetchErrorMessage/);
+  assert.match(structureSource, /title=\{`\$\{searchMatch\.label\}: \$\{searchMatch\.value\}`\}/);
 });
 
 test("full page inspector keeps the snapshot and a scrollable section report visible together", () => {
@@ -332,8 +375,8 @@ test("structure keeps users informed while a crawl or refresh is running", () =>
   assert.match(source, /currentBatchNo/);
   assert.match(source, /дерево не прокручивается само/);
   assert.match(source, /Подробности процесса/);
-  assert.match(source, /Детали среза/);
-  assert.match(source, /Страницы в структуре/);
+  assert.match(source, /Технические детали/);
+  assert.match(source, /label="Страницы"/);
   assert.match(source, /Легенда структуры/);
   assert.match(source, /Все ·/);
   assert.match(source, /Новые ·/);
@@ -433,6 +476,10 @@ test("compare page selection is searchable and mode controls are progressive", (
   assert.match(compareSource, /compareLoading/);
   assert.match(compareSource, /autoMatchEnabled/);
   assert.match(compareSource, /function startCompare/);
+  assert.match(compareSource, /compare-chip-row/);
+  assert.match(compareSource, /2 · Контекст доступа/);
+  assert.match(compareSource, /4 · Страница/);
+  assert.match(compareSource, /onPersonaFilterChange\("all"\)/);
   assert.match(compareSource, /CompareLoadingDot/);
   assert.match(compareSource, /Готовим сравнение/);
   assert.match(compareSource, /Загружаем данные этой стороны/);
@@ -478,6 +525,9 @@ test("interactive controls expose consistent hover and keyboard focus polish", (
 test("sidebars support compact workspace and event-center view modes", () => {
   assert.match(layoutSource, /leftCollapsed/);
   assert.match(layoutSource, /SIDEBAR_LEFT_COLLAPSED_STORAGE_KEY/);
+  assert.match(layoutSource, /rightCollapsed/);
+  assert.match(layoutSource, /SIDEBAR_RIGHT_COLLAPSED_STORAGE_KEY/);
+  assert.match(layoutSource, /toggleRightSidebar/);
   assert.match(layoutSource, /<SidebarLeft collapsed=\{leftCollapsed\}/);
   assert.match(sidebarLeftSource, /collapsed: boolean/);
   assert.match(sidebarLeftSource, /Развернуть левое меню/);
@@ -497,6 +547,21 @@ test("sidebars support compact workspace and event-center view modes", () => {
   assert.match(sidebarRightSource, /Лента/);
   assert.match(sidebarRightSource, /Очередь/);
   assert.match(sidebarRightSource, /sidebarContentRows = viewMode === "both" \? "1fr 1px 1fr 1px 1fr" : "minmax\(0, 1fr\)"/);
+  assert.match(sidebarRightSource, /transition: "opacity 180ms ease"/);
+  assert.doesNotMatch(sidebarRightSource, /translateX\(14px\)/);
+  assert.doesNotMatch(sidebarRightSource, /translateX\(12px\)/);
+});
+
+test("event center toasts avoid stale replays and use compact visual countdown", () => {
+  assert.match(sidebarRightSource, /EVENT_TOAST_SEEN_STORAGE_KEY/);
+  assert.match(sidebarRightSource, /initialEventSnapshotSeededRef/);
+  assert.match(sidebarRightSource, /rememberEventToastSeen/);
+  assert.match(sidebarRightSource, /const allowToast = initialEventSnapshotSeededRef\.current/);
+  assert.match(sidebarRightSource, /emitCurrent: true/);
+  assert.match(toastHostSource, /gridTemplateColumns: item\.actionLabel && item\.secondaryActionLabel \? "1fr 1fr"/);
+  assert.match(toastHostSource, /toast-progress-fill/);
+  assert.match(cssSource, /toastProgressSpin/);
+  assert.match(cssSource, /\.toast-progress-fill::after/);
 });
 
 test("page inspector exposes on-demand runtime consent audit", () => {
@@ -517,7 +582,7 @@ test("guest crawl persona is visible in site, compare and page context UX", () =
   assert.match(siteCardsSource, /default_persona\?\.label \|\| "Гость"/);
   assert.match(compareSource, /run\.persona\?\.label \|\| "Гость"/);
   assert.match(reportSource, /Контекст просмотра:/);
-  assert.match(pageDrawerSource, /Контекст просмотра:/);
+  assert.match(pageDrawerSource, /Контекст: \{context\.page\.persona\?\.label \|\| "Гость"\}/);
   assert.match(compareSource, /snapshot\.persona\?\.label \|\| "Гость"/);
   assert.match(compareSource, /Все контексты доступа/);
   assert.match(compareSource, /Сравнение разных контекстов доступа/);

@@ -197,6 +197,18 @@ button:focus-visible {
   min-width: 0;
 }
 
+.compare-chip-step {
+  display: grid;
+  gap: 6px;
+}
+
+.compare-chip-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .compare-page-search {
   width: 100%;
   min-height: 36px;
@@ -909,7 +921,7 @@ button:focus-visible {
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.03);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 0.9fr) minmax(0, 1.1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
@@ -1014,11 +1026,38 @@ button:focus-visible {
   animation: projectRunStagePulse 1.35s ease-in-out infinite;
 }
 
+.toast-progress-fill {
+  position: relative;
+  transition: width 120ms linear;
+}
+
+.toast-progress-fill::after {
+  content: "";
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(168, 196, 255, 0.95);
+  border-top-color: rgba(168, 196, 255, 0.22);
+  background: rgba(24, 24, 25, 0.96);
+  transform: translateY(-50%);
+  animation: toastProgressSpin 780ms linear infinite;
+}
+
+@keyframes toastProgressSpin {
+  to {
+    transform: translateY(-50%) rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .project-run-spinner,
   .compare-loading-dot,
   .project-run-live-stage,
-  .structure-tree-row-live-added {
+  .structure-tree-row-live-added,
+  .toast-progress-fill::after {
     animation: none;
   }
 }
