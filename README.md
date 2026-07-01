@@ -1,98 +1,139 @@
-﻿# Crawler App
+# Crawler App
 
-Веб-приложение для управления проектами мониторинга сайтов, прогонами crawler, доступом пользователей и админ-операциями.
+Веб-приложение для мониторинга сайтов: проекты, сайты внутри проекта, scoped crawl, сравнение страниц, page inspector, crawl personas, расписания, очередь worker и уведомления по целям мониторинга.
+
+Проект сейчас на dev-stage, но основные пользовательские сценарии уже собраны вокруг целевой модели:
+
+- `Project` — рабочая область, права доступа и настройки.
+- `ProjectSite` — самостоятельный сайт внутри проекта: стартовый URL, режим `весь сайт / раздел`, лимиты и роль сайта.
+- `CrawlPersona` — контекст обхода сайта: минимум `Гость`, далее авторизованные/партнёрские сессии.
+- `Run` — прогон конкретного сайта под конкретной persona.
+- `Page` — результат страницы внутри run: HTTP/meta, HTML, rendered snapshot, ошибки, redirects, SEO, links/assets/tracking.
 
 ## Быстрый старт
 
-### Основной режим (с Prometheus)
+Основная команда для dev-стека:
+
 ```bash
 docker compose up -d --build
 ```
 
-## Адреса сервисов
+Она поднимает backend, frontend, worker, БД и Prometheus. Worker включён по умолчанию: запуск сайта ставится в очередь, а отдельный service забирает задачи.
+
+Адреса:
 
 - Frontend: `http://localhost:5173`
 - Backend health: `http://localhost:8000/health`
 - Prometheus: `http://localhost:9090`
 
-## Остановка
+Остановить без удаления данных:
 
-### Остановить без удаления данных
 ```bash
 docker compose down
 ```
 
-### Остановить и удалить тома
+Остановить и удалить тома:
+
 ```bash
 docker compose down -v
 ```
 
-## UI Debug Center (только development)
+## Основные сценарии
 
-Для fixture-only проверки ролей, toast, запросов доступа, событий и редких UI-состояний добавьте в `.env`:
+### Проекты и сайты
 
-```env
-APP_ENV=development
-UI_DEBUG_ENABLED=true
-VITE_ENABLE_UI_DEBUG=true
+- Проект может содержать один или несколько сайтов.
+- Сайт можно сканировать целиком или только внутри раздела через `path_prefix`.
+- Одинаковый URL/scope разрешён в разных проектах, но внутри одного проекта duplicate scope запрещён.
+- `Запустить выбранный сайт` запускает только активную карточку сайта.
+- `Запустить все сайты` показывается только для multi-site проекта и ставит в очередь все включённые сайты.
+
+### Structure и Page Inspector
+
+- Structure показывает дерево страниц выбранного сайта/run/persona.
+- Клик по странице открывает контекстное окно внутри интерфейса, а не внешний сайт.
+- Page Inspector показывает HTTP/meta, SEO score, ссылки, ассеты, scripts/cookies/analytics, redirects/fetch errors и rendered snapshot.
+- Для проблемных страниц есть точечный и массовый bounded retry в контексте исходной persona.
+
+### Compare
+
+Сравнение страниц находится внутри проекта:
+
+```text
+/projects/:id/compare
 ```
 
-Затем пересоберите frontend/backend:
+Можно сравнивать:
 
-```bash
-docker compose up -d --build backend frontend
-```
+- разные сайты внутри проекта;
+- разные версии одной страницы;
+- разные personas;
+- страницы, подобранные вручную или через auto-match по relative path.
 
-Открыть: `Настройки → UI Debug Center`.
+Режимы:
 
-- доступ: admin/root-admin;
-- реальные роли и данные не изменяются;
-- backend жёстко отключает режим при `APP_ENV=production`;
-- настоящая impersonation намеренно не реализована.
+- `Визуально` — rendered snapshots;
+- `Код` — HTML diff;
+- `Структура` — HTTP/meta/SEO/links/assets comparison.
 
-## Managed login для crawl personas
+Compare работает как focus workspace: сайдбары скрываются, чтобы оставить максимум места рабочей области.
 
-Для подключения авторизованной persona через управляемый браузер добавьте в `.env`:
+### Цели мониторинга
 
-```env
-CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_ENABLED=1
-CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS=0
-CRAWL_BROWSER_MAX_PAGES=500
-CRAWL_BROWSER_MAX_SECONDS=600
-CRAWL_STALE_RUNNING_SECONDS=1800
-```
+В Compare можно выбрать визуальный блок страницы и сохранить его как monitoring target. После следующих успешных runs crawler автоматически проверяет, остался ли блок на месте.
 
-Затем перезапустите backend:
+Статусы цели:
 
-```bash
-docker compose up -d --build backend
-```
+- `На месте`;
+- `Изменился`;
+- `Не найден`;
+- `Нужна проверка`;
+- `Ждёт прогона`.
 
-Если backend запущен в Docker без GUI/DISPLAY, видимое окно может не открыться. UI покажет это явно и предложит fallback: ручной импорт Playwright `storageState`.
+Для целей доступны:
 
-`CRAWL_BROWSER_MAX_PAGES` и `CRAWL_BROWSER_MAX_SECONDS` ограничивают дорогие browser-runs. Обычный HTTP-crawler продолжает использовать лимит сайта.
+- rename/pause/resume/delete;
+- история проверок;
+- Event Center уведомления;
+- email/Telegram подписки;
+- throttling по времени;
+- delivery outbox;
+- retry/backoff;
+- diagnostics card для admin/root-admin;
+- `Preview` и `Тест` сообщения канала.
 
-`CRAWL_STALE_RUNNING_SECONDS` задаёт, через сколько секунд без обновления прогресса `RUNNING`-прогон считается зависшим. При следующем чтении истории или запуске сайта backend пометит такой прогон как `FAILED/stale_run_recovered`, чтобы он не блокировал новый запуск.
+### Расписания
 
-Активный прогон можно остановить через `POST /runs/{run_id}/cancel`. Backend ставит `CANCEL_REQUESTED`, а crawler-watchdog пытается быстро прервать текущий HTTP/browser fetch закрытием runtime-клиента; уже сохранённые страницы остаются в истории, а частично оборванная текущая страница не записывается как ошибка пользователя.
+В настройках проекта можно включить автозапуск:
 
-Операционная диагностика crawler доступна admin/root-admin через `GET /crawler/readiness`: режим исполнения, активные runs/jobs, ожидание отмены, stale recovery и пороги зависших состояний. В Project Dashboard для admin/root-admin эти данные показываются компактной панелью: readiness, режим `worker/sync`, queued/running/cancel-requested jobs и warning/critical issues.
+- daily/weekly;
+- время `HH:MM`;
+- timezone;
+- pause/resume;
+- список сайтов и personas, которые будут запущены.
 
-Каждый запуск сайта теперь создаёт durable job-запись `crawler_run_jobs`. В dev `docker-compose` включён worker-mode: backend ставит site-run в очередь, а отдельный `worker` service забирает queued jobs и выполняет crawl.
+Worker сам проверяет due schedules и ставит задачи в очередь. Duplicate guard не создаёт новый запуск, если проект уже имеет активный run/job.
 
-Raw artifacts хранятся ограниченно: по умолчанию сохраняется HTML/rendered snapshot только для двух последних успешных прогонов сайта в рамках одной crawl-persona (`latest + previous`). Старые runs, URL, HTTP-статусы, hashes, timings и агрегаты остаются в базе для истории и статистики, но тяжёлый HTML и rendered files очищаются. Лимит задаёт `SCAN_RAW_ARTIFACT_RUNS_TO_KEEP` от 1 до 20, по умолчанию 2.
+## Права доступа
 
-Role-based quotas защищают crawler от слишком дорогих настроек и очередей. По умолчанию `editor` ограничен 5000 страницами и concurrency 3 на сайт, 20 сайтами в проекте, 3 активными crawler jobs и 10 сайтами в одном bulk-run; `admin/root-admin` имеют более высокие лимиты. Переопределение идёт через env вида `QUOTA_EDITOR_MAX_PAGES_PER_SITE`, `QUOTA_EDITOR_MAX_ACTIVE_JOBS_PER_USER`, `QUOTA_ADMIN_MAX_BULK_SITES_PER_RUN`.
+Системные роли:
 
-Project membership ограничивает видимость проектов. При создании проекта текущий пользователь становится `owner`; обычные `viewer/editor` видят только проекты, где они участники, а `admin/root-admin` видят все. Проекты без membership-записей не видны обычным пользователям: назначьте owner через миграцию/backfill или админский доступ.
+- `viewer` — просмотр доступных данных;
+- `editor` — запуск crawler и редактирование проектов, где есть доступ;
+- `admin` — операционное управление;
+- `root-admin` — полный системный доступ.
 
-Readiness также контролирует production-состояние очереди:
+Project membership задаёт доступ внутри проекта:
 
-- `RUNNING/CANCEL_REQUESTED` job с истёкшей lease автоматически закрывается как failed/cancelled и освобождает сайт для нового запуска;
-- старая `QUEUED` job не удаляется автоматически, но переводит readiness в `degraded`, чтобы было видно проблему worker/backlog;
-- порог старой очереди задаёт `CRAWLER_JOB_STALE_QUEUED_SECONDS` — по умолчанию 600 секунд.
+- `owner` — управляет доступами проекта;
+- `editor` — меняет сайты/настройки и запускает crawler;
+- `viewer` — смотрит результаты.
 
-Worker включён в `docker-compose.yml` явно:
+Обычные `viewer/editor` видят только проекты, где они участники. `admin/root-admin` видят все проекты.
+
+## Worker и очередь
+
+В dev compose worker включён:
 
 ```env
 CRAWLER_WORKER_ENABLED=1
@@ -102,43 +143,134 @@ CRAWLER_JOB_MAX_ATTEMPTS=3
 CRAWLER_JOB_RETRY_BACKOFF_SECONDS=10,30,120
 ```
 
-В этом режиме `POST /runs/start-site/{site_id}` ставит задачу в очередь. Постоянный `worker` service автоматически забирает queued jobs. Ручной `POST /runs/worker/tick` остаётся debug/admin-инструментом для проверки одного шага worker execution.
-
-Для восстановления UI после перезагрузки страницы доступны:
-
-- `GET /runs/active-job/by-site/{site_id}` — текущая active job одного сайта или `active=false`;
-- `GET /runs/active-jobs/by-project/{project_id}` — все active jobs проекта, чтобы восстановить очередь после `Запустить все сайты`.
-
-Worker автоматически переоткладывает transient job failures (`timeout`, `connection_error`, `request_error`, `http_error`, browser navigation/runtime errors) до лимита `CRAWLER_JOB_MAX_ATTEMPTS`. Ошибки настроек, сессии persona, scope и отключённого сайта не ретраятся автоматически.
-
-Project UI показывает retry/backoff прямо в pending-блоке: номер следующей попытки, лимит попыток, время до повторного запуска и причину последнего сбоя.
-
-Dev stack с worker запускается обычной командой:
+Полезные команды:
 
 ```bash
-docker compose up -d --build
-```
-
-Остановить только worker, если нужно временно проверить backend без фонового crawl:
-
-```bash
+docker compose logs -f worker
 docker compose stop worker
 ```
 
-Запустить bounded smoke-проверку worker process внутри backend-контейнера:
+Ручной debug-tick одного шага worker:
 
 ```bash
 docker compose exec backend env CRAWLER_WORKER_ENABLED=1 CRAWLER_WORKER_TICK_LIMIT=1 PYTHONPATH=/app python -m app.worker.crawler_worker
 ```
 
-Опциональные настройки:
+Readiness:
 
-```env
-CRAWLER_WORKER_POLL_SECONDS=2
-CRAWLER_WORKER_TICK_LIMIT=0
+- `GET /crawler/readiness`
+- в Project Dashboard admin/root-admin видят компактную readiness-панель: queued/running/cancel-requested jobs, режим `worker/sync`, stale queue и degraded issues.
+
+Активные задачи:
+
+- `GET /runs/active-job/by-site/{site_id}`
+- `GET /runs/active-jobs/by-project/{project_id}`
+
+Отмена активного run:
+
+```text
+POST /runs/{run_id}/cancel
 ```
 
-`CRAWLER_WORKER_TICK_LIMIT=0` означает работать до SIGTERM/SIGINT.
+Backend ставит `CANCEL_REQUESTED`, crawler-watchdog пытается быстро прервать текущий HTTP/browser fetch. Уже сохранённые страницы остаются в истории.
+
+## Crawl personas и managed login
+
+Для авторизованного обхода можно подключить persona через Playwright storage state или managed login.
+
+Env для managed login:
+
+```env
+CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_ENABLED=1
+CRAWL_PERSONA_MANAGED_LOGIN_CAPTURE_HEADLESS=0
+CRAWL_BROWSER_MAX_PAGES=500
+CRAWL_BROWSER_MAX_SECONDS=600
+CRAWL_STALE_RUNNING_SECONDS=1800
+```
+
+Перезапуск backend:
+
+```bash
+docker compose up -d --build backend
+```
+
+Если backend запущен в Docker без GUI/DISPLAY, видимое окно может не открыться. UI покажет это явно и предложит fallback: ручной импорт Playwright `storageState`.
+
+Browser-runs ограничены `CRAWL_BROWSER_MAX_PAGES` и `CRAWL_BROWSER_MAX_SECONDS`. Обычный HTTP-crawler продолжает использовать лимит сайта.
+
+## Уведомления
+
+Target monitoring поддерживает каналы:
+
+- `email`;
+- `telegram_chat`.
+
+Для email нужен SMTP env, используемый backend email utility.
+
+Для Telegram нужен:
+
+```env
+TELEGRAM_BOT_TOKEN=...
+```
+
+Delivery outbox не теряет failed-доставки: применяется retry/backoff policy.
+
+```env
+MONITORING_NOTIFICATION_MAX_ATTEMPTS=5
+MONITORING_NOTIFICATION_RETRY_BACKOFF_SECONDS=60,300,900,1800,3600
+```
+
+Admin/root-admin видят diagnostics card: настроены ли Email/Telegram, сколько записей queued/retry-ready/failed-waiting/sent/dead.
+
+## Хранилище артефактов
+
+Raw artifacts хранятся ограниченно: по умолчанию HTML/rendered snapshots сохраняются только для двух последних успешных прогонов сайта в рамках одной crawl-persona.
+
+```env
+SCAN_RAW_ARTIFACT_RUNS_TO_KEEP=2
+SCAN_STORAGE_BUDGET_MB=1024
+```
+
+Старые runs, URL, HTTP-статусы, hashes, timings и агрегаты остаются в базе, но тяжёлый HTML/rendered files очищаются.
+
+## Quotas
+
+Role-based quotas защищают crawler от дорогих настроек и очередей.
+
+Примеры env:
+
+```env
+QUOTA_EDITOR_MAX_PAGES_PER_SITE=5000
+QUOTA_EDITOR_MAX_ACTIVE_JOBS_PER_USER=3
+QUOTA_ADMIN_MAX_BULK_SITES_PER_RUN=50
+```
+
+Ошибки лимитов возвращаются как friendly `quota_exceeded`: UI показывает лимит, текущее значение, запрошенное действие и следующий шаг.
+
+## UI Debug Center
+
+Только development:
+
+```env
+APP_ENV=development
+UI_DEBUG_ENABLED=true
+VITE_ENABLE_UI_DEBUG=true
+```
+
+Пересборка:
+
+```bash
+docker compose up -d --build backend frontend
+```
+
+Открыть: `Настройки → UI Debug Center`.
+
+Ограничения:
+
+- доступ: admin/root-admin;
+- реальные роли и данные не изменяются;
+- backend отключает режим при `APP_ENV=production`;
+- настоящая impersonation намеренно не реализована.
 
 ## Метрики
 
@@ -152,28 +284,21 @@ CRAWLER_WORKER_TICK_LIMIT=0
 
 - [Открыть knowledge graph проекта](.understand-anything/knowledge-graph.json)
 
-Граф создан с помощью [Understand Anything](https://github.com/Egonex-AI/Understand-Anything) и содержит архитектурные слои, связи файлов и guided tour. Для интерактивного просмотра установите Understand Anything и запустите `/understand-dashboard` из корня проекта; повторный полный анализ не требуется.
+Граф создан с помощью [Understand Anything](https://github.com/Egonex-AI/Understand-Anything). Для интерактивного просмотра установите Understand Anything и запустите `/understand-dashboard` из корня проекта.
 
-## Паттерны и контракты
+## Документация и контракты
 
-Актуальные инженерные контракты, reuse-карта, DoD и verification minimum объединены в:
+- `TODO.md` — текущий контекст и backlog.
+- `docs/ENGINEERING_PLAYBOOK.md` — engineering contracts, reuse-first, DoD.
+- `RBAC_MAP.md` — роли и права.
+- `docs/README.md` — дополнительная документация.
+- `docs/governance/FEATURE_INTAKE_PLAYBOOK.md` — feature intake.
+- `docs/archive/` — исторические snapshots.
 
-- `docs/ENGINEERING_PLAYBOOK.md`
-- `TODO.md` — только текущий контекст и открытый backlog
-- `RBAC_MAP.md`
-- `docs/README.md`
-- `docs/governance/FEATURE_INTAKE_PLAYBOOK.md`
-- `docs/audits/AUDIT_DISCOVERY_2026-02-24.md`
+README держим кратким: запуск, эксплуатация и точки входа. Детальные решения фиксируются в `TODO.md` и отдельных docs.
 
-Критичный governance-контракт:
-- `docs/ENGINEERING_PLAYBOOK.md` -> `Priorities` и `Delivery Contract`.
+## Encoding First
 
-Полные исторические snapshots прежних `TODO/PATTERNS/REUSE_INDEX` находятся в `docs/archive/`.
-
-Этот файл (`README.md`) оставляем кратким: запуск/эксплуатация/точки входа.
-
-## Обязательное правило кодировки (Encoding First)
-
-- Все файлы с русским текстом сохраняются в `UTF-8` (предпочтительно `UTF-8 without BOM`).
+- Все файлы с русским текстом сохраняются в `UTF-8`.
 - `CP1251/Windows-1251` запрещены.
 - Любая mojibake/кракозябра блокирует завершение задачи до исправления.
