@@ -67,6 +67,10 @@ test("settings contain real project parameters and a saved schedule contract", (
   assert.match(source, /pauseProjectSchedule/);
   assert.match(source, /resumeProjectSchedule/);
   assert.match(source, /Сохранить расписание/);
+  assert.match(source, /Будет запущено/);
+  assert.match(source, /personaSessionPillMeta/);
+  assert.match(source, /scheduleEnabledSites/);
+  assert.match(source, /Не участвуют:/);
   assert.doesNotMatch(source, /Manual-only/);
   assert.match(source, />Опасная зона</);
   assert.match(source, /setActiveSettingsSection/);

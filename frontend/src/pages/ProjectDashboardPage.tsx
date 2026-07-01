@@ -480,6 +480,17 @@ function personaOptionSuffix(persona: CrawlPersonaSummary): string {
   return " · требует внимания";
 }
 
+function personaSessionPillMeta(persona: CrawlPersonaSummary | null | undefined): { label: string; tone: "success" | "warning" | "danger" | "neutral" } {
+  if (!persona || persona.kind === "guest") return { label: "сессия не нужна", tone: "neutral" };
+  const issue = personaLaunchIssue(persona);
+  if (!issue) {
+    if (persona.session_bundle_summary?.expiry_status === "expiring") return { label: "сессия скоро истечёт", tone: "warning" };
+    return { label: "сессия подключена", tone: "success" };
+  }
+  if (persona.session_bundle_summary?.expiry_status === "expired") return { label: "сессия истекла", tone: "danger" };
+  return { label: "без сессии", tone: "warning" };
+}
+
 function parseDomains(csv: string): string[] {
   return (csv || "")
     .split(",")
@@ -1297,6 +1308,8 @@ export default function ProjectDashboardPage() {
   const selectedPendingRetryText = selectedPendingJob ? pendingJobRetryText(selectedPendingJob) : null;
   const pendingJobsCount = Object.keys(pendingCrawlerJobs).length;
   const projectHasMultipleSites = sites.length > 1;
+  const scheduleEnabledSites = useMemo(() => sites.filter((site) => site.is_enabled), [sites]);
+  const scheduleDisabledSitesCount = sites.length - scheduleEnabledSites.length;
   const readinessIssues = crawlerReadiness?.issues || [];
   const selectedRunLaunchIssue = personaLaunchIssue(selectedRunPersona);
   const structureUpdatePending = hasRunning || Boolean(selectedPendingJob) || runPending || projectRunPending;
@@ -2525,6 +2538,37 @@ export default function ProjectDashboardPage() {
                         )}
                         {projectSchedule?.last_skip_reason && (
                           <AccentPill tone="warning">Пропуск: {projectSchedule.last_skip_reason}</AccentPill>
+                        )}
+                      </div>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <SectionHeaderRow
+                          title={<div style={{ fontWeight: 800 }}>Будет запущено</div>}
+                          actions={<AccentPill tone="neutral">{scheduleEnabledSites.length} сайт(а)</AccentPill>}
+                        />
+                        {scheduleEnabledSites.length > 0 ? (
+                          <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                            {scheduleEnabledSites.map((site) => {
+                              const persona = site.default_persona || null;
+                              const sessionMeta = personaSessionPillMeta(persona);
+                              return (
+                                <Card key={site.id} style={{ padding: 10, display: "grid", gap: 6 }}>
+                                  <div style={{ fontWeight: 800 }}>{site.name}</div>
+                                  <MetaText opacity={0.68}>{site.start_url}</MetaText>
+                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                    <AccentPill tone="info">{persona?.label || "Гость"}</AccentPill>
+                                    <AccentPill tone={sessionMeta.tone}>{sessionMeta.label}</AccentPill>
+                                  </div>
+                                </Card>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <MetaText>В проекте нет включённых сайтов для автозапуска.</MetaText>
+                        )}
+                        {scheduleDisabledSitesCount > 0 && (
+                          <MetaText opacity={0.68}>
+                            Не участвуют: {scheduleDisabledSitesCount} отключённых сайт(а).
+                          </MetaText>
                         )}
                       </div>
                     </div>

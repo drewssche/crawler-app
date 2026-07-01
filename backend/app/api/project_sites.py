@@ -494,13 +494,7 @@ def list_project_sites_summary(
         site_data["default_persona"] = (
             None
             if default_persona is None
-            else {
-                "id": default_persona.id,
-                "key": default_persona.key,
-                "label": default_persona.label,
-                "kind": default_persona.kind,
-                "has_secrets": default_persona.has_secrets,
-            }
+            else _persona_payload(default_persona)
         )
         site_data["anomaly"] = anomalies_by_site.get(row.ProjectSite.id)
         site_data["last_run"] = (

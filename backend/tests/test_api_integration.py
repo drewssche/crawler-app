@@ -999,6 +999,7 @@ def test_site_runs_keep_allowed_domains_as_technical_allowlist(monkeypatch):
     summaries_by_id = {row["id"]: row for row in summaries}
     assert summaries_by_id[primary_id]["runs_total"] == 1
     assert summaries_by_id[primary_id]["default_persona"]["key"] == "guest"
+    assert summaries_by_id[primary_id]["default_persona"]["session_bundle_summary"]["status"] == "not_required"
     assert summaries_by_id[primary_id]["last_run"]["id"] == primary_run_id
     assert summaries_by_id[primary_id]["last_run"]["persona"]["label"] == "Гость"
     assert summaries_by_id[primary_id]["anomaly"]["status"] == "insufficient_data"
