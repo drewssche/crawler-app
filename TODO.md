@@ -3,13 +3,14 @@
 Короткий рабочий backlog. Полная история решений и завершённых волн сохранена в
 [`docs/archive/TODO_HISTORY_2026-06-22.md`](docs/archive/TODO_HISTORY_2026-06-22.md).
 
-## Current Context — 2026-06-24
+## Current Context — 2026-07-01
 
 - Активная продуктовая установка: **friendly UX/UI**, без декоративного шума и с объяснимыми состояниями.
 - Browser-smoke выполняется **только по явному запросу пользователя**.
 - Завершённые волны закоммичены:
   - `16708d3` — stabilization, friendly failures/search и project IA;
-  - `ea8ec69` — compact Workspace project rows.
+  - `ea8ec69` — compact Workspace project rows;
+  - `0760858` — page monitoring targets, rendered/compare polish и notification delivery.
 - Уточнён целевой продуктовый контракт:
   - проект — контейнер для одного или нескольких самостоятельных сайтов;
   - мониторинг аномалий работает и для проекта с одним сайтом;
@@ -81,7 +82,7 @@
   2. превратить Page Inspector из сводки счётчиков в понятное исследование links/assets/tracking с легендами и progressive disclosure;
   3. заменить обрезанный sanitized DOM на достоверный сохранённый rendered snapshot, сохранив безопасный DOM/code-режим отдельно;
   4. сделать Compare пригодным для тысяч страниц: searchable picker, progressive controls и полноразмерные/изменяемые панели без фиксированной высоты документа.
-- Следующий рекомендуемый пункт: **release stabilization**: technical checks уже закрыты, остаётся только ручной Browser-smoke по явному запросу пользователя. Новые крупные фичи не начинать до подтверждения project/run сценариев.
+- Следующий рекомендуемый пункт: **release stabilization**: technical checks закрыты, остаётся только ручной Browser-smoke по явному запросу пользователя. Новые крупные фичи не начинать до подтверждения project/run сценариев.
 - Legacy audit 2026-06-27:
   - проект находится в dev-stage, поэтому breaking cleanup допустим, если упрощает целевую модель;
   - audit зафиксирован в [`docs/audits/LEGACY_AUDIT_2026-06-27.md`](docs/audits/LEGACY_AUDIT_2026-06-27.md);
@@ -101,7 +102,8 @@
 
 ## In Progress
 
-- [ ] Нет активного пункта.
+- [ ] **Release stabilization / manual Browser-smoke gate**.
+  Implementation work по текущему MVP закрыт. Остаётся только ручное подтверждение ключевых сценариев в UI по явному запросу пользователя; автоматический Browser-smoke не запускать.
 
 ## Next — UX/Product
 
@@ -326,8 +328,8 @@
   - 6. Project container cleanup: duplicate site fields removed from `projects`; `ProjectSite` is now the source for URL/scope/limits/allowlist.
   - Historical Alembic revisions/archive docs may still mention `profiles/profile_id`; keep them as migration/history records, not live product contract.
 
-- [ ] **P0 Stabilization gate** (`HIGH`, implementation mostly complete).
-  Technical gate 2026-06-29 passed: backend `90 passed, 2 skipped`, Alembic head `f6a1d3c8e902`, frontend lint clean, typecheck/build passed, project/workspace/search/roles/compare UI tests passed, `git diff --check` passed.
+- [ ] **P0 Stabilization gate** (`HIGH`, implementation complete; manual smoke pending).
+  Technical gate 2026-07-01 passed: backend target monitoring `1 passed`, backend renderer `4 passed`, frontend project UI `30 passed`, TypeScript/build passed, Alembic head `f2c9a7e8d104`, `git diff --check` passed.
   Осталось ручное Browser-smoke подтверждение project/run сценариев по отдельному запросу: два независимых запуска, immediate project visibility, FINISHED pages, duplicate conflict.
 
 - [x] **P0 Observer notification visibility parity** (`HIGH`).
@@ -378,7 +380,7 @@
   Готово 2026-06-30: добавлена таблица `project_schedules`, API `GET/PUT /projects/{id}/schedule`, `pause/resume`, operational tick `POST /projects/schedules/run-due` под admin-level `audit.view`; расписание поддерживает `daily/weekly`, `HH:MM`, IANA timezone и next_run_at. Duplicate guard не создаёт новый запуск, если в проекте уже есть активный run/job. UI `Проект → Настройки → Расписание` больше не manual-only: можно включить/поставить на паузу, выбрать частоту/дни/время/timezone и увидеть следующий запуск.
   Follow-up 2026-07-01: due schedules подключены к `crawler_worker` loop. Worker проверяет расписания по `CRAWLER_SCHEDULE_POLL_SECONDS` и ставит due project-sites в durable queue; переключатель `CRAWLER_SCHEDULES_ENABLED` позволяет выключить автопланировщик без удаления сохранённых расписаний.
   UX follow-up 2026-07-01: в UI расписания добавлена секция `Будет запущено` — включённые сайты проекта, default persona и статус сессии; отключённые сайты показаны отдельным счётчиком как не участвующие в авторанe.
-- [ ] Friendly UX/UI refinement wave (`P1`, minimal UI pass перед расширением новых фич):
+- [x] Friendly UX/UI refinement wave (`P1`, implementation pass complete):
   - UX-принцип 2026-06-30: интерфейс должен быть понятен структурой, а не пояснительными простынями. Минимизировать текст, убрать дубли, не использовать нативные dropdown там, где они визуально ломаются; короткие варианты показывать chips/segmented, длинные — combobox/command palette, справку переносить в `?`.
   - 2026-06-29 старт волны: Settings `Лимиты ролей`/`Хранилище сканов` переведены в раскрываемые friendly-секции с русскими метриками и техническими деталями под disclosure; `Вы` перенесён рядом с email в Users, RootAdmins и project members; системная роль участника проекта русифицирована.
   - 2026-06-29 server contract: одинаковый URL/scope в разных проектах разрешён; duplicate scope внутри одного проекта остаётся запрещённым через `project_site_scope_conflict`.
@@ -403,13 +405,16 @@
   - 2026-06-30 stage 6 done: левый sidebar получил compact collapse/expand rail с сохранением состояния; правый event-center получил режимы `Оба` (текущий 50/50), `Уведомления` и `Лента` с сохранением выбора.
   - 2026-06-30 stage 6 follow-up done: правый event-center получил третью область `Очередь задач` на базе `/crawler/readiness`; режим `Все` делит высоту как `Уведомления / Лента / Очередь` примерно 33/33/33, отдельный режим `Очередь` раскрывает её на всю высоту. Job-level actions оставить до backend-контракта управления job-id.
   - 2026-06-30 stage 7 done: добавлен общий hover/focus polish для interactive cards, persistent details/disclosure summaries, compare page results и element-picker controls; keyboard polish combobox (`↑/↓/Enter`, ARIA active descendant) оставлен после визуальной проверки.
-- [ ] Snapshot/Compare polish (`P2`, после Browser-smoke): queued consent audits и server-side search/true virtualization только при подтверждённой просадке на больших runs.
+  - Итог 2026-07-01: минималистичная IA/UX-волна закрыта; дальнейшие правки вести только по результатам ручного smoke или конкретных UX-наблюдений.
+- [x] Snapshot/Compare polish (`P2`, implementation complete; performance extensions deferred):
   - 2026-07-01 stage 1 done: Compare visual workspace получил синхронный scroll левой/правой страницы и переключатель высоты `Компактно / Удобно / Высоко`; оба выбора сохраняются локально, чтобы пользователь мог настроить удобную рабочую область один раз.
   - 2026-07-01 stage 2 done: browser-runtime crawl сохраняет rendered screenshot и element-map прямо во время persona-run; UI получает `rendered_snapshot.available=true` сразу после browser-прогона, без ручного пересоздания из сохранённого HTML.
   - 2026-07-01 stage 3 done: runtime consent audit сохраняется в `page_consent_audits`, Inspector показывает историю последних проверок страницы и обновляет её после ручного запуска. Очередь audit jobs оставлена отдельным backend-контрактом, чтобы не плодить полусырые queued states.
-- [ ] Frontend production polish (`P2`, держать после UX-stabilization): следить за размером initial JS chunk, выносить тяжёлые рабочие зоны в lazy route chunks, а ручной `manualChunks`/глубокое дробление применять только если production build снова покажет warning или станет заметна задержка первого экрана.
+  - Deferred only if needed: queued consent audits, server-side search/true virtualization и deeper compare optimizations включать только при подтверждённой просадке на больших runs.
+- [x] Frontend production polish (`P2`, current gate passed):
   - 2026-07-01 stage 1 done: основные страницы workspace/settings/project/compare/inspector/debug переведены на lazy routes; цель — убрать Vite warning про `index` chunk > 500 kB без изменения UX и backend.
-- [ ] Target monitoring/subscriptions (`P2`, после snapshot/diff stabilization): автоматическая проверка target fingerprint по новым runs и outbox/subscriptions.
+  - Итог 2026-07-01: production build проходит без Vite chunk warning; manualChunks/глубокое дробление не делать, пока warning или задержка первого экрана не вернутся.
+- [x] Target monitoring/subscriptions (`P2`, implementation complete):
   - 2026-07-01 stage 1 done: выбранный visual block в Compare можно сохранить как `page_monitoring_target`; backend хранит selector/tag/text/html-fragment/rect/fingerprint hash, а UI показывает friendly next step без обещания уже работающих уведомлений.
   - 2026-07-01 stage 2 done: добавлен ручной occurrence check для сохранённой цели — backend ищет блок по selector и fallback fingerprint в выбранной версии страницы, возвращает `matched/changed/missing/not_checkable`; Compare показывает кнопку `Проверить цель` после сохранения.
   - 2026-07-01 stage 3 done: после каждого успешного run backend автоматически проверяет активные цели этого сайта+персоны, сохраняет историю в `page_monitoring_target_checks` и отдаёт её через API.
@@ -422,6 +427,7 @@
   - 2026-07-01 stage 10 done: delivery outbox получил retry/backoff policy (`next_attempt_at`, `max_attempts`, env `MONITORING_NOTIFICATION_RETRY_BACKOFF_SECONDS`, `MONITORING_NOTIFICATION_MAX_ATTEMPTS`) и terminal status `dead` после лимита попыток. Diagnostics endpoint показывает SMTP/Telegram configured-state и counts (`queued/retry_ready/failed_waiting/sent/dead`); UI показывает `попыток N/M`, следующую попытку и `Остановлено`.
   - 2026-07-01 stage 11 done: admin/root-admin diagnostics card добавлена в операционную область проекта: показывает готовность Email/Telegram, очередь, retry-ready, failed-waiting, sent/dead, max attempts и backoff policy без раскрытия secrets.
   - 2026-07-01 stage 12 done: для каждого канала подписки добавлены `Preview` и `Тест`: preview показывает subject/body без отправки, test-send создаёт тестовую check/outbox запись, сразу пытается доставить и показывает результат в UI/истории доставок.
+  - Итог 2026-07-01: selected visual block можно превратить в monitoring target; проверки идут автоматически после успешных runs; события, email/Telegram outbox, retry/backoff, diagnostics и test-send закрыты.
 - [ ] Extended operations/event log (`P2`, только если потребуется): отдельный подробный журнал worker-событий сверх текущих queued/running/retry states, readiness panel и Event Center.
 - [ ] Telegram user channels/report preview (`P2`, после subscriptions + outbox): отдельный report preview/digest для Telegram user channels; не смешивать с operational target alerts.
 
