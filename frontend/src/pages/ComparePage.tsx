@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type Ref, type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   getCompareSnapshot,
@@ -20,6 +20,7 @@ import { buildLineDiff } from "../utils/codeDiff";
 import { suggestPageMatch } from "../utils/pageMatch";
 import Button from "../components/ui/Button";
 import { getPageContext, type PageContext } from "../api/pageContext";
+import { checkMonitoringTarget, createMonitoringTarget, type MonitoringTarget } from "../api/monitoringTargets";
 import PageInspectionReport from "../components/projects/PageInspectionReport";
 import { getProjectRunBadgeMeta } from "../components/ui/projectRunBadgeMeta";
 import RenderedSnapshotView from "../components/projects/RenderedSnapshotView";
@@ -30,6 +31,7 @@ type CompareMode = "visual" | "code" | "structure";
 type SideKey = "left" | "right";
 type PanelView = "both" | "left" | "right";
 type VisualScale = "overview" | "detail";
+type CompareWorkspaceHeight = "compact" | "comfortable" | "tall";
 type ComparePickedElement = RenderedSnapshotElement & { side: SideKey };
 type BlockFingerprint = {
   tag: string;
@@ -49,6 +51,9 @@ type BlockMatchSuggestion = {
 };
 
 const PAGE_PICKER_LIMIT = 80;
+const COMPARE_SYNC_SCROLL_STORAGE_KEY = "crawler.compare.syncScroll";
+const COMPARE_WORKSPACE_HEIGHT_STORAGE_KEY = "crawler.compare.workspaceHeight";
+const COMPARE_WORKSPACE_HEIGHTS = new Set<CompareWorkspaceHeight>(["compact", "comfortable", "tall"]);
 
 type SideState = {
   siteId: number | null;
@@ -364,6 +369,8 @@ function VisualSnapshotPanel({
   canGenerate,
   blockPickerEnabled,
   selectedElement,
+  scrollContainerRef,
+  onSnapshotScroll,
   onElementSelected,
   onElementMiss,
   onRenderedSnapshotCreated,
@@ -374,6 +381,8 @@ function VisualSnapshotPanel({
   canGenerate: boolean;
   blockPickerEnabled: boolean;
   selectedElement: ComparePickedElement | null;
+  scrollContainerRef?: Ref<HTMLDivElement>;
+  onSnapshotScroll?: (event: UIEvent<HTMLDivElement>) => void;
   onElementSelected: (element: RenderedSnapshotElement) => void;
   onElementMiss: () => void;
   onRenderedSnapshotCreated: (metadata: CompareSnapshot["rendered_snapshot"]) => void;
@@ -393,6 +402,8 @@ function VisualSnapshotPanel({
         scale={scale === "overview" ? "fit" : "actual"}
         elementPicker={blockPickerEnabled}
         selectedElement={selectedElement}
+        scrollContainerRef={scrollContainerRef}
+        onScroll={onSnapshotScroll}
         onElementSelected={onElementSelected}
         onElementMiss={onElementMiss}
         onCreated={onRenderedSnapshotCreated}
@@ -405,19 +416,30 @@ function SelectedBlockCard({
   label,
   element,
   onReset,
+  onSaveTarget,
+  savingTarget,
 }: {
   label: string;
   element: ComparePickedElement | null;
   onReset: () => void;
+  onSaveTarget?: () => void;
+  savingTarget?: boolean;
 }) {
   return (
     <Card variant={element ? "hint" : "default"} style={{ display: "grid", gap: 7 }}>
       <SectionHeaderRow
         title={<div>{label}</div>}
         actions={element && (
-          <button type="button" className="element-picker-toggle" onClick={onReset}>
-            Сбросить
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {onSaveTarget && (
+              <button type="button" className="element-picker-toggle" disabled={savingTarget} onClick={onSaveTarget}>
+                {savingTarget ? "Сохраняем..." : "Сохранить цель"}
+              </button>
+            )}
+            <button type="button" className="element-picker-toggle" onClick={onReset}>
+              Сбросить
+            </button>
+          </div>
         )}
       />
       {!element && (
@@ -442,11 +464,15 @@ function SelectedBlockCompare({
   right,
   onReset,
   onResetAll,
+  onSaveTarget,
+  savingTargetSide,
 }: {
   left: ComparePickedElement | null;
   right: ComparePickedElement | null;
   onReset: (side: SideKey) => void;
   onResetAll: () => void;
+  onSaveTarget: (side: SideKey) => void;
+  savingTargetSide: SideKey | null;
 }) {
   const blockDiff = useMemo(
     () => left && right ? buildLineDiff(left.outerHTML, right.outerHTML, 220) : [],
@@ -490,8 +516,20 @@ function SelectedBlockCompare({
       </MetaText>
       {(!left || !right) && <StatusText tone="muted">{nextStep}</StatusText>}
       <div className="compare-two-column-grid">
-        <SelectedBlockCard label="Блок слева" element={left} onReset={() => onReset("left")} />
-        <SelectedBlockCard label="Блок справа" element={right} onReset={() => onReset("right")} />
+        <SelectedBlockCard
+          label="Блок слева"
+          element={left}
+          onReset={() => onReset("left")}
+          onSaveTarget={() => onSaveTarget("left")}
+          savingTarget={savingTargetSide === "left"}
+        />
+        <SelectedBlockCard
+          label="Блок справа"
+          element={right}
+          onReset={() => onReset("right")}
+          onSaveTarget={() => onSaveTarget("right")}
+          savingTarget={savingTargetSide === "right"}
+        />
       </div>
       {left && right && !sameTag && (
         <StatusText tone="warning">Выбраны разные HTML-теги: &lt;{left.tag}&gt; слева и &lt;{right.tag}&gt; справа. Сравнение возможно, но структурно блоки могут быть не парой.</StatusText>
@@ -718,14 +756,53 @@ export default function ComparePage() {
   const [mode, setMode] = useState<CompareMode>("visual");
   const [panelView, setPanelView] = useState<PanelView>("both");
   const [visualScale, setVisualScale] = useState<VisualScale>("overview");
+  const [syncVisualScroll, setSyncVisualScroll] = useState(() => localStorage.getItem(COMPARE_SYNC_SCROLL_STORAGE_KEY) !== "off");
+  const [workspaceHeight, setWorkspaceHeight] = useState<CompareWorkspaceHeight>(() => {
+    const saved = localStorage.getItem(COMPARE_WORKSPACE_HEIGHT_STORAGE_KEY);
+    return COMPARE_WORKSPACE_HEIGHTS.has(saved as CompareWorkspaceHeight) ? saved as CompareWorkspaceHeight : "comfortable";
+  });
   const [compareStarted, setCompareStarted] = useState(false);
   const [compareLoading, setCompareLoading] = useState(false);
   const [autoMatchEnabled, setAutoMatchEnabled] = useState(true);
   const [blockPickerEnabled, setBlockPickerEnabled] = useState(false);
   const [selectedBlocks, setSelectedBlocks] = useState<{ left: ComparePickedElement | null; right: ComparePickedElement | null }>({ left: null, right: null });
   const [blockPickerNotice, setBlockPickerNotice] = useState("");
+  const [savingTargetSide, setSavingTargetSide] = useState<SideKey | null>(null);
+  const [savedTarget, setSavedTarget] = useState<MonitoringTarget | null>(null);
+  const [checkingTarget, setCheckingTarget] = useState(false);
+  const [targetMessage, setTargetMessage] = useState("");
+  const [targetError, setTargetError] = useState("");
   const [error, setError] = useState("");
+  const leftSnapshotScrollRef = useRef<HTMLDivElement | null>(null);
+  const rightSnapshotScrollRef = useRef<HTMLDivElement | null>(null);
+  const syncedScrollGuardRef = useRef<SideKey | null>(null);
   const canGenerateSnapshot = hasPermission(user?.role, "crawler.run");
+
+  useEffect(() => {
+    localStorage.setItem(COMPARE_SYNC_SCROLL_STORAGE_KEY, syncVisualScroll ? "on" : "off");
+  }, [syncVisualScroll]);
+
+  useEffect(() => {
+    localStorage.setItem(COMPARE_WORKSPACE_HEIGHT_STORAGE_KEY, workspaceHeight);
+  }, [workspaceHeight]);
+
+  const handleSyncedCompareScroll = useCallback((source: SideKey, event: UIEvent<HTMLDivElement>) => {
+    if (!syncVisualScroll || panelView !== "both" || mode !== "visual") return;
+    if (syncedScrollGuardRef.current && syncedScrollGuardRef.current !== source) return;
+    const sourceElement = event.currentTarget;
+    const targetElement = source === "left" ? rightSnapshotScrollRef.current : leftSnapshotScrollRef.current;
+    if (!targetElement) return;
+    const sourceMaxTop = Math.max(1, sourceElement.scrollHeight - sourceElement.clientHeight);
+    const sourceMaxLeft = Math.max(1, sourceElement.scrollWidth - sourceElement.clientWidth);
+    const targetMaxTop = Math.max(0, targetElement.scrollHeight - targetElement.clientHeight);
+    const targetMaxLeft = Math.max(0, targetElement.scrollWidth - targetElement.clientWidth);
+    syncedScrollGuardRef.current = source;
+    targetElement.scrollTop = (sourceElement.scrollTop / sourceMaxTop) * targetMaxTop;
+    targetElement.scrollLeft = (sourceElement.scrollLeft / sourceMaxLeft) * targetMaxLeft;
+    window.requestAnimationFrame(() => {
+      syncedScrollGuardRef.current = null;
+    });
+  }, [mode, panelView, syncVisualScroll]);
 
   const updateSide = useCallback((key: SideKey, updater: (current: SideState) => SideState) => {
     if (key === "left") setLeft(updater);
@@ -738,6 +815,11 @@ export default function ComparePage() {
     setBlockPickerEnabled(false);
     setSelectedBlocks({ left: null, right: null });
     setBlockPickerNotice("");
+    setSavingTargetSide(null);
+    setSavedTarget(null);
+    setCheckingTarget(false);
+    setTargetMessage("");
+    setTargetError("");
   }, []);
 
   const selectSite = useCallback(async (key: SideKey, siteId: number) => {
@@ -842,6 +924,49 @@ export default function ComparePage() {
       await Promise.all([loadSideSnapshot("left"), loadSideSnapshot("right")]);
     } finally {
       setCompareLoading(false);
+    }
+  }
+
+  async function saveMonitoringTarget(side: SideKey) {
+    const snapshot = side === "left" ? left.snapshot : right.snapshot;
+    const element = side === "left" ? selectedBlocks.left : selectedBlocks.right;
+    if (!snapshot || !element) return;
+    setSavingTargetSide(side);
+    setTargetMessage("");
+    setTargetError("");
+    try {
+      const target = await createMonitoringTarget(snapshot.run_id, snapshot.url, {
+        name: `${snapshot.meta.title || snapshot.url} · ${element.tag}`,
+        source: "rendered_snapshot",
+        element,
+      });
+      setSavedTarget(target);
+      setTargetMessage(`Цель «${target.name}» сохранена. ${target.next_step}`);
+    } catch (err) {
+      setTargetError(err instanceof Error ? err.message : "Не удалось сохранить цель мониторинга.");
+    } finally {
+      setSavingTargetSide(null);
+    }
+  }
+
+  async function checkSavedMonitoringTarget() {
+    if (!savedTarget) return;
+    setCheckingTarget(true);
+    setTargetError("");
+    try {
+      const result = await checkMonitoringTarget(savedTarget.id);
+      const label = result.status === "matched"
+        ? "найдена"
+        : result.status === "changed"
+          ? "похожа, но изменилась"
+          : result.status === "missing"
+            ? "не найдена"
+            : "не проверяется";
+      setTargetMessage(`Проверка цели: ${label}. ${result.message}`);
+    } catch (err) {
+      setTargetError(err instanceof Error ? err.message : "Не удалось проверить цель мониторинга.");
+    } finally {
+      setCheckingTarget(false);
     }
   }
 
@@ -1062,6 +1187,14 @@ export default function ComparePage() {
                 </StatusText>
                 <button
                   type="button"
+                  className={`element-picker-toggle${syncVisualScroll ? " is-active" : ""}`}
+                  onClick={() => setSyncVisualScroll((current) => !current)}
+                  title="Синхронно прокручивает левый и правый визуальные снимки."
+                >
+                  {syncVisualScroll ? "Скролл связан" : "Скролл отдельно"}
+                </button>
+                <button
+                  type="button"
                   className={`element-picker-toggle${blockPickerEnabled ? " is-active" : ""}`}
                   disabled={missingElementMapSides.length > 0}
                   title={missingElementMapSides.length ? "Для выбора блоков нужен визуальный снимок новой версии с картой элементов." : undefined}
@@ -1089,6 +1222,15 @@ export default function ComparePage() {
                     { value: "detail", label: "Детально" },
                   ]}
                 />
+                <SegmentedControl
+                  value={workspaceHeight}
+                  onChange={setWorkspaceHeight}
+                  options={[
+                    { value: "compact", label: "Компактно" },
+                    { value: "comfortable", label: "Удобно" },
+                    { value: "tall", label: "Высоко" },
+                  ]}
+                />
               </div>
             )}
           </div>
@@ -1097,7 +1239,7 @@ export default function ComparePage() {
 
       {ready && left.snapshot && right.snapshot && (
         <>
-        <div className="compare-focus-workspace">
+        <div className={`compare-focus-workspace is-height-${workspaceHeight}`}>
         <div className={`compare-workspace-grid compare-work-area ${panelView === "both" ? "is-both" : `is-single is-${panelView}`}`}>
           {panelView !== "right" && (
             <PageInfoPanel label="Инфо левой страницы" context={left.context} side="left" />
@@ -1117,6 +1259,8 @@ export default function ComparePage() {
                     canGenerate={canGenerateSnapshot}
                     blockPickerEnabled={blockPickerEnabled}
                     selectedElement={selectedBlocks.left}
+                    scrollContainerRef={leftSnapshotScrollRef}
+                    onSnapshotScroll={(event) => handleSyncedCompareScroll("left", event)}
                     onElementSelected={(element) => {
                       setSelectedBlocks((current) => ({ ...current, left: { ...element, side: "left" } }));
                       setBlockPickerNotice("");
@@ -1137,6 +1281,8 @@ export default function ComparePage() {
                     canGenerate={canGenerateSnapshot}
                     blockPickerEnabled={blockPickerEnabled}
                     selectedElement={selectedBlocks.right}
+                    scrollContainerRef={rightSnapshotScrollRef}
+                    onSnapshotScroll={(event) => handleSyncedCompareScroll("right", event)}
                     onElementSelected={(element) => {
                       setSelectedBlocks((current) => ({ ...current, right: { ...element, side: "right" } }));
                       setBlockPickerNotice("");
@@ -1206,6 +1352,17 @@ export default function ComparePage() {
                   </StatusText>
                 )}
                 {blockPickerNotice && <StatusText tone="warning">{blockPickerNotice}</StatusText>}
+                {targetError && <StatusText tone="danger">{targetError}</StatusText>}
+                {targetMessage && (
+                  <Card variant="hint" style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap", padding: 9 }}>
+                    <StatusText tone="success">{targetMessage}</StatusText>
+                    {savedTarget && (
+                      <Button size="sm" variant="secondary" disabled={checkingTarget} onClick={() => void checkSavedMonitoringTarget()}>
+                        {checkingTarget ? "Проверяем..." : "Проверить цель"}
+                      </Button>
+                    )}
+                  </Card>
+                )}
                 {selectedBlockCount === 1 && (
                   <BlockMatchSuggestionCard
                     suggestion={blockMatchSuggestion}
@@ -1218,13 +1375,19 @@ export default function ComparePage() {
                 <SelectedBlockCompare
                   left={selectedBlocks.left}
                   right={selectedBlocks.right}
+                  onSaveTarget={(side) => void saveMonitoringTarget(side)}
+                  savingTargetSide={savingTargetSide}
                   onReset={(side) => {
                     setSelectedBlocks((current) => ({ ...current, [side]: null }));
                     setBlockPickerNotice("");
+                    setTargetMessage("");
+                    setTargetError("");
                   }}
                   onResetAll={() => {
                     setSelectedBlocks({ left: null, right: null });
                     setBlockPickerNotice("");
+                    setTargetMessage("");
+                    setTargetError("");
                   }}
                 />
               </>

@@ -2,7 +2,7 @@ import { apiDownload, apiGet, apiPost } from "./client";
 
 export type RenderedSnapshotMetadata = {
   available: boolean;
-  capture_source: "stored_html_live_assets";
+  capture_source: "stored_html_live_assets" | "browser_persona_run";
   captured_at?: string;
   width?: number;
   height?: number;

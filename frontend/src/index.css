@@ -421,6 +421,7 @@ button:focus-visible {
 }
 
 .compare-focus-workspace {
+  --compare-workspace-height: clamp(520px, calc(100vh - 275px), 1120px);
   display: grid;
   gap: 10px;
   padding: 10px;
@@ -429,6 +430,18 @@ button:focus-visible {
   background:
     radial-gradient(circle at top, rgba(120,166,255,0.08), transparent 34rem),
     rgba(5, 9, 17, 0.28);
+}
+
+.compare-focus-workspace.is-height-compact {
+  --compare-workspace-height: clamp(420px, calc(100vh - 340px), 760px);
+}
+
+.compare-focus-workspace.is-height-comfortable {
+  --compare-workspace-height: clamp(520px, calc(100vh - 275px), 1120px);
+}
+
+.compare-focus-workspace.is-height-tall {
+  --compare-workspace-height: clamp(680px, calc(100vh - 180px), 1440px);
 }
 
 .compare-workspace-grid.is-both {
@@ -462,7 +475,7 @@ button:focus-visible {
 .compare-side-report,
 .compare-differences-report {
   min-height: 0;
-  height: clamp(520px, calc(100vh - 275px), 1120px);
+  height: var(--compare-workspace-height, clamp(520px, calc(100vh - 275px), 1120px));
   overflow-y: auto;
 }
 
@@ -472,18 +485,18 @@ button:focus-visible {
 
 .compare-differences-report {
   height: auto;
-  max-height: clamp(420px, calc(100vh - 300px), 900px);
+  max-height: var(--compare-workspace-height, clamp(520px, calc(100vh - 275px), 1120px));
 }
 
 .compare-work-area {
-  min-height: clamp(520px, calc(100vh - 255px), 1120px);
+  min-height: var(--compare-workspace-height, clamp(520px, calc(100vh - 275px), 1120px));
 }
 
 .compare-visual-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
-  height: clamp(520px, calc(100vh - 275px), 1120px);
+  height: var(--compare-workspace-height, clamp(520px, calc(100vh - 275px), 1120px));
   min-height: 0;
   overflow: hidden;
 }
@@ -556,7 +569,7 @@ button:focus-visible {
 
 .compare-inspector-report {
   min-height: 0;
-  height: clamp(520px, calc(100vh - 275px), 1120px);
+  height: var(--compare-workspace-height, clamp(520px, calc(100vh - 275px), 1120px));
   overflow-y: auto;
   resize: horizontal;
 }
@@ -644,6 +657,17 @@ button:focus-visible {
 .inspector-details > summary:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px rgba(120,166,255,0.22);
+}
+
+.consent-audit-history-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.55fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.026);
 }
 
 .rendered-snapshot-shell {

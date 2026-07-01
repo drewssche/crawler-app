@@ -18,6 +18,26 @@ import {
   type PageContext,
   type RetryPagesResult,
 } from "../api/pageContext";
+import {
+  createMonitoringTargetSubscription,
+  deleteMonitoringTarget,
+  deleteMonitoringTargetSubscription,
+  getMonitoringNotificationDiagnostics,
+  listMonitoringTargetChecks,
+  listMonitoringTargetNotificationOutbox,
+  listMonitoringTargetSubscriptions,
+  listProjectMonitoringTargets,
+  previewMonitoringTargetSubscription,
+  testSendMonitoringTargetSubscription,
+  updateMonitoringTarget,
+  updateMonitoringTargetSubscription,
+  type MonitoringNotificationDiagnostics,
+  type MonitoringNotificationOutboxItem,
+  type MonitoringNotificationPreview,
+  type MonitoringTarget,
+  type MonitoringTargetCheckRecord,
+  type MonitoringTargetSubscription,
+} from "../api/monitoringTargets";
 import { ApiError, apiDelete, apiGet, apiPost } from "../api/client";
 import PageContextDrawer from "../components/projects/PageContextDrawer";
 import DirectoryContextDrawer from "../components/projects/DirectoryContextDrawer";
@@ -237,6 +257,8 @@ type ActiveProjectJobsResponse = {
 type ProjectTab = "main" | "history" | "settings";
 type ProjectSettingsSectionId = "sites" | "members" | "schedule" | "danger";
 type StructureViewFilter = "all" | "added" | "error";
+type MonitoringSubscriptionChannel = "email" | "telegram_chat";
+type MonitoringSubscriptionStatus = "changed" | "missing" | "not_checkable";
 
 type StructureStatus = "unchanged" | "changed" | "added" | "deleted" | "redirect" | "error";
 
@@ -249,6 +271,11 @@ const WEEKDAY_OPTIONS = [
   { value: 4, label: "Пт" },
   { value: 5, label: "Сб" },
   { value: 6, label: "Вс" },
+];
+const MONITORING_SUBSCRIPTION_STATUSES: Array<{ value: MonitoringSubscriptionStatus; label: string }> = [
+  { value: "changed", label: "Изменился" },
+  { value: "missing", label: "Не найден" },
+  { value: "not_checkable", label: "Нужна проверка" },
 ];
 
 function defaultProjectScheduleInput(): ProjectScheduleInput {
@@ -387,6 +414,49 @@ function structureCounts(rows: StructureRow[]) {
     error: rows.filter((row) => row.status === "error").length,
     changed: rows.filter((row) => row.status === "changed").length,
   };
+}
+
+function monitoringTargetStatusMeta(status?: MonitoringTargetCheckRecord["status"] | null): {
+  label: string;
+  tone: "success" | "warning" | "danger" | "neutral" | "info";
+  text: string;
+} {
+  if (status === "matched") {
+    return { label: "На месте", tone: "success", text: "Блок найден и похож на сохранённый вариант." };
+  }
+  if (status === "changed") {
+    return { label: "Изменился", tone: "warning", text: "Похожий блок найден, но структура отличается." };
+  }
+  if (status === "missing") {
+    return { label: "Не найден", tone: "danger", text: "Страница или блок не найдены в проверенном прогоне." };
+  }
+  if (status === "not_checkable") {
+    return { label: "Нужна проверка", tone: "warning", text: "Автоматическая проверка не смогла уверенно оценить цель." };
+  }
+  return { label: "Ждёт прогона", tone: "neutral", text: "Цель начнёт проверяться после следующего успешного прогона." };
+}
+
+function shortUrlPath(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.pathname || "/"}${parsed.search || ""}`;
+  } catch {
+    return url;
+  }
+}
+
+function monitoringChannelLabel(channel: string): string {
+  if (channel === "telegram_chat") return "Telegram";
+  if (channel === "email") return "Email";
+  return channel;
+}
+
+function deliveryStatusMeta(status: string): { label: string; tone: "success" | "warning" | "danger" | "neutral" | "info" } {
+  if (status === "sent") return { label: "Отправлено", tone: "success" };
+  if (status === "queued") return { label: "В очереди", tone: "info" };
+  if (status === "failed") return { label: "Ошибка", tone: "danger" };
+  if (status === "dead") return { label: "Остановлено", tone: "danger" };
+  return { label: status || "Неизвестно", tone: "neutral" };
 }
 
 function readStoredDisclosureState(storageKey: string, defaultOpen: boolean): boolean {
@@ -585,6 +655,22 @@ function crawlerReadinessLabel(readiness: CrawlerReadiness): string {
   return readiness.ready ? "Готов" : "Требует внимания";
 }
 
+function notificationDiagnosticsTone(diagnostics: MonitoringNotificationDiagnostics): "success" | "warning" | "danger" {
+  if (diagnostics.counts.dead > 0) return "danger";
+  if (!diagnostics.smtp_configured && !diagnostics.telegram_configured) return "warning";
+  if (diagnostics.counts.failed_waiting > 0 || diagnostics.counts.retry_ready > 0) return "warning";
+  return "success";
+}
+
+function notificationDiagnosticsLabel(diagnostics: MonitoringNotificationDiagnostics): string {
+  if (diagnostics.counts.dead > 0) return "Есть остановленные";
+  if (!diagnostics.smtp_configured && !diagnostics.telegram_configured) return "Каналы не настроены";
+  if (diagnostics.counts.retry_ready > 0) return "Есть готовые к повтору";
+  if (diagnostics.counts.failed_waiting > 0) return "Ждёт повторной доставки";
+  if (diagnostics.counts.queued > 0) return "Есть очередь";
+  return "Готово";
+}
+
 function pendingJobsFromActiveProjectJobs(
   payload: ActiveProjectJobsResponse,
   sites: ProjectSiteSummary[],
@@ -668,10 +754,38 @@ export default function ProjectDashboardPage() {
   const [runToasts, setRunToasts] = useState<ToastItem[]>([]);
   const [pendingCrawlerJobs, setPendingCrawlerJobs] = useState<Record<number, PendingCrawlerJob>>({});
   const [crawlerReadiness, setCrawlerReadiness] = useState<CrawlerReadiness | null>(null);
+  const [notificationDiagnostics, setNotificationDiagnostics] = useState<MonitoringNotificationDiagnostics | null>(null);
+  const [notificationDiagnosticsLoading, setNotificationDiagnosticsLoading] = useState(false);
+  const [notificationDiagnosticsError, setNotificationDiagnosticsError] = useState("");
   const [sitePersonas, setSitePersonas] = useState<CrawlPersonaSummary[]>([]);
   const [sitePersonasLoading, setSitePersonasLoading] = useState(false);
   const [selectedRunPersonaId, setSelectedRunPersonaId] = useState<number | null>(null);
   const [selectedViewPersonaId, setSelectedViewPersonaId] = useState<number | "all">("all");
+  const [monitoringTargets, setMonitoringTargets] = useState<MonitoringTarget[]>([]);
+  const [monitoringTargetsLoading, setMonitoringTargetsLoading] = useState(false);
+  const [monitoringTargetsError, setMonitoringTargetsError] = useState("");
+  const [targetChecksById, setTargetChecksById] = useState<Record<number, MonitoringTargetCheckRecord[]>>({});
+  const [targetChecksLoadingId, setTargetChecksLoadingId] = useState<number | null>(null);
+  const [targetChecksErrorById, setTargetChecksErrorById] = useState<Record<number, string>>({});
+  const [targetActionPendingId, setTargetActionPendingId] = useState<number | null>(null);
+  const [targetRenameId, setTargetRenameId] = useState<number | null>(null);
+  const [targetRenameValue, setTargetRenameValue] = useState("");
+  const [targetActionError, setTargetActionError] = useState("");
+  const [targetDeleteConfirm, setTargetDeleteConfirm] = useState<MonitoringTarget | null>(null);
+  const [targetSubscriptionsById, setTargetSubscriptionsById] = useState<Record<number, MonitoringTargetSubscription[]>>({});
+  const [targetSubscriptionsLoadingId, setTargetSubscriptionsLoadingId] = useState<number | null>(null);
+  const [targetSubscriptionsErrorById, setTargetSubscriptionsErrorById] = useState<Record<number, string>>({});
+  const [targetOutboxById, setTargetOutboxById] = useState<Record<number, MonitoringNotificationOutboxItem[]>>({});
+  const [targetOutboxLoadingId, setTargetOutboxLoadingId] = useState<number | null>(null);
+  const [targetOutboxErrorById, setTargetOutboxErrorById] = useState<Record<number, string>>({});
+  const [subscriptionActionPendingId, setSubscriptionActionPendingId] = useState<number | string | null>(null);
+  const [subscriptionFormTargetId, setSubscriptionFormTargetId] = useState<number | null>(null);
+  const [subscriptionChannel, setSubscriptionChannel] = useState<MonitoringSubscriptionChannel>("email");
+  const [subscriptionDestination, setSubscriptionDestination] = useState("");
+  const [subscriptionStatuses, setSubscriptionStatuses] = useState<MonitoringSubscriptionStatus[]>(["changed", "missing", "not_checkable"]);
+  const [subscriptionMinInterval, setSubscriptionMinInterval] = useState("0");
+  const [subscriptionPreviewById, setSubscriptionPreviewById] = useState<Record<number, Pick<MonitoringNotificationPreview, "subject" | "body" | "payload">>>({});
+  const [subscriptionTestResultById, setSubscriptionTestResultById] = useState<Record<number, string>>({});
   const canRunCrawler = hasPermission(user?.role, "crawler.run");
   const canEditProject = hasPermission(user?.role, "projects.edit");
   const canViewEvents = hasPermission(user?.role, "events.view");
@@ -737,6 +851,19 @@ export default function ProjectDashboardPage() {
     setError("");
     setProject(null);
     setSelectedSiteId(null);
+    setMonitoringTargets([]);
+    setTargetChecksById({});
+    setTargetChecksErrorById({});
+    setTargetActionError("");
+    setTargetRenameId(null);
+    setTargetDeleteConfirm(null);
+    setTargetSubscriptionsById({});
+    setTargetSubscriptionsErrorById({});
+    setTargetOutboxById({});
+    setTargetOutboxErrorById({});
+    setSubscriptionFormTargetId(null);
+    setSubscriptionPreviewById({});
+    setSubscriptionTestResultById({});
     Promise.all([
       apiGet<ProjectDetails>(`/projects/${id}`),
       listProjectSiteSummaries(Number(id)),
@@ -757,6 +884,29 @@ export default function ProjectDashboardPage() {
         setSitesLoading(false);
       });
   }, [id]);
+
+  useEffect(() => {
+    if (!project) {
+      setMonitoringTargets([]);
+      return;
+    }
+    let cancelled = false;
+    setMonitoringTargetsLoading(true);
+    setMonitoringTargetsError("");
+    listProjectMonitoringTargets(project.id, 100)
+      .then((payload) => {
+        if (!cancelled) setMonitoringTargets(payload.items || []);
+      })
+      .catch((e) => {
+        if (!cancelled) setMonitoringTargetsError(e instanceof Error ? e.message : "Не удалось загрузить цели мониторинга.");
+      })
+      .finally(() => {
+        if (!cancelled) setMonitoringTargetsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project]);
 
   useEffect(() => {
     if (selectedSiteId === null) {
@@ -864,6 +1014,8 @@ export default function ProjectDashboardPage() {
   useEffect(() => {
     if (!project || !canViewOperations) {
       setCrawlerReadiness(null);
+      setNotificationDiagnostics(null);
+      setNotificationDiagnosticsError("");
       return;
     }
     let cancelled = false;
@@ -872,6 +1024,18 @@ export default function ProjectDashboardPage() {
         if (!cancelled) setCrawlerReadiness(payload);
       })
       .catch(() => undefined);
+    setNotificationDiagnosticsLoading(true);
+    setNotificationDiagnosticsError("");
+    getMonitoringNotificationDiagnostics()
+      .then((payload) => {
+        if (!cancelled) setNotificationDiagnostics(payload);
+      })
+      .catch((e) => {
+        if (!cancelled) setNotificationDiagnosticsError(e instanceof Error ? e.message : "Не удалось загрузить диагностику уведомлений.");
+      })
+      .finally(() => {
+        if (!cancelled) setNotificationDiagnosticsLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -1229,6 +1393,236 @@ export default function ProjectDashboardPage() {
     }
   }
 
+  async function loadTargetChecks(targetId: number) {
+    if (targetChecksById[targetId] || targetChecksLoadingId === targetId) return;
+    setTargetChecksLoadingId(targetId);
+    setTargetChecksErrorById((current) => ({ ...current, [targetId]: "" }));
+    try {
+      const payload = await listMonitoringTargetChecks(targetId, 8);
+      setTargetChecksById((current) => ({ ...current, [targetId]: payload.items || [] }));
+    } catch (e) {
+      setTargetChecksErrorById((current) => ({
+        ...current,
+        [targetId]: e instanceof Error ? e.message : "Не удалось загрузить историю проверок цели.",
+      }));
+    } finally {
+      setTargetChecksLoadingId(null);
+    }
+  }
+
+  async function loadTargetSubscriptions(targetId: number, force = false) {
+    if (!force && targetSubscriptionsById[targetId] && targetOutboxById[targetId]) return;
+    setTargetSubscriptionsLoadingId(targetId);
+    setTargetOutboxLoadingId(targetId);
+    setTargetSubscriptionsErrorById((current) => ({ ...current, [targetId]: "" }));
+    setTargetOutboxErrorById((current) => ({ ...current, [targetId]: "" }));
+    try {
+      const [subscriptionsPayload, outboxPayload] = await Promise.all([
+        listMonitoringTargetSubscriptions(targetId),
+        listMonitoringTargetNotificationOutbox(targetId, 8),
+      ]);
+      setTargetSubscriptionsById((current) => ({ ...current, [targetId]: subscriptionsPayload.items || [] }));
+      setTargetOutboxById((current) => ({ ...current, [targetId]: outboxPayload.items || [] }));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Не удалось загрузить уведомления цели.";
+      setTargetSubscriptionsErrorById((current) => ({ ...current, [targetId]: message }));
+      setTargetOutboxErrorById((current) => ({ ...current, [targetId]: message }));
+    } finally {
+      setTargetSubscriptionsLoadingId(null);
+      setTargetOutboxLoadingId(null);
+    }
+  }
+
+  function startAddSubscription(targetId: number) {
+    setSubscriptionFormTargetId(targetId);
+    setSubscriptionChannel("email");
+    setSubscriptionDestination("");
+    setSubscriptionStatuses(["changed", "missing", "not_checkable"]);
+    setSubscriptionMinInterval("0");
+    setTargetActionError("");
+  }
+
+  function toggleSubscriptionStatus(status: MonitoringSubscriptionStatus) {
+    setSubscriptionStatuses((current) => {
+      if (current.includes(status)) {
+        return current.length > 1 ? current.filter((item) => item !== status) : current;
+      }
+      return [...current, status];
+    });
+  }
+
+  async function handleCreateSubscription(target: MonitoringTarget) {
+    const destination = subscriptionDestination.trim();
+    if (!destination || subscriptionActionPendingId) return;
+    const minInterval = Number.parseInt(subscriptionMinInterval || "0", 10);
+    setSubscriptionActionPendingId(`new-${target.id}`);
+    setTargetActionError("");
+    try {
+      const created = await createMonitoringTargetSubscription(target.id, {
+        channel_type: subscriptionChannel,
+        destination,
+        statuses: subscriptionStatuses,
+        min_interval_minutes: Number.isFinite(minInterval) && minInterval > 0 ? minInterval : 0,
+      });
+      setTargetSubscriptionsById((current) => ({
+        ...current,
+        [target.id]: [created, ...(current[target.id] || [])],
+      }));
+      setSubscriptionFormTargetId(null);
+      setSubscriptionDestination("");
+    } catch (e) {
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось добавить подписку.");
+    } finally {
+      setSubscriptionActionPendingId(null);
+    }
+  }
+
+  async function handleToggleSubscription(subscription: MonitoringTargetSubscription) {
+    if (subscriptionActionPendingId) return;
+    setSubscriptionActionPendingId(subscription.id);
+    setTargetActionError("");
+    try {
+      const updated = await updateMonitoringTargetSubscription(subscription.id, { is_active: !subscription.is_active });
+      setTargetSubscriptionsById((current) => ({
+        ...current,
+        [subscription.target_id]: (current[subscription.target_id] || []).map((item) => item.id === updated.id ? updated : item),
+      }));
+    } catch (e) {
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось обновить подписку.");
+    } finally {
+      setSubscriptionActionPendingId(null);
+    }
+  }
+
+  async function handlePreviewSubscription(subscription: MonitoringTargetSubscription) {
+    if (subscriptionActionPendingId) return;
+    setSubscriptionActionPendingId(`preview-${subscription.id}`);
+    setTargetActionError("");
+    setSubscriptionTestResultById((current) => ({ ...current, [subscription.id]: "" }));
+    try {
+      const preview = await previewMonitoringTargetSubscription(subscription.id);
+      setSubscriptionPreviewById((current) => ({ ...current, [subscription.id]: preview }));
+    } catch (e) {
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось собрать preview уведомления.");
+    } finally {
+      setSubscriptionActionPendingId(null);
+    }
+  }
+
+  async function handleTestSendSubscription(subscription: MonitoringTargetSubscription) {
+    if (subscriptionActionPendingId) return;
+    setSubscriptionActionPendingId(`test-${subscription.id}`);
+    setTargetActionError("");
+    try {
+      const result = await testSendMonitoringTargetSubscription(subscription.id);
+      setSubscriptionPreviewById((current) => ({
+        ...current,
+        [subscription.id]: result.preview,
+      }));
+      setSubscriptionTestResultById((current) => ({
+        ...current,
+        [subscription.id]: result.ok
+          ? "Тестовое уведомление отправлено."
+          : result.outbox.last_error || "Тестовая доставка не прошла, запись сохранена в истории доставок.",
+      }));
+      setTargetOutboxById((current) => ({
+        ...current,
+        [subscription.target_id]: [result.outbox, ...(current[subscription.target_id] || []).filter((item) => item.id !== result.outbox.id)].slice(0, 8),
+      }));
+      void getMonitoringNotificationDiagnostics()
+        .then(setNotificationDiagnostics)
+        .catch(() => undefined);
+    } catch (e) {
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось выполнить тестовую отправку.");
+    } finally {
+      setSubscriptionActionPendingId(null);
+    }
+  }
+
+  async function handleDeleteSubscription(subscription: MonitoringTargetSubscription) {
+    if (subscriptionActionPendingId) return;
+    setSubscriptionActionPendingId(subscription.id);
+    setTargetActionError("");
+    try {
+      await deleteMonitoringTargetSubscription(subscription.id);
+      setTargetSubscriptionsById((current) => ({
+        ...current,
+        [subscription.target_id]: (current[subscription.target_id] || []).filter((item) => item.id !== subscription.id),
+      }));
+    } catch (e) {
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось удалить подписку.");
+    } finally {
+      setSubscriptionActionPendingId(null);
+    }
+  }
+
+  async function handleToggleMonitoringTarget(target: MonitoringTarget) {
+    if (targetActionPendingId) return;
+    setTargetActionPendingId(target.id);
+    setTargetActionError("");
+    try {
+      const updated = await updateMonitoringTarget(target.id, { is_active: !target.is_active });
+      setMonitoringTargets((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+    } catch (e) {
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось обновить цель мониторинга.");
+    } finally {
+      setTargetActionPendingId(null);
+    }
+  }
+
+  function startRenameMonitoringTarget(target: MonitoringTarget) {
+    setTargetRenameId(target.id);
+    setTargetRenameValue(target.name);
+    setTargetActionError("");
+  }
+
+  async function handleRenameMonitoringTarget(target: MonitoringTarget) {
+    const name = targetRenameValue.trim();
+    if (!name || targetActionPendingId) return;
+    setTargetActionPendingId(target.id);
+    setTargetActionError("");
+    try {
+      const updated = await updateMonitoringTarget(target.id, { name });
+      setMonitoringTargets((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+      setTargetRenameId(null);
+      setTargetRenameValue("");
+    } catch (e) {
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось переименовать цель мониторинга.");
+    } finally {
+      setTargetActionPendingId(null);
+    }
+  }
+
+  async function handleDeleteMonitoringTarget() {
+    if (!targetDeleteConfirm || targetActionPendingId) return;
+    const targetId = targetDeleteConfirm.id;
+    setTargetActionPendingId(targetId);
+    setTargetActionError("");
+    try {
+      await deleteMonitoringTarget(targetId);
+      setMonitoringTargets((current) => current.filter((item) => item.id !== targetId));
+      setTargetChecksById((current) => {
+        const next = { ...current };
+        delete next[targetId];
+        return next;
+      });
+      setTargetChecksErrorById((current) => {
+        const next = { ...current };
+        delete next[targetId];
+        return next;
+      });
+      setTargetDeleteConfirm(null);
+      if (targetRenameId === targetId) {
+        setTargetRenameId(null);
+        setTargetRenameValue("");
+      }
+    } catch (e) {
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось удалить цель мониторинга.");
+    } finally {
+      setTargetActionPendingId(null);
+    }
+  }
+
   async function handleDeleteProject() {
     if (!project || deletePending) return;
     setDeletePending(true);
@@ -1246,6 +1640,10 @@ export default function ProjectDashboardPage() {
   }
 
   const selectedSite = sites.find((site) => site.id === selectedSiteId) || null;
+  const selectedSiteMonitoringTargets = useMemo(
+    () => monitoringTargets.filter((target) => selectedSiteId === null || target.project_site_id === selectedSiteId),
+    [monitoringTargets, selectedSiteId],
+  );
   const selectedRunPersona =
     sitePersonas.find((persona) => persona.id === selectedRunPersonaId) ||
     selectedSite?.default_persona ||
@@ -1686,6 +2084,96 @@ export default function ProjectDashboardPage() {
                   </ProjectPersistentDetails>
                 </Card>
               )}
+              {canViewOperations && (notificationDiagnostics || notificationDiagnosticsLoading || notificationDiagnosticsError) && (
+                <Card
+                  variant={notificationDiagnostics && notificationDiagnosticsTone(notificationDiagnostics) === "danger" ? "warning" : "hint"}
+                  style={{ padding: 10, display: "grid", gap: 8 }}
+                >
+                  <ProjectPersistentDetails
+                    storageKey="admin-notification-delivery"
+                    summary={
+                      <>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                          <AccentPill tone={notificationDiagnostics ? notificationDiagnosticsTone(notificationDiagnostics) : "neutral"}>
+                            Уведомления: {notificationDiagnostics ? notificationDiagnosticsLabel(notificationDiagnostics) : "Загрузка"}
+                          </AccentPill>
+                          {notificationDiagnostics && (
+                            <>
+                              <AccentPill tone={notificationDiagnostics.smtp_configured ? "success" : "warning"}>
+                                Email {notificationDiagnostics.smtp_configured ? "готов" : "не настроен"}
+                              </AccentPill>
+                              <AccentPill tone={notificationDiagnostics.telegram_configured ? "success" : "warning"}>
+                                Telegram {notificationDiagnostics.telegram_configured ? "готов" : "не настроен"}
+                              </AccentPill>
+                              <MetaText opacity={0.82}>
+                                Очередь: <strong>{notificationDiagnostics.counts.queued}</strong> · Retry:{" "}
+                                <strong>{notificationDiagnostics.counts.retry_ready + notificationDiagnostics.counts.failed_waiting}</strong>
+                              </MetaText>
+                            </>
+                          )}
+                        </div>
+                        <MetaText opacity={0.72}>Диагностика доставки целей мониторинга · раскрыть детали</MetaText>
+                      </>
+                    }
+                    summaryStyle={{
+                      cursor: "pointer",
+                      listStyle: "none",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                      {notificationDiagnosticsLoading && <MetaText>Загружаем диагностику доставки...</MetaText>}
+                      {notificationDiagnosticsError && (
+                        <StatusText tone="warning" style={{ fontSize: 12 }}>
+                          {notificationDiagnosticsError}
+                        </StatusText>
+                      )}
+                      {notificationDiagnostics && (
+                        <>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+                            {[
+                              { label: "В очереди", value: notificationDiagnostics.counts.queued, tone: "info" as const },
+                              { label: "Готовы к повтору", value: notificationDiagnostics.counts.retry_ready, tone: "warning" as const },
+                              { label: "Ждут backoff", value: notificationDiagnostics.counts.failed_waiting, tone: "warning" as const },
+                              { label: "Отправлены", value: notificationDiagnostics.counts.sent, tone: "success" as const },
+                              { label: "Остановлены", value: notificationDiagnostics.counts.dead, tone: "danger" as const },
+                            ].map((item) => (
+                              <Card key={item.label} style={{ padding: 10, background: "rgba(255,255,255,0.025)" }}>
+                                <MetaText opacity={0.68}>{item.label}</MetaText>
+                                <div style={{ marginTop: 4, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                  <strong style={{ fontSize: 22 }}>{item.value}</strong>
+                                  <AccentPill tone={item.tone}>{item.label}</AccentPill>
+                                </div>
+                              </Card>
+                            ))}
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                            <MetaText opacity={0.82}>
+                              Попыток на доставку: <strong>{notificationDiagnostics.max_attempts}</strong>
+                            </MetaText>
+                            <MetaText opacity={0.82}>
+                              Backoff:{" "}
+                              <strong>{notificationDiagnostics.retry_backoff_seconds.map((seconds) => formatSecondsCompact(seconds)).join(" → ") || "—"}</strong>
+                            </MetaText>
+                            <MetaText opacity={0.82}>
+                              Всего записей outbox: <strong>{notificationDiagnostics.total}</strong>
+                            </MetaText>
+                          </div>
+                          {(!notificationDiagnostics.smtp_configured || !notificationDiagnostics.telegram_configured) && (
+                            <StatusText tone="warning" style={{ fontSize: 12 }}>
+                              Ненастроенный канал не ломает проверку целей: доставка уйдёт в retry/backoff и будет видна в истории.
+                            </StatusText>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </ProjectPersistentDetails>
+                </Card>
+              )}
               {activeTab !== "settings" && selectedPendingJob && (
                 <Card variant="hint" style={{ padding: 10, display: "grid", gap: 6 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
@@ -1815,6 +2303,435 @@ export default function ProjectDashboardPage() {
 
           {activeTab === "main" && (
             <>
+              <Card>
+                <div style={{ display: "grid", gap: 10 }}>
+                  <SectionHeaderRow
+                    title={
+                      <div>
+                        <div style={{ fontWeight: 700 }}>Цели мониторинга</div>
+                        <MetaText opacity={0.68}>
+                          Сохранённые блоки страниц, которые crawler проверяет после успешных прогонов.
+                        </MetaText>
+                      </div>
+                    }
+                    actions={<ListTotalMeta label="Целей" total={selectedSiteMonitoringTargets.length} />}
+                  />
+                  {monitoringTargetsLoading && <MetaText>Загружаем цели...</MetaText>}
+                  {monitoringTargetsError && <StatusText tone="danger">{monitoringTargetsError}</StatusText>}
+                  {targetActionError && <StatusText tone="danger">{targetActionError}</StatusText>}
+                  {!monitoringTargetsLoading && !monitoringTargetsError && selectedSiteMonitoringTargets.length === 0 && (
+                    <Card variant="hint" style={{ padding: 10 }}>
+                      <MetaText>
+                        Целей пока нет. Откройте сравнение страниц, выделите нужный блок на визуальном снимке и нажмите «Сохранить цель».
+                      </MetaText>
+                    </Card>
+                  )}
+                  {selectedSiteMonitoringTargets.length > 0 && (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {selectedSiteMonitoringTargets.map((target) => {
+                        const latestCheck = target.latest_check || null;
+                        const statusMeta = monitoringTargetStatusMeta(latestCheck?.status);
+                        const history = targetChecksById[target.id] || [];
+                        const targetPending = targetActionPendingId === target.id;
+                        return (
+                          <Card key={target.id} style={{ padding: 10, display: "grid", gap: 8 }}>
+                            <SectionHeaderRow
+                              title={
+                                <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                    <span style={{ fontWeight: 800, wordBreak: "break-word" }}>{target.name}</span>
+                                    <AccentPill tone={statusMeta.tone}>{statusMeta.label}</AccentPill>
+                                  </div>
+                                  <MetaText opacity={0.72} style={{ wordBreak: "break-word" }}>
+                                    {shortUrlPath(target.page_url)}
+                                  </MetaText>
+                                </div>
+                              }
+                              actions={
+                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                  <AccentPill tone="neutral">{target.tag}</AccentPill>
+                                  {target.is_active ? (
+                                    <AccentPill tone="success">Активна</AccentPill>
+                                  ) : (
+                                    <AccentPill tone="neutral">Выключена</AccentPill>
+                                  )}
+                                </div>
+                              }
+                              style={{ alignItems: "flex-start", gap: 8 }}
+                            />
+                            {targetRenameId === target.id && (
+                              <Card variant="hint" style={{ padding: 8, display: "grid", gap: 8 }}>
+                                <input
+                                  value={targetRenameValue}
+                                  onChange={(event) => setTargetRenameValue(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") void handleRenameMonitoringTarget(target);
+                                    if (event.key === "Escape") {
+                                      setTargetRenameId(null);
+                                      setTargetRenameValue("");
+                                    }
+                                  }}
+                                  autoFocus
+                                  style={{
+                                    borderRadius: 10,
+                                    border: "1px solid rgba(255,255,255,0.24)",
+                                    background: "rgba(255,255,255,0.06)",
+                                    color: "inherit",
+                                    padding: "8px 10px",
+                                  }}
+                                />
+                                <CardFooterActions>
+                                  <CardActionButton
+                                    compact
+                                    variant="primary"
+                                    disabled={targetPending || !targetRenameValue.trim()}
+                                    onClick={() => void handleRenameMonitoringTarget(target)}
+                                  >
+                                    {targetPending ? "Сохраняем..." : "Сохранить"}
+                                  </CardActionButton>
+                                  <CardActionButton
+                                    compact
+                                    disabled={targetPending}
+                                    onClick={() => {
+                                      setTargetRenameId(null);
+                                      setTargetRenameValue("");
+                                    }}
+                                  >
+                                    Отмена
+                                  </CardActionButton>
+                                </CardFooterActions>
+                              </Card>
+                            )}
+                            <MetaText opacity={0.74}>{latestCheck?.message || statusMeta.text}</MetaText>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                              <AccentPill tone="info">
+                                Контекст: {sitePersonas.find((persona) => persona.id === target.crawl_persona_id)?.label || "Гость"}
+                              </AccentPill>
+                              {latestCheck?.checked_at && (
+                                <AccentPill tone="neutral">Проверено: {formatOperationalDateTime(latestCheck.checked_at)}</AccentPill>
+                              )}
+                              {latestCheck?.run_id && <AccentPill tone="neutral">run #{latestCheck.run_id}</AccentPill>}
+                            </div>
+                            {canEditProject && (
+                              <CardFooterActions>
+                                <CardActionButton
+                                  compact
+                                  disabled={targetPending}
+                                  onClick={() => startRenameMonitoringTarget(target)}
+                                >
+                                  Переименовать
+                                </CardActionButton>
+                                <CardActionButton
+                                  compact
+                                  variant={target.is_active ? "secondary" : "primary"}
+                                  disabled={targetPending}
+                                  onClick={() => void handleToggleMonitoringTarget(target)}
+                                >
+                                  {targetPending ? "Обновляем..." : target.is_active ? "Пауза" : "Включить"}
+                                </CardActionButton>
+                                <CardActionButton
+                                  compact
+                                  variant="danger"
+                                  disabled={targetPending}
+                                  onClick={() => setTargetDeleteConfirm(target)}
+                                >
+                                  Удалить
+                                </CardActionButton>
+                              </CardFooterActions>
+                            )}
+                            <ProjectPersistentDetails
+                              storageKey={`target-${target.id}`}
+                              summary="Детали цели"
+                              summaryStyle={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
+                            >
+                              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                                <MetaText opacity={0.68} style={{ wordBreak: "break-word" }}>
+                                  Selector: {target.selector}
+                                </MetaText>
+                                <details
+                                  className="project-persistent-details"
+                                  onToggle={(event) => {
+                                    if (event.currentTarget.open) void loadTargetChecks(target.id);
+                                  }}
+                                >
+                                  <summary className="project-persistent-summary" style={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>
+                                    История проверок
+                                  </summary>
+                                  <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                                    {targetChecksLoadingId === target.id && <MetaText>Загружаем историю...</MetaText>}
+                                    {targetChecksErrorById[target.id] && (
+                                      <StatusText tone="danger">{targetChecksErrorById[target.id]}</StatusText>
+                                    )}
+                                    {!targetChecksLoadingId && !targetChecksErrorById[target.id] && history.length === 0 && (
+                                      <MetaText opacity={0.72}>
+                                        Истории пока нет. После следующего успешного прогона здесь появится результат проверки.
+                                      </MetaText>
+                                    )}
+                                    {history.map((check) => {
+                                      const checkMeta = monitoringTargetStatusMeta(check.status);
+                                      return (
+                                        <Card key={check.id} style={{ padding: 8, display: "grid", gap: 4 }}>
+                                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                            <AccentPill tone={checkMeta.tone}>{checkMeta.label}</AccentPill>
+                                            <AccentPill tone="neutral">run #{check.run_id}</AccentPill>
+                                            {check.checked_at && (
+                                              <MetaText opacity={0.68}>{formatOperationalDateTime(check.checked_at)}</MetaText>
+                                            )}
+                                          </div>
+                                          <MetaText opacity={0.76}>{check.message || checkMeta.text}</MetaText>
+                                        </Card>
+                                      );
+                                    })}
+                                  </div>
+                                </details>
+                                <details
+                                  className="project-persistent-details"
+                                  onToggle={(event) => {
+                                    if (event.currentTarget.open) void loadTargetSubscriptions(target.id);
+                                  }}
+                                >
+                                  <summary className="project-persistent-summary" style={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>
+                                    Уведомления
+                                  </summary>
+                                  <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                                    {targetSubscriptionsLoadingId === target.id && <MetaText>Загружаем подписки...</MetaText>}
+                                    {targetSubscriptionsErrorById[target.id] && (
+                                      <StatusText tone="danger">{targetSubscriptionsErrorById[target.id]}</StatusText>
+                                    )}
+                                    {canEditProject && subscriptionFormTargetId !== target.id && (
+                                      <CardActionButton compact onClick={() => startAddSubscription(target.id)}>
+                                        + Добавить канал
+                                      </CardActionButton>
+                                    )}
+                                    {canEditProject && subscriptionFormTargetId === target.id && (
+                                      <Card variant="hint" style={{ padding: 8, display: "grid", gap: 8 }}>
+                                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                          <MetaText opacity={0.72}>Канал:</MetaText>
+                                          <CardActionButton
+                                            compact
+                                            active={subscriptionChannel === "email"}
+                                            onClick={() => setSubscriptionChannel("email")}
+                                          >
+                                            Email
+                                          </CardActionButton>
+                                          <CardActionButton
+                                            compact
+                                            active={subscriptionChannel === "telegram_chat"}
+                                            onClick={() => setSubscriptionChannel("telegram_chat")}
+                                          >
+                                            Telegram
+                                          </CardActionButton>
+                                        </div>
+                                        <input
+                                          value={subscriptionDestination}
+                                          onChange={(event) => setSubscriptionDestination(event.target.value)}
+                                          placeholder={subscriptionChannel === "email" ? "alerts@example.com" : "chat id или @username"}
+                                          style={{
+                                            borderRadius: 10,
+                                            border: "1px solid rgba(255,255,255,0.24)",
+                                            background: "rgba(255,255,255,0.06)",
+                                            color: "inherit",
+                                            padding: "8px 10px",
+                                          }}
+                                        />
+                                        <div style={{ display: "grid", gap: 6 }}>
+                                          <MetaText opacity={0.72}>Отправлять при статусах:</MetaText>
+                                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                            {MONITORING_SUBSCRIPTION_STATUSES.map((option) => (
+                                              <CardActionButton
+                                                key={option.value}
+                                                compact
+                                                active={subscriptionStatuses.includes(option.value)}
+                                                onClick={() => toggleSubscriptionStatus(option.value)}
+                                              >
+                                                {option.label}
+                                              </CardActionButton>
+                                            ))}
+                                          </div>
+                                        </div>
+                                        <label style={{ display: "grid", gap: 4 }}>
+                                          <MetaText opacity={0.72}>Не чаще, минут</MetaText>
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            max={10080}
+                                            value={subscriptionMinInterval}
+                                            onChange={(event) => setSubscriptionMinInterval(event.target.value)}
+                                            style={{
+                                              borderRadius: 10,
+                                              border: "1px solid rgba(255,255,255,0.24)",
+                                              background: "rgba(255,255,255,0.06)",
+                                              color: "inherit",
+                                              padding: "8px 10px",
+                                            }}
+                                          />
+                                        </label>
+                                        <CardFooterActions>
+                                          <CardActionButton
+                                            compact
+                                            variant="primary"
+                                            disabled={subscriptionActionPendingId === `new-${target.id}` || !subscriptionDestination.trim()}
+                                            onClick={() => void handleCreateSubscription(target)}
+                                          >
+                                            {subscriptionActionPendingId === `new-${target.id}` ? "Добавляем..." : "Добавить"}
+                                          </CardActionButton>
+                                          <CardActionButton compact onClick={() => setSubscriptionFormTargetId(null)}>
+                                            Отмена
+                                          </CardActionButton>
+                                        </CardFooterActions>
+                                      </Card>
+                                    )}
+                                    {(targetSubscriptionsById[target.id] || []).length === 0 && targetSubscriptionsLoadingId !== target.id && (
+                                      <MetaText opacity={0.72}>
+                                        Внешние уведомления не настроены. Внутренние события всё равно появляются в Event Center.
+                                      </MetaText>
+                                    )}
+                                    {(targetSubscriptionsById[target.id] || []).map((subscription) => (
+                                      <Card key={subscription.id} style={{ padding: 8, display: "grid", gap: 6 }}>
+                                        {(() => {
+                                          const preview = subscriptionPreviewById[subscription.id];
+                                          const testResult = subscriptionTestResultById[subscription.id];
+                                          return (
+                                            <>
+                                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                          <AccentPill tone={subscription.channel_type === "telegram_chat" ? "info" : "neutral"}>
+                                            {monitoringChannelLabel(subscription.channel_type)}
+                                          </AccentPill>
+                                          <span style={{ fontWeight: 700, wordBreak: "break-word" }}>{subscription.destination}</span>
+                                          <AccentPill tone={subscription.is_active ? "success" : "neutral"}>
+                                            {subscription.is_active ? "Активна" : "Пауза"}
+                                          </AccentPill>
+                                        </div>
+                                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                          {(subscription.statuses || []).map((status) => (
+                                            <AccentPill key={status} tone={monitoringTargetStatusMeta(status).tone}>
+                                              {monitoringTargetStatusMeta(status).label}
+                                            </AccentPill>
+                                          ))}
+                                          {subscription.min_interval_minutes > 0 && (
+                                            <AccentPill tone="neutral">не чаще {subscription.min_interval_minutes} мин</AccentPill>
+                                          )}
+                                        </div>
+                                        {canEditProject && (
+                                          <CardFooterActions>
+                                            <CardActionButton
+                                              compact
+                                              disabled={subscriptionActionPendingId === `preview-${subscription.id}` || subscriptionActionPendingId === `test-${subscription.id}`}
+                                              onClick={() => void handlePreviewSubscription(subscription)}
+                                            >
+                                              {subscriptionActionPendingId === `preview-${subscription.id}` ? "Готовим..." : "Preview"}
+                                            </CardActionButton>
+                                            <CardActionButton
+                                              compact
+                                              variant="primary"
+                                              disabled={subscriptionActionPendingId === `test-${subscription.id}` || subscriptionActionPendingId === `preview-${subscription.id}`}
+                                              onClick={() => void handleTestSendSubscription(subscription)}
+                                            >
+                                              {subscriptionActionPendingId === `test-${subscription.id}` ? "Отправляем..." : "Тест"}
+                                            </CardActionButton>
+                                            <CardActionButton
+                                              compact
+                                              disabled={subscriptionActionPendingId === subscription.id}
+                                              onClick={() => void handleToggleSubscription(subscription)}
+                                            >
+                                              {subscription.is_active ? "Пауза" : "Включить"}
+                                            </CardActionButton>
+                                            <CardActionButton
+                                              compact
+                                              variant="danger"
+                                              disabled={subscriptionActionPendingId === subscription.id}
+                                              onClick={() => void handleDeleteSubscription(subscription)}
+                                            >
+                                              Удалить
+                                            </CardActionButton>
+                                          </CardFooterActions>
+                                        )}
+                                        {preview && (
+                                          <Card variant="hint" style={{ padding: 8, display: "grid", gap: 4 }}>
+                                            <MetaText opacity={0.7}>Preview сообщения</MetaText>
+                                            <div style={{ fontWeight: 800 }}>{preview.subject}</div>
+                                            <pre
+                                              style={{
+                                                margin: 0,
+                                                whiteSpace: "pre-wrap",
+                                                wordBreak: "break-word",
+                                                fontFamily: "inherit",
+                                                fontSize: 12,
+                                                lineHeight: 1.45,
+                                                color: "var(--muted)",
+                                              }}
+                                            >
+                                              {preview.body}
+                                            </pre>
+                                          </Card>
+                                        )}
+                                        {testResult && (
+                                          <StatusText
+                                            tone={testResult.includes("отправлено") ? "success" : "warning"}
+                                            style={{ fontSize: 12 }}
+                                          >
+                                            {testResult}
+                                          </StatusText>
+                                        )}
+                                            </>
+                                          );
+                                        })()}
+                                      </Card>
+                                    ))}
+                                    <div style={{ display: "grid", gap: 6 }}>
+                                      <SectionHeaderRow
+                                        title={<div style={{ fontWeight: 700 }}>Последние доставки</div>}
+                                        actions={
+                                          <CardActionButton compact onClick={() => void loadTargetSubscriptions(target.id, true)}>
+                                            Обновить
+                                          </CardActionButton>
+                                        }
+                                      />
+                                      {targetOutboxLoadingId === target.id && <MetaText>Загружаем доставки...</MetaText>}
+                                      {targetOutboxErrorById[target.id] && (
+                                        <StatusText tone="danger">{targetOutboxErrorById[target.id]}</StatusText>
+                                      )}
+                                      {(targetOutboxById[target.id] || []).length === 0 && targetOutboxLoadingId !== target.id && (
+                                        <MetaText opacity={0.72}>Доставок пока нет.</MetaText>
+                                      )}
+                                      {(targetOutboxById[target.id] || []).map((item) => {
+                                        const deliveryMeta = deliveryStatusMeta(item.delivery_status);
+                                        return (
+                                          <Card key={item.id} style={{ padding: 8, display: "grid", gap: 4 }}>
+                                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                              <AccentPill tone={deliveryMeta.tone}>{deliveryMeta.label}</AccentPill>
+                                              <AccentPill tone="neutral">{monitoringChannelLabel(item.channel_type)}</AccentPill>
+                                              <AccentPill tone={monitoringTargetStatusMeta(item.event_status).tone}>
+                                                {monitoringTargetStatusMeta(item.event_status).label}
+                                              </AccentPill>
+                                              {item.created_at && <MetaText opacity={0.68}>{formatOperationalDateTime(item.created_at)}</MetaText>}
+                                            </div>
+                                            <MetaText opacity={0.72} style={{ wordBreak: "break-word" }}>
+                                              {item.destination} · попыток: {item.attempts}/{item.max_attempts || "?"}
+                                            </MetaText>
+                                            {item.next_attempt_at && (
+                                              <MetaText opacity={0.68}>
+                                                Следующая попытка: {formatOperationalDateTime(item.next_attempt_at)}
+                                              </MetaText>
+                                            )}
+                                            {item.last_error && (
+                                              <StatusText tone="warning" style={{ fontSize: 12 }}>{item.last_error}</StatusText>
+                                            )}
+                                          </Card>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                </details>
+                              </div>
+                            </ProjectPersistentDetails>
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </Card>
               <Card>
                 <div style={{ display: "grid", gap: 10 }}>
                   <SectionHeaderRow
@@ -2642,6 +3559,22 @@ export default function ProjectDashboardPage() {
         onCancel={() => {
           if (deletePending) return;
           setDeleteConfirmOpen(false);
+        }}
+      />
+      <ConfirmDialog
+        open={targetDeleteConfirm !== null}
+        title="Удалить цель мониторинга?"
+        description={targetDeleteConfirm ? `Цель "${targetDeleteConfirm.name}" и история её проверок будут удалены.` : ""}
+        confirmText="Удалить"
+        cancelText="Отмена"
+        confirmVariant="danger"
+        loading={targetActionPendingId === targetDeleteConfirm?.id}
+        onConfirm={() => {
+          void handleDeleteMonitoringTarget();
+        }}
+        onCancel={() => {
+          if (targetActionPendingId) return;
+          setTargetDeleteConfirm(null);
         }}
       />
       <ToastHost

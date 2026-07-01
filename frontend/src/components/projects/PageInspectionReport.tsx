@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { createConsentAudit, type ConsentAuditResult, type PageContext } from "../../api/pageContext";
+import { createConsentAudit, listConsentAudits, type ConsentAuditRecord, type ConsentAuditResult, type PageContext } from "../../api/pageContext";
 import { useAuth } from "../../hooks/auth";
 import { hasPermission } from "../../utils/permissions";
+import { formatOperationalDateTime } from "../../utils/datetime";
 import AccentPill from "../ui/AccentPill";
 import Button from "../ui/Button";
 import Card from "../ui/Card";
@@ -288,8 +289,28 @@ function ConsentRuntimeAudit({ context }: { context: PageContext }) {
   const { user } = useAuth();
   const canRunAudit = hasPermission(user?.role, "crawler.run");
   const [audit, setAudit] = useState<ConsentAuditResult | null>(null);
+  const [history, setHistory] = useState<ConsentAuditRecord[]>([]);
+  const [historyMessage, setHistoryMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState("");
+
+  async function loadHistory() {
+    setHistoryLoading(true);
+    try {
+      const result = await listConsentAudits(context.page.run_id, context.page.url);
+      setHistory(result.items);
+      setHistoryMessage(result.queued_supported ? "" : result.queued_explanation);
+    } catch {
+      setHistoryMessage("Историю browser-аудитов пока не удалось загрузить.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadHistory();
+  }, [context.page.run_id, context.page.url]);
 
   async function runAudit() {
     setLoading(true);
@@ -297,8 +318,10 @@ function ConsentRuntimeAudit({ context }: { context: PageContext }) {
     try {
       const result = await createConsentAudit(context.page.run_id, context.page.url);
       setAudit(result);
+      setHistory((current) => [{ ...result, id: result.id || Date.now(), status: result.status || "COMPLETED" }, ...current.filter((item) => item.id !== result.id)].slice(0, 5));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось выполнить browser-аудит.");
+      void loadHistory();
     } finally {
       setLoading(false);
     }
@@ -331,9 +354,39 @@ function ConsentRuntimeAudit({ context }: { context: PageContext }) {
         <MetaText opacity={0.68}>
           Во время аудита scripts могут загрузиться с сайта. Значения cookies/tokens не показываются — только имена и типы запросов.
         </MetaText>
+        {historyMessage && <MetaText opacity={0.64}>{historyMessage}</MetaText>}
       </Card>
 
       {error && <StatusText tone="danger">{error}</StatusText>}
+
+      <Card style={{ padding: 9, display: "grid", gap: 7 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ fontWeight: 700 }}>История browser-аудитов</div>
+          <Button size="sm" variant="ghost" disabled={historyLoading} onClick={() => void loadHistory()}>
+            {historyLoading ? "Обновляем..." : "Обновить"}
+          </Button>
+        </div>
+        {history.length === 0 && <MetaText opacity={0.68}>Сохранённых проверок для этой страницы пока нет.</MetaText>}
+        {history.map((item) => (
+          <div key={item.id} className="consent-audit-history-row">
+            <div>
+              <div style={{ fontWeight: 700 }}>
+                {item.status === "COMPLETED" ? "Проверка завершена" : item.status === "FAILED" ? "Проверка не завершилась" : "Проверка в процессе"}
+              </div>
+              <MetaText opacity={0.68}>
+                {item.completed_at || item.requested_at ? formatOperationalDateTime(item.completed_at || item.requested_at || "") : "дата не записана"}
+              </MetaText>
+            </div>
+            {item.status === "COMPLETED" ? (
+              <MetaText>
+                Новые cookies: {item.after_consent?.new_cookies?.join(", ") || "нет"} · providers: {item.after_consent?.new_tracking_providers?.join(", ") || "нет"}
+              </MetaText>
+            ) : (
+              <StatusText tone="warning">{item.error_message || "Аудит не дал результата."}</StatusText>
+            )}
+          </div>
+        ))}
+      </Card>
 
       {audit && (
         <div style={{ display: "grid", gap: 9 }}>

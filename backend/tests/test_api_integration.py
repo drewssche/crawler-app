@@ -2055,11 +2055,15 @@ def test_project_run_skips_default_persona_without_session(monkeypatch):
 
 def test_project_run_uses_browser_client_for_persona_browser_storage(monkeypatch):
     from app.api import runs as runs_api
+    from app.crawler.renderer import RenderedSnapshotArtifact
 
     engine, SessionLocal = _get_session_factory()
     app.router.on_startup.clear()
     app.router.on_shutdown.clear()
     app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    snapshot_dir = tempfile.TemporaryDirectory()
+    monkeypatch.setenv("RENDERED_SNAPSHOT_DIR", snapshot_dir.name)
+    monkeypatch.setenv("CRAWLER_WORKER_ENABLED", "0")
 
     with SessionLocal() as db:
         db.add(_make_user(email="browser-persona@test.local", role="editor", is_approved=True))
@@ -2084,6 +2088,20 @@ def test_project_run_uses_browser_client_for_persona_browser_storage(monkeypatch
         headers = {"content-type": "text/html"}
         text = "<html><body>browser persona account</body></html>"
         history = []
+        rendered_snapshot_artifact = RenderedSnapshotArtifact(
+            image_bytes=b"fake-browser-jpeg",
+            metadata={
+                "capture_source": "browser_persona_run",
+                "captured_at": "2026-07-01T00:00:00+00:00",
+                "width": 1440,
+                "height": 1000,
+                "full_height": 1000,
+                "clipped": False,
+                "mime_type": "image/jpeg",
+                "element_map": {"version": 1, "items_total": 0, "items_truncated": False, "coordinate_space": "rendered_snapshot_pixels", "items": []},
+                "explanation": "Снимок сохранён во время browser-прогона этой страницы.",
+            },
+        )
 
     class FakeBrowserClient:
         def __init__(self, persona_browser_state, *args, **kwargs):
@@ -2139,10 +2157,34 @@ def test_project_run_uses_browser_client_for_persona_browser_storage(monkeypatch
     assert browser_states[0]["summary"]["local_storage_count"] == 1
     assert browser_states[0]["summary"]["session_storage_count"] == 1
     assert browser_states[0]["summary"]["values_exposed"] is False
+    run_id = run_response.json()["run_id"]
+    with SessionLocal() as db:
+        crawled_page = db.query(Page).filter(Page.run_id == run_id).one()
+        page_url = crawled_page.url
+
+    snapshot_response = client.get(
+        f"/runs/{run_id}/snapshot",
+        params={"url": page_url},
+        headers=editor_headers,
+    )
+    assert snapshot_response.status_code == 200
+    rendered_snapshot = snapshot_response.json()["rendered_snapshot"]
+    assert rendered_snapshot["available"] is True
+    assert rendered_snapshot["capture_source"] == "browser_persona_run"
+    assert "browser-прогона" in rendered_snapshot["explanation"]
+
+    image_response = client.get(
+        f"/runs/{run_id}/rendered-snapshot",
+        params={"url": page_url},
+        headers=editor_headers,
+    )
+    assert image_response.status_code == 200
+    assert image_response.content == b"fake-browser-jpeg"
 
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
     engine.dispose()
+    snapshot_dir.cleanup()
 
 
 def test_project_run_reports_browser_runtime_unavailable(monkeypatch):
@@ -3149,6 +3191,481 @@ def test_managed_login_session_payload_explains_headless_bridge(monkeypatch):
     assert "MFA/2FA" in payload["instructions"]
     assert "cookies" in payload["instructions"]
     assert payload["values_exposed"] is False
+
+
+def test_consent_audit_is_saved_and_listed_without_secret_values(monkeypatch):
+    from app.api import runs as runs_api
+    from app.db.models.page_consent_audit import PageConsentAudit
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="consent-history@test.local", role="editor", is_approved=True))
+        project = Project(name="Consent history", start_url="https://consent-history.test/", allowed_domains_csv="consent-history.test")
+        db.add(project)
+        db.flush()
+        _grant_project_role_by_email(db, project, "consent-history@test.local")
+        site = _add_primary_site(db, project)
+        guest = db.query(CrawlPersona).filter(CrawlPersona.project_site_id == site.id, CrawlPersona.key == "guest").one()
+        run = Run(
+            project_id=project.id,
+            project_site_id=site.id,
+            crawl_persona_id=guest.id,
+            status="FINISHED",
+            started_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+        )
+        db.add(run)
+        db.flush()
+        page = Page(
+            run_id=run.id,
+            url="https://consent-history.test/",
+            final_url="https://consent-history.test/",
+            status_code=200,
+            content_type="text/html",
+            html="<html><body>consent</body></html>",
+            html_hash="consent-history",
+        )
+        db.add(page)
+        db.flush()
+        page_id = page.id
+        db.commit()
+        run_id = run.id
+        page_url = page.url
+
+    def fake_consent_audit(page, persona_browser_state=None):
+        return {
+            "runtime_audit": "completed",
+            "audited_at": "2026-07-01T00:00:00+00:00",
+            "source": "stored_html_live_scripts",
+            "before_consent": {
+                "cookies": ["before_cookie"],
+                "requests": {"total": 1, "script": 1, "xhr_fetch": 0, "tracking_providers": ["GTM"], "sample": ["https://googletagmanager.com/gtm.js"]},
+            },
+            "after_consent": {
+                "attempted": True,
+                "action_label": "Accept",
+                "cookies": ["before_cookie", "after_cookie"],
+                "new_cookies": ["after_cookie"],
+                "requests": {"total": 2, "script": 2, "xhr_fetch": 0, "tracking_providers": ["GTM"], "sample": []},
+                "new_tracking_providers": [],
+            },
+            "consent_action": {"clicked": True, "label": "Accept", "explanation": "Кнопка согласия нажата."},
+            "values_exposed": False,
+            "explanation": "Значения cookies/tokens не возвращаются.",
+        }
+
+    monkeypatch.setattr(runs_api, "run_consent_audit", fake_consent_audit)
+
+    client = TestClient(app)
+    headers = _auth_header("consent-history@test.local", role="editor")
+    create_response = client.post(f"/runs/{run_id}/consent-audit", params={"url": page_url}, headers=headers)
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["status"] == "COMPLETED"
+    assert created["after_consent"]["new_cookies"] == ["after_cookie"]
+    assert created["values_exposed"] is False
+
+    history_response = client.get(f"/runs/{run_id}/consent-audits", params={"url": page_url}, headers=headers)
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert history["total"] == 1
+    assert history["queued_supported"] is False
+    assert history["items"][0]["id"] == created["id"]
+    assert history["items"][0]["status"] == "COMPLETED"
+    assert "secret-cookie-value" not in str(history)
+
+    with SessionLocal() as db:
+        row = db.query(PageConsentAudit).one()
+        assert row.page_id == page_id
+        assert row.result_json["values_exposed"] is False
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_selected_block_can_be_saved_as_monitoring_target(monkeypatch):
+    from app.api import runs as runs_api
+    from app.db.models.event_feed import EventFeed
+    from app.db.models.page_monitoring_notification_outbox import PageMonitoringNotificationOutbox
+    from app.db.models.page_monitoring_target import PageMonitoringTarget
+    from app.db.models.page_monitoring_target_check import PageMonitoringTargetCheck
+    from app.db.models.page_monitoring_target_subscription import PageMonitoringTargetSubscription
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="target-save@test.local", role="editor", is_approved=True))
+        db.add(_make_user(email="target-admin@test.local", role="admin", is_approved=True))
+        project = Project(name="Target save", start_url="https://target-save.test/", allowed_domains_csv="target-save.test")
+        db.add(project)
+        db.flush()
+        _grant_project_role_by_email(db, project, "target-save@test.local")
+        site = _add_primary_site(db, project)
+        guest = db.query(CrawlPersona).filter(CrawlPersona.project_site_id == site.id, CrawlPersona.key == "guest").one()
+        run = Run(
+            project_id=project.id,
+            project_site_id=site.id,
+            crawl_persona_id=guest.id,
+            status="FINISHED",
+            started_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+        )
+        db.add(run)
+        db.flush()
+        page = Page(
+            run_id=run.id,
+            url="https://target-save.test/catalog/",
+            final_url="https://target-save.test/catalog/",
+            status_code=200,
+            content_type="text/html",
+            html="<html><body><section class='hero'><h1>Hero</h1></section></body></html>",
+            html_hash="target-save",
+        )
+        db.add(page)
+        changed_page = Page(
+            run_id=run.id,
+            url="https://target-save.test/changed/",
+            final_url="https://target-save.test/changed/",
+            status_code=200,
+            content_type="text/html",
+            html="<html><body><section class='hero'><h1>Hero</h1><p>New copy</p></section></body></html>",
+            html_hash="target-save-changed",
+        )
+        missing_page = Page(
+            run_id=run.id,
+            url="https://target-save.test/missing/",
+            final_url="https://target-save.test/missing/",
+            status_code=200,
+            content_type="text/html",
+            html="<html><body><main>No hero here</main></body></html>",
+            html_hash="target-save-missing",
+        )
+        db.add(changed_page)
+        db.add(missing_page)
+        db.flush()
+        project_id = project.id
+        run_id = run.id
+        page_url = page.url
+        page_id = page.id
+        db.commit()
+
+    client = TestClient(app)
+    headers = _auth_header("target-save@test.local", role="editor")
+    response = client.post(
+        f"/runs/{run_id}/monitoring-targets",
+        params={"url": page_url},
+        json={
+            "name": "Hero block",
+            "source": "rendered_snapshot",
+            "element": {
+                "tag": "section",
+                "id": "",
+                "className": "hero",
+                "selector": "body > section.hero",
+                "text": "Hero",
+                "outerHTML": "<section class='hero'><h1>Hero</h1></section>",
+                "rect": {"x": 10, "y": 20, "width": 300, "height": 120},
+            },
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "Hero block"
+    assert payload["page_url"] == page_url
+    assert payload["selector"] == "body > section.hero"
+    assert payload["fingerprint_hash"]
+    assert payload["fingerprint"]["tag"] == "section"
+    assert "следующих успешных прогонах" in payload["next_step"]
+
+    list_response = client.get(f"/runs/monitoring-targets/by-project/{project_id}", headers=headers)
+    assert list_response.status_code == 200
+    listed = list_response.json()
+    assert listed["total"] == 1
+    assert listed["items"][0]["id"] == payload["id"]
+
+    email_subscription_response = client.post(
+        f"/runs/monitoring-targets/{payload['id']}/subscriptions",
+        json={"channel_type": "email", "destination": "alerts@example.com", "statuses": ["missing", "changed"]},
+        headers=headers,
+    )
+    assert email_subscription_response.status_code == 200
+    email_subscription = email_subscription_response.json()
+    assert email_subscription["channel_type"] == "email"
+    assert email_subscription["destination"] == "alerts@example.com"
+
+    telegram_subscription_response = client.post(
+        f"/runs/monitoring-targets/{payload['id']}/subscriptions",
+        json={"channel_type": "telegram_chat", "destination": "-1001234567890", "statuses": ["missing"]},
+        headers=headers,
+    )
+    assert telegram_subscription_response.status_code == 200
+    telegram_subscription = telegram_subscription_response.json()
+    assert telegram_subscription["channel_type"] == "telegram_chat"
+    assert telegram_subscription["destination"] == "-1001234567890"
+
+    subscriptions_response = client.get(f"/runs/monitoring-targets/{payload['id']}/subscriptions", headers=headers)
+    assert subscriptions_response.status_code == 200
+    assert subscriptions_response.json()["total"] == 2
+
+    preview_response = client.post(
+        f"/runs/monitoring-subscriptions/{email_subscription['id']}/preview",
+        json={"status": "not_checkable"},
+        headers=headers,
+    )
+    assert preview_response.status_code == 200
+    preview_payload = preview_response.json()
+    assert preview_payload["subscription"]["id"] == email_subscription["id"]
+    assert preview_payload["target"]["id"] == payload["id"]
+    assert "Hero block" in preview_payload["body"]
+    assert preview_payload["payload"]["is_test"] is True
+
+    test_send_response = client.post(
+        f"/runs/monitoring-subscriptions/{email_subscription['id']}/test-send",
+        json={"status": "not_checkable"},
+        headers=headers,
+    )
+    assert test_send_response.status_code == 200
+    test_send_payload = test_send_response.json()
+    assert test_send_payload["ok"] is False
+    assert test_send_payload["outbox"]["event_status"] == "not_checkable"
+    assert test_send_payload["outbox"]["attempts"] == 1
+    assert test_send_payload["outbox"]["payload"]["is_test"] is True
+    assert "SMTP" in test_send_payload["outbox"]["last_error"]
+
+    matched_response = client.post(f"/runs/monitoring-targets/{payload['id']}/check", headers=headers)
+    assert matched_response.status_code == 200
+    matched = matched_response.json()
+    assert matched["status"] == "matched"
+    assert matched["best_match"]["strategy"] == "selector"
+
+    changed_response = client.post(
+        f"/runs/monitoring-targets/{payload['id']}/check",
+        params={"url": "https://target-save.test/changed/"},
+        headers=headers,
+    )
+    assert changed_response.status_code == 200
+    assert changed_response.json()["status"] in {"matched", "changed"}
+    assert changed_response.json()["best_match"]["similarity"] >= 70
+
+    missing_response = client.post(
+        f"/runs/monitoring-targets/{payload['id']}/check",
+        params={"url": "https://target-save.test/missing/"},
+        headers=headers,
+    )
+    assert missing_response.status_code == 200
+    assert missing_response.json()["status"] == "missing"
+
+    with SessionLocal() as db:
+        row = db.query(PageMonitoringTarget).one()
+        assert row.page_id == page_id
+        assert row.element_rect_json["width"] == 300
+        assert row.fingerprint_json["heading_count"] == 1
+        followup_run = Run(
+            project_id=row.project_id,
+            project_site_id=row.project_site_id,
+            crawl_persona_id=row.crawl_persona_id,
+            status="FINISHED",
+            started_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+        )
+        db.add(followup_run)
+        db.flush()
+        followup_page = Page(
+            run_id=followup_run.id,
+            url=page_url,
+            final_url=page_url,
+            status_code=200,
+            content_type="text/html",
+            html="<html><body><section class='hero'><h1>Hero</h1><p>Updated copy</p></section></body></html>",
+            html_hash="target-save-followup",
+        )
+        db.add(followup_page)
+        db.flush()
+        checks_count = runs_api._run_monitoring_target_checks_for_run(db, followup_run)
+        db.commit()
+        assert checks_count == 1
+        check_row = (
+            db.query(PageMonitoringTargetCheck)
+            .filter(PageMonitoringTargetCheck.status.in_(["matched", "changed"]))
+            .order_by(PageMonitoringTargetCheck.id.desc())
+            .first()
+        )
+        assert check_row is not None
+        assert check_row.target_id == row.id
+        assert check_row.run_id == followup_run.id
+        assert check_row.page_id == followup_page.id
+        assert check_row.status in {"matched", "changed"}
+        missing_run = Run(
+            project_id=row.project_id,
+            project_site_id=row.project_site_id,
+            crawl_persona_id=row.crawl_persona_id,
+            status="FINISHED",
+            started_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+        )
+        db.add(missing_run)
+        db.flush()
+        missing_checks_count = runs_api._run_monitoring_target_checks_for_run(db, missing_run)
+        db.commit()
+        assert missing_checks_count == 1
+        event = (
+            db.query(EventFeed)
+            .filter(EventFeed.event_type == "monitoring.target.changed")
+            .order_by(EventFeed.id.desc())
+            .first()
+        )
+        assert event is not None
+        assert event.severity == "danger"
+        assert event.target_path == f"/projects/{row.project_id}"
+        assert event.meta_json["target_id"] == row.id
+        assert event.meta_json["status"] == "missing"
+        outbox_rows = (
+            db.query(PageMonitoringNotificationOutbox)
+            .filter(PageMonitoringNotificationOutbox.target_id == row.id)
+            .order_by(PageMonitoringNotificationOutbox.channel_type.asc())
+            .all()
+        )
+        real_outbox_rows = [item for item in outbox_rows if not (item.payload_json or {}).get("is_test")]
+        test_outbox_rows = [item for item in outbox_rows if (item.payload_json or {}).get("is_test")]
+        assert len(real_outbox_rows) == 2
+        assert len(test_outbox_rows) == 1
+        assert {item.channel_type for item in real_outbox_rows} == {"email", "telegram_chat"}
+        assert {item.destination for item in real_outbox_rows} == {"alerts@example.com", "-1001234567890"}
+        assert all(item.delivery_status == "queued" for item in real_outbox_rows)
+        assert all(item.event_status == "missing" for item in real_outbox_rows)
+        target_id = row.id
+
+    outbox_response = client.get(f"/runs/monitoring-targets/{target_id}/notification-outbox", headers=headers)
+    assert outbox_response.status_code == 200
+    assert outbox_response.json()["total"] == 3
+
+    delivery_response = client.post(
+        "/runs/monitoring-notifications/worker/tick",
+        params={"limit": 10},
+        headers=_auth_header("target-admin@test.local", role="admin"),
+    )
+    assert delivery_response.status_code == 200
+    delivery_payload = delivery_response.json()
+    assert delivery_payload["processed"] == 2
+    assert delivery_payload["sent"] == 0
+    assert delivery_payload["failed"] == 2
+    assert {item["channel_type"] for item in delivery_payload["items"]} == {"email", "telegram_chat"}
+    assert all(item["attempts"] == 1 for item in delivery_payload["items"])
+    assert all(item["max_attempts"] == 5 for item in delivery_payload["items"])
+    assert all(item["delivery_status"] == "failed" for item in delivery_payload["items"])
+    assert all(item["next_attempt_at"] for item in delivery_payload["items"])
+
+    second_delivery_response = client.post(
+        "/runs/monitoring-notifications/worker/tick",
+        params={"limit": 10},
+        headers=_auth_header("target-admin@test.local", role="admin"),
+    )
+    assert second_delivery_response.status_code == 200
+    assert second_delivery_response.json()["processed"] == 0
+
+    diagnostics_response = client.get(
+        "/runs/monitoring-notifications/diagnostics",
+        headers=_auth_header("target-admin@test.local", role="admin"),
+    )
+    assert diagnostics_response.status_code == 200
+    diagnostics = diagnostics_response.json()
+    assert diagnostics["smtp_configured"] is False
+    assert diagnostics["telegram_configured"] is False
+    assert diagnostics["counts"]["failed_waiting"] == 3
+
+    patch_subscription_response = client.patch(
+        f"/runs/monitoring-subscriptions/{email_subscription['id']}",
+        json={"is_active": False, "min_interval_minutes": 30},
+        headers=headers,
+    )
+    assert patch_subscription_response.status_code == 200
+    assert patch_subscription_response.json()["is_active"] is False
+    assert patch_subscription_response.json()["min_interval_minutes"] == 30
+
+    delete_subscription_response = client.delete(f"/runs/monitoring-subscriptions/{telegram_subscription['id']}", headers=headers)
+    assert delete_subscription_response.status_code == 200
+    assert delete_subscription_response.json()["deleted"] is True
+
+    with SessionLocal() as db:
+        assert db.query(PageMonitoringTargetSubscription).count() == 1
+
+    checks_response = client.get(f"/runs/monitoring-targets/{target_id}/checks", headers=headers)
+    assert checks_response.status_code == 200
+    checks_payload = checks_response.json()
+    assert checks_payload["total"] == 2
+    assert not any((item["result"] or {}).get("is_test") for item in checks_payload["items"])
+    checks_with_tests_response = client.get(
+        f"/runs/monitoring-targets/{target_id}/checks",
+        params={"include_tests": True},
+        headers=headers,
+    )
+    assert checks_with_tests_response.status_code == 200
+    assert checks_with_tests_response.json()["total"] == 3
+    assert any((item["result"] or {}).get("is_test") for item in checks_with_tests_response.json()["items"])
+    assert checks_payload["items"][0]["target_id"] == target_id
+    assert checks_payload["items"][0]["status"] == "missing"
+
+    list_after_check_response = client.get(f"/runs/monitoring-targets/by-project/{project_id}", headers=headers)
+    assert list_after_check_response.status_code == 200
+    latest_check = list_after_check_response.json()["items"][0]["latest_check"]
+    assert latest_check["target_id"] == target_id
+    assert latest_check["status"] == "missing"
+
+    update_response = client.patch(
+        f"/runs/monitoring-targets/{target_id}",
+        json={"name": "Hero block renamed", "is_active": False},
+        headers=headers,
+    )
+    assert update_response.status_code == 200
+    updated_target = update_response.json()
+    assert updated_target["name"] == "Hero block renamed"
+    assert updated_target["is_active"] is False
+
+    with SessionLocal() as db:
+        paused_target = db.get(PageMonitoringTarget, target_id)
+        paused_run = Run(
+            project_id=paused_target.project_id,
+            project_site_id=paused_target.project_site_id,
+            crawl_persona_id=paused_target.crawl_persona_id,
+            status="FINISHED",
+            started_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+        )
+        db.add(paused_run)
+        db.flush()
+        assert runs_api._run_monitoring_target_checks_for_run(db, paused_run) == 0
+        db.rollback()
+
+    reactivate_response = client.patch(
+        f"/runs/monitoring-targets/{target_id}",
+        json={"is_active": True},
+        headers=headers,
+    )
+    assert reactivate_response.status_code == 200
+    assert reactivate_response.json()["is_active"] is True
+
+    delete_response = client.delete(f"/runs/monitoring-targets/{target_id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted"] is True
+    assert client.get(f"/runs/monitoring-targets/by-project/{project_id}", headers=headers).json()["total"] == 0
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
 
 
 def test_retry_problem_page_preserves_original_result_and_records_attempt(monkeypatch):

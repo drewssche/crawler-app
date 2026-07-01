@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import shutil
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,6 +17,12 @@ SNAPSHOT_FORMAT = "jpeg"
 SNAPSHOT_VERSION = 2
 MAX_RENDER_HEIGHT = 30_000
 MAX_ELEMENT_MAP_ITEMS = 1_500
+
+
+@dataclass
+class RenderedSnapshotArtifact:
+    image_bytes: bytes
+    metadata: dict
 
 
 def snapshot_root() -> Path:
@@ -161,11 +168,54 @@ def rendered_snapshot_file(page: Page) -> Path | None:
     return image_path
 
 
+def write_rendered_snapshot_artifact(page: Page, artifact: RenderedSnapshotArtifact) -> dict:
+    image_path, metadata_path = _artifact_paths(page)
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.write_bytes(artifact.image_bytes)
+    metadata_path.write_text(json.dumps(artifact.metadata, ensure_ascii=False), encoding="utf-8")
+    return get_rendered_snapshot_metadata(page)
+
+
 def delete_rendered_snapshot_artifacts_for_run(run_id: int) -> None:
     directory = snapshot_root() / str(run_id)
     if not directory.exists():
         return
     shutil.rmtree(directory, ignore_errors=True)
+
+
+def capture_live_browser_page_snapshot(browser_page, *, capture_source: str = "browser_persona_run") -> RenderedSnapshotArtifact:
+    dimensions = browser_page.evaluate(
+        """() => ({
+            width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
+            height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0)
+        })"""
+    )
+    width = max(320, min(int(dimensions.get("width") or 1440), 4_000))
+    full_height = max(200, int(dimensions.get("height") or 1000))
+    captured_height = min(full_height, MAX_RENDER_HEIGHT)
+    clipped = full_height > captured_height
+    element_map = browser_page.evaluate(_element_map_script(MAX_ELEMENT_MAP_ITEMS, captured_height))
+    image_bytes = browser_page.screenshot(
+        type=SNAPSHOT_FORMAT,
+        quality=78,
+        full_page=not clipped,
+        clip=None if not clipped else {"x": 0, "y": 0, "width": min(width, 1440), "height": captured_height},
+    )
+    metadata = {
+        "capture_source": capture_source,
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "width": width,
+        "height": captured_height,
+        "full_height": full_height,
+        "clipped": clipped,
+        "mime_type": "image/jpeg",
+        "element_map": element_map,
+        "explanation": (
+            "Снимок сохранён во время browser-прогона этой страницы. Он отражает фактический viewport, "
+            "стили, изображения и сессию выбранного контекста на момент обхода."
+        ),
+    }
+    return RenderedSnapshotArtifact(image_bytes=image_bytes, metadata=metadata)
 
 
 def render_page_snapshot(page: Page) -> dict:
@@ -201,36 +251,13 @@ def render_page_snapshot(page: Page) -> dict:
             browser_page.wait_for_load_state("networkidle", timeout=8_000)
         except Exception:
             pass
-        dimensions = browser_page.evaluate(
-            """() => ({
-                width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
-                height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0)
-            })"""
-        )
-        width = max(320, min(int(dimensions.get("width") or 1440), 4_000))
-        full_height = max(200, int(dimensions.get("height") or 1000))
-        captured_height = min(full_height, MAX_RENDER_HEIGHT)
-        clipped = full_height > captured_height
-        element_map = browser_page.evaluate(_element_map_script(MAX_ELEMENT_MAP_ITEMS, captured_height))
-        browser_page.screenshot(
-            path=str(image_path),
-            type="jpeg",
-            quality=78,
-            full_page=not clipped,
-            clip=None if not clipped else {"x": 0, "y": 0, "width": min(width, 1440), "height": captured_height},
-        )
+        artifact = capture_live_browser_page_snapshot(browser_page, capture_source="stored_html_live_assets")
+        image_path.write_bytes(artifact.image_bytes)
         context.close()
         browser.close()
 
     metadata = {
-        "capture_source": "stored_html_live_assets",
-        "captured_at": datetime.now(timezone.utc).isoformat(),
-        "width": width,
-        "height": captured_height,
-        "full_height": full_height,
-        "clipped": clipped,
-        "mime_type": "image/jpeg",
-        "element_map": element_map,
+        **artifact.metadata,
         "explanation": (
             "Снимок построен из HTML этого прогона. Scripts и формы отключены; CSS, изображения "
             "и шрифты загружены с сайта в момент создания и могли измениться после прогона."

@@ -1,18 +1,18 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, type ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import RequireAuth from "./components/RequireAuth";
 import RequirePermission from "./components/RequirePermission";
 import AppLayout from "./components/layout/AppLayout";
-import ComparePage from "./pages/ComparePage";
 import LoginPage from "./pages/LoginPage";
-import ProjectDashboardPage from "./pages/ProjectDashboardPage";
-import ProjectNewPage from "./pages/ProjectNewPage";
-import PageInspectorPage from "./pages/PageInspectorPage";
-import RootAdminsPage from "./pages/RootAdminsPage";
-import SettingsPage from "./pages/SettingsPage";
-import WorkspaceHomePage from "./pages/WorkspaceHomePage";
-import UiDebugPage from "./pages/UiDebugPage";
 
+const WorkspaceHomePage = lazy(() => import("./pages/WorkspaceHomePage"));
+const ProjectNewPage = lazy(() => import("./pages/ProjectNewPage"));
+const ProjectDashboardPage = lazy(() => import("./pages/ProjectDashboardPage"));
+const ComparePage = lazy(() => import("./pages/ComparePage"));
+const PageInspectorPage = lazy(() => import("./pages/PageInspectorPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const RootAdminsPage = lazy(() => import("./pages/RootAdminsPage"));
+const UiDebugPage = lazy(() => import("./pages/UiDebugPage"));
 const UsersPage = lazy(() => import("./pages/UsersPage"));
 const ActivityLogPage = lazy(() => import("./pages/ActivityLogPage"));
 const MonitoringPage = lazy(() => import("./pages/MonitoringPage"));
@@ -20,6 +20,10 @@ const EventsPage = lazy(() => import("./pages/EventsPage"));
 
 function RouteFallback() {
   return <div style={{ padding: 16, opacity: 0.78 }}>Загрузка страницы...</div>;
+}
+
+function LazyRoute({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<RouteFallback />}>{children}</Suspense>;
 }
 
 export default function App() {
@@ -39,7 +43,9 @@ export default function App() {
           index
           element={
             <RequirePermission permission="data.view">
-              <WorkspaceHomePage />
+              <LazyRoute>
+                <WorkspaceHomePage />
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -47,7 +53,9 @@ export default function App() {
           path="settings"
           element={
             <RequirePermission permission="users.manage">
-              <SettingsPage />
+              <LazyRoute>
+                <SettingsPage />
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -55,7 +63,9 @@ export default function App() {
           path="projects/new"
           element={
             <RequirePermission permission="projects.edit">
-              <ProjectNewPage />
+              <LazyRoute>
+                <ProjectNewPage />
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -63,7 +73,9 @@ export default function App() {
           path="projects/:id"
           element={
             <RequirePermission permission="data.view">
-              <ProjectDashboardPage />
+              <LazyRoute>
+                <ProjectDashboardPage />
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -71,7 +83,9 @@ export default function App() {
           path="projects/:id/compare"
           element={
             <RequirePermission permission="data.view">
-              <ComparePage />
+              <LazyRoute>
+                <ComparePage />
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -79,7 +93,9 @@ export default function App() {
           path="projects/:id/inspect"
           element={
             <RequirePermission permission="data.view">
-              <PageInspectorPage />
+              <LazyRoute>
+                <PageInspectorPage />
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -87,9 +103,9 @@ export default function App() {
           path="users"
           element={
             <RequirePermission permission="users.manage">
-              <Suspense fallback={<RouteFallback />}>
+              <LazyRoute>
                 <UsersPage />
-              </Suspense>
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -97,9 +113,9 @@ export default function App() {
           path="logs"
           element={
             <RequirePermission permission="audit.view">
-              <Suspense fallback={<RouteFallback />}>
+              <LazyRoute>
                 <ActivityLogPage />
-              </Suspense>
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -107,9 +123,9 @@ export default function App() {
           path="monitoring"
           element={
             <RequirePermission permission="audit.view">
-              <Suspense fallback={<RouteFallback />}>
+              <LazyRoute>
                 <MonitoringPage />
-              </Suspense>
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -117,9 +133,9 @@ export default function App() {
           path="events"
           element={
             <RequirePermission permission="events.view">
-              <Suspense fallback={<RouteFallback />}>
+              <LazyRoute>
                 <EventsPage />
-              </Suspense>
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -127,7 +143,9 @@ export default function App() {
           path="root-admins"
           element={
             <RequirePermission permission="root_admins.manage">
-              <RootAdminsPage />
+              <LazyRoute>
+                <RootAdminsPage />
+              </LazyRoute>
             </RequirePermission>
           }
         />
@@ -135,7 +153,9 @@ export default function App() {
           path="ui-debug"
           element={
             <RequirePermission permission="users.manage">
-              <UiDebugPage />
+              <LazyRoute>
+                <UiDebugPage />
+              </LazyRoute>
             </RequirePermission>
           }
         />

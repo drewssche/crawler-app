@@ -9,6 +9,11 @@ from .run import Run  # noqa: F401
 from .crawler_run_job import CrawlerRunJob  # noqa: F401
 from .page import Page  # noqa: F401
 from .page_retry_attempt import PageRetryAttempt  # noqa: F401
+from .page_consent_audit import PageConsentAudit  # noqa: F401
+from .page_monitoring_target import PageMonitoringTarget  # noqa: F401
+from .page_monitoring_target_check import PageMonitoringTargetCheck  # noqa: F401
+from .page_monitoring_target_subscription import PageMonitoringTargetSubscription  # noqa: F401
+from .page_monitoring_notification_outbox import PageMonitoringNotificationOutbox  # noqa: F401
 from .login_code import LoginCode  # noqa: F401
 from .auth_attempt import AuthAttempt  # noqa: F401
 from .trusted_device import TrustedDevice  # noqa: F401

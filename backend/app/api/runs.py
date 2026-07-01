@@ -1,11 +1,13 @@
 import hashlib
+import json
 import math
 import os
+import re
 import threading
 import time
 from collections import deque
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urldefrag, urljoin, urlparse
 
@@ -20,6 +22,11 @@ from sqlalchemy.orm import Session
 from app.core.paging import build_paged_response, paginate_query
 from app.core.site_scope import CanonicalSiteScope, canonicalize_site_scope, is_url_in_site_scope
 from app.db.models.page import Page
+from app.db.models.page_consent_audit import PageConsentAudit
+from app.db.models.page_monitoring_notification_outbox import PageMonitoringNotificationOutbox
+from app.db.models.page_monitoring_target import PageMonitoringTarget
+from app.db.models.page_monitoring_target_check import PageMonitoringTargetCheck
+from app.db.models.page_monitoring_target_subscription import PageMonitoringTargetSubscription
 from app.db.models.page_retry_attempt import PageRetryAttempt
 from app.db.models.project import Project
 from app.db.models.crawl_persona import CrawlPersona
@@ -33,6 +40,7 @@ from app.core.events import (
     EVENT_CHANNEL_NOTIFICATION,
     EVENT_SEVERITY_DANGER,
     EVENT_SEVERITY_INFO,
+    EVENT_SEVERITY_WARNING,
     emit_event,
 )
 from app.services.crawl_personas import get_default_persona
@@ -47,6 +55,13 @@ from app.services.crawler_jobs import (
     mark_job_running,
     reschedule_job_retry,
 )
+from app.services.monitoring_notification_delivery import (
+    build_monitoring_notification_message,
+    deliver_outbox_row,
+    deliver_queued_outbox,
+    monitoring_delivery_diagnostics,
+    monitoring_notification_max_attempts,
+)
 from app.services.page_context import build_page_context
 from app.services.persona_secrets import decrypt_session_bundle
 from app.services.persona_browser_state import build_browser_persona_state
@@ -59,6 +74,7 @@ from app.crawler.renderer import (
     get_rendered_snapshot_metadata,
     render_page_snapshot,
     rendered_snapshot_file,
+    write_rendered_snapshot_artifact,
 )
 from app.crawler.consent_audit import run_consent_audit
 
@@ -70,6 +86,8 @@ RETRY_BACKOFF_SECONDS = (0, 5, 15)
 CRAWL_PROGRESS_BATCH_SIZE = 5
 BROWSER_CRAWL_MAX_PAGES_DEFAULT = 500
 BROWSER_CRAWL_MAX_SECONDS_DEFAULT = 600
+MONITORING_SUBSCRIPTION_CHANNELS = {"email", "telegram_chat"}
+MONITORING_SUBSCRIPTION_STATUSES = {"changed", "missing", "not_checkable"}
 SESSION_HEADER_BLOCKLIST = {
     "connection",
     "content-length",
@@ -97,6 +115,45 @@ class RetryPagesIn(BaseModel):
 
 class StartSiteRunIn(BaseModel):
     crawl_persona_id: int | None = None
+
+
+class MonitoringTargetElementIn(BaseModel):
+    tag: str = Field(min_length=1, max_length=80)
+    id: str = Field(default="", max_length=240)
+    className: str = Field(default="", max_length=1000)
+    selector: str = Field(min_length=1, max_length=4000)
+    text: str = Field(default="", max_length=5000)
+    outerHTML: str = Field(default="", max_length=50_000)
+    rect: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateMonitoringTargetIn(BaseModel):
+    name: str | None = Field(default=None, max_length=240)
+    source: str = Field(default="rendered_snapshot", max_length=60)
+    element: MonitoringTargetElementIn
+
+
+class UpdateMonitoringTargetIn(BaseModel):
+    name: str | None = Field(default=None, max_length=240)
+    is_active: bool | None = None
+
+
+class CreateMonitoringTargetSubscriptionIn(BaseModel):
+    channel_type: str = Field(min_length=1, max_length=40)
+    destination: str = Field(min_length=1, max_length=500)
+    statuses: list[str] = Field(default_factory=lambda: ["changed", "missing", "not_checkable"])
+    min_interval_minutes: int = Field(default=0, ge=0, le=10080)
+
+
+class UpdateMonitoringTargetSubscriptionIn(BaseModel):
+    destination: str | None = Field(default=None, min_length=1, max_length=500)
+    statuses: list[str] | None = None
+    min_interval_minutes: int | None = Field(default=None, ge=0, le=10080)
+    is_active: bool | None = None
+
+
+class PreviewMonitoringTargetSubscriptionIn(BaseModel):
+    status: str = Field(default="not_checkable", max_length=30)
 
 
 def _extract_page_search_meta(html: str | None) -> dict[str, str]:
@@ -419,6 +476,472 @@ def _classify_fetch_failure(exc: Exception) -> tuple[str, str]:
     if isinstance(exc, httpx.RequestError):
         return "request_error", "Не удалось получить ответ от сайта."
     return "unknown_error", "Во время прогона произошла непредвиденная ошибка."
+
+
+def _persist_response_rendered_snapshot(page: Page, response: Any) -> None:
+    artifact = getattr(response, "rendered_snapshot_artifact", None)
+    if artifact is None:
+        return
+    try:
+        write_rendered_snapshot_artifact(page, artifact)
+    except Exception:
+        return
+
+
+def _serialize_consent_audit(row: PageConsentAudit) -> dict[str, Any]:
+    result = row.result_json or {}
+    return {
+        "id": row.id,
+        "status": row.status,
+        "source": row.source,
+        "requested_at": row.requested_at.isoformat() if row.requested_at else None,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "created_by_user_id": row.created_by_user_id,
+        "crawl_persona_id": row.crawl_persona_id,
+        "error_code": row.error_code,
+        "error_message": row.error_message,
+        "result": result,
+        **result,
+    }
+
+
+def _target_fingerprint(element: MonitoringTargetElementIn) -> dict[str, Any]:
+    html = element.outerHTML or ""
+    class_tokens = [token for token in (element.className or "").split() if token]
+    return {
+        "tag": element.tag.lower(),
+        "id_present": bool(element.id),
+        "class_count": len(class_tokens),
+        "selector": element.selector,
+        "text_length": len(element.text or ""),
+        "html_length": len(html),
+        "link_count": len(re.findall(r"<a\b", html, flags=re.IGNORECASE)),
+        "image_count": len(re.findall(r"<img\b|<picture\b|<source\b", html, flags=re.IGNORECASE)),
+        "heading_count": len(re.findall(r"<h[1-6]\b", html, flags=re.IGNORECASE)),
+    }
+
+
+def _fingerprint_hash(fingerprint: dict[str, Any]) -> str:
+    payload = json.dumps(fingerprint, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _serialize_monitoring_target(
+    row: PageMonitoringTarget,
+    *,
+    latest_check: PageMonitoringTargetCheck | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "project_id": row.project_id,
+        "project_site_id": row.project_site_id,
+        "run_id": row.run_id,
+        "page_id": row.page_id,
+        "crawl_persona_id": row.crawl_persona_id,
+        "name": row.name,
+        "page_url": row.page_url,
+        "selector": row.selector,
+        "tag": row.tag,
+        "fingerprint_hash": row.fingerprint_hash,
+        "fingerprint": row.fingerprint_json or {},
+        "source": row.source,
+        "is_active": row.is_active,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "latest_check": _serialize_monitoring_target_check(latest_check) if latest_check else None,
+        "next_step": "Цель сохранена. При следующих успешных прогонах crawler будет проверять, сохранился ли этот блок на странице.",
+    }
+
+
+def _serialize_monitoring_target_check(row: PageMonitoringTargetCheck) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "target_id": row.target_id,
+        "project_id": row.project_id,
+        "project_site_id": row.project_site_id,
+        "run_id": row.run_id,
+        "page_id": row.page_id,
+        "status": row.status,
+        "message": row.message,
+        "result": row.result_json or {},
+        "checked_at": row.checked_at.isoformat() if row.checked_at else None,
+    }
+
+
+def _clean_subscription_channel(channel_type: str) -> str:
+    channel = (channel_type or "").strip().lower().replace("-", "_")
+    if channel not in MONITORING_SUBSCRIPTION_CHANNELS:
+        raise HTTPException(
+            status_code=422,
+            detail="Notification channel must be email or telegram_chat",
+        )
+    return channel
+
+
+def _clean_subscription_statuses(statuses: list[str] | None) -> list[str]:
+    cleaned = sorted({(status or "").strip().lower() for status in (statuses or []) if (status or "").strip()})
+    if not cleaned:
+        raise HTTPException(status_code=422, detail="At least one notification status is required")
+    unknown = [status for status in cleaned if status not in MONITORING_SUBSCRIPTION_STATUSES]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unsupported notification statuses: {', '.join(unknown)}")
+    return cleaned
+
+
+def _serialize_monitoring_subscription(row: PageMonitoringTargetSubscription) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "target_id": row.target_id,
+        "project_id": row.project_id,
+        "channel_type": row.channel_type,
+        "destination": row.destination,
+        "statuses": row.statuses_json or [],
+        "min_interval_minutes": row.min_interval_minutes,
+        "is_active": row.is_active,
+        "last_enqueued_at": row.last_enqueued_at.isoformat() if row.last_enqueued_at else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _serialize_monitoring_outbox(row: PageMonitoringNotificationOutbox) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "subscription_id": row.subscription_id,
+        "target_id": row.target_id,
+        "target_check_id": row.target_check_id,
+        "project_id": row.project_id,
+        "channel_type": row.channel_type,
+        "destination": row.destination,
+        "event_status": row.event_status,
+        "delivery_status": row.delivery_status,
+        "attempts": row.attempts,
+        "max_attempts": row.max_attempts,
+        "next_attempt_at": row.next_attempt_at.isoformat() if row.next_attempt_at else None,
+        "payload": row.payload_json or {},
+        "last_error": row.last_error,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "sent_at": row.sent_at.isoformat() if row.sent_at else None,
+    }
+
+
+def _build_monitoring_notification_payload(
+    *,
+    target: PageMonitoringTarget,
+    status: str,
+    message: str,
+    project_id: int,
+    project_site_id: int | None,
+    run_id: int | None,
+    page_id: int | None,
+    target_check_id: int | None,
+    similarity: Any = None,
+    is_test: bool = False,
+) -> dict[str, Any]:
+    return {
+        "title": "Тест уведомления цели мониторинга" if is_test else "Цель мониторинга требует внимания",
+        "target_name": target.name,
+        "status": status,
+        "message": message,
+        "project_id": project_id,
+        "project_site_id": project_site_id,
+        "run_id": run_id,
+        "page_id": page_id,
+        "page_url": target.page_url,
+        "target_id": target.id,
+        "target_check_id": target_check_id,
+        "target_path": f"/projects/{project_id}",
+        "similarity": similarity,
+        "is_test": is_test,
+    }
+
+
+def _element_fingerprint_from_html(tag_name: str, html: str, text: str, selector: str = "") -> dict[str, Any]:
+    classes = re.findall(r'\bclass=["\']([^"\']+)["\']', html, flags=re.IGNORECASE)
+    class_count = len({token for raw in classes for token in raw.split() if token})
+    return {
+        "tag": tag_name.lower(),
+        "id_present": bool(re.search(r"\bid=", html, flags=re.IGNORECASE)),
+        "class_count": class_count,
+        "selector": selector,
+        "text_length": len(text or ""),
+        "html_length": len(html or ""),
+        "link_count": len(re.findall(r"<a\b", html, flags=re.IGNORECASE)),
+        "image_count": len(re.findall(r"<img\b|<picture\b|<source\b", html, flags=re.IGNORECASE)),
+        "heading_count": len(re.findall(r"<h[1-6]\b", html, flags=re.IGNORECASE)),
+    }
+
+
+def _fingerprint_similarity(saved: dict[str, Any], candidate: dict[str, Any]) -> int:
+    score = 0
+    if saved.get("tag") == candidate.get("tag"):
+        score += 30
+    for key, weight in (
+        ("class_count", 12),
+        ("text_length", 16),
+        ("html_length", 12),
+        ("link_count", 10),
+        ("image_count", 10),
+        ("heading_count", 12),
+    ):
+        left = max(0, int(saved.get(key) or 0))
+        right = max(0, int(candidate.get(key) or 0))
+        scale = max(left, right, 1)
+        score += max(0, round(weight - (abs(left - right) / scale) * weight))
+    return max(0, min(100, score))
+
+
+def _evaluate_monitoring_target_on_page(target: PageMonitoringTarget, page: Page) -> dict[str, Any]:
+    if not page.html:
+        return {
+            "status": "not_checkable",
+            "message": "У выбранной страницы нет сохранённого HTML для поиска цели.",
+            "matches": [],
+            "best_match": None,
+        }
+    soup = BeautifulSoup(page.html, "lxml")
+    saved_fingerprint = target.fingerprint_json or {}
+    matches = []
+    try:
+        selector_matches = soup.select(target.selector) if target.selector else []
+    except Exception:
+        selector_matches = []
+    for node in selector_matches[:5]:
+        html = str(node)
+        text = node.get_text(" ", strip=True)
+        fingerprint = _element_fingerprint_from_html(getattr(node, "name", "") or "", html, text, target.selector)
+        matches.append({
+            "strategy": "selector",
+            "selector": target.selector,
+            "tag": fingerprint["tag"],
+            "text": text[:500],
+            "similarity": _fingerprint_similarity(saved_fingerprint, fingerprint),
+            "fingerprint": fingerprint,
+        })
+    if not matches:
+        for node in soup.find_all(target.tag or True)[:200]:
+            html = str(node)
+            text = node.get_text(" ", strip=True)
+            fingerprint = _element_fingerprint_from_html(getattr(node, "name", "") or "", html, text)
+            similarity = _fingerprint_similarity(saved_fingerprint, fingerprint)
+            if similarity >= 55:
+                matches.append({
+                    "strategy": "fingerprint",
+                    "selector": "",
+                    "tag": fingerprint["tag"],
+                    "text": text[:500],
+                    "similarity": similarity,
+                    "fingerprint": fingerprint,
+                })
+        matches.sort(key=lambda item: int(item["similarity"]), reverse=True)
+        matches = matches[:5]
+    best = matches[0] if matches else None
+    if not best:
+        status = "missing"
+        message = "Цель не найдена на выбранной версии страницы."
+    elif best["strategy"] == "selector" and int(best["similarity"]) >= 85:
+        status = "matched"
+        message = "Цель найдена по сохранённому selector и структурно похожа на исходный блок."
+    elif int(best["similarity"]) >= 70:
+        status = "changed"
+        message = "Похожий блок найден, но структура отличается. Нужна визуальная проверка."
+    else:
+        status = "changed"
+        message = "Найден слабый кандидат. Вероятно, блок изменился или selector устарел."
+    return {
+        "status": status,
+        "message": message,
+        "matches": matches,
+        "best_match": best,
+    }
+
+
+def _store_monitoring_target_check(
+    db: Session,
+    *,
+    target: PageMonitoringTarget,
+    run: Run,
+    page: Page | None,
+    evaluation: dict[str, Any],
+) -> PageMonitoringTargetCheck:
+    row = PageMonitoringTargetCheck(
+        target_id=target.id,
+        project_id=run.project_id,
+        project_site_id=run.project_site_id,
+        run_id=run.id,
+        page_id=page.id if page else None,
+        status=str(evaluation.get("status") or "not_checkable")[:30],
+        message=str(evaluation.get("message") or ""),
+        result_json=evaluation,
+    )
+    db.add(row)
+    return row
+
+
+def _emit_monitoring_target_event(
+    db: Session,
+    *,
+    target: PageMonitoringTarget,
+    run: Run,
+    check: PageMonitoringTargetCheck,
+    page: Page | None,
+    evaluation: dict[str, Any],
+) -> None:
+    status = str(evaluation.get("status") or "")
+    if status == "matched":
+        return
+    status_label = {
+        "changed": "изменился",
+        "missing": "не найден",
+        "not_checkable": "требует ручной проверки",
+    }.get(status, "требует внимания")
+    severity = EVENT_SEVERITY_DANGER if status == "missing" else EVENT_SEVERITY_WARNING
+    page_path = target.page_url
+    try:
+        parsed = urlparse(target.page_url)
+        page_path = f"{parsed.path or '/'}{parsed.query and '?' + parsed.query or ''}"
+    except Exception:
+        page_path = target.page_url
+    emit_event(
+        db,
+        event_type="monitoring.target.changed",
+        channel=EVENT_CHANNEL_NOTIFICATION,
+        severity=severity,
+        title=f"Цель мониторинга: {status_label}",
+        body=f"«{target.name}» на странице {page_path}: {evaluation.get('message') or 'Проверьте цель мониторинга.'}",
+        target_path=f"/projects/{run.project_id}",
+        target_ref=f"monitoring_target:{target.id}:check:{check.id}",
+        actor_user_id=None,
+        target_user_id=None,
+        meta_json={
+            "target_id": target.id,
+            "target_check_id": check.id,
+            "project_id": run.project_id,
+            "project_site_id": run.project_site_id,
+            "run_id": run.id,
+            "page_id": page.id if page else None,
+            "page_url": target.page_url,
+            "target_name": target.name,
+            "status": status,
+            "similarity": (evaluation.get("best_match") or {}).get("similarity"),
+        },
+    )
+
+
+def _enqueue_monitoring_target_notifications(
+    db: Session,
+    *,
+    target: PageMonitoringTarget,
+    run: Run,
+    check: PageMonitoringTargetCheck,
+    page: Page | None,
+    evaluation: dict[str, Any],
+) -> int:
+    status = str(evaluation.get("status") or "")
+    if status not in MONITORING_SUBSCRIPTION_STATUSES:
+        return 0
+    subscriptions = (
+        db.query(PageMonitoringTargetSubscription)
+        .filter(
+            PageMonitoringTargetSubscription.target_id == target.id,
+            PageMonitoringTargetSubscription.is_active.is_(True),
+        )
+        .all()
+    )
+    if not subscriptions:
+        return 0
+    now = datetime.utcnow()
+    enqueued = 0
+    for subscription in subscriptions:
+        statuses = subscription.statuses_json or []
+        if status not in statuses:
+            continue
+        if subscription.last_enqueued_at and subscription.min_interval_minutes > 0:
+            next_allowed_at = subscription.last_enqueued_at + timedelta(minutes=subscription.min_interval_minutes)
+            if next_allowed_at > now:
+                continue
+        payload = _build_monitoring_notification_payload(
+            target=target,
+            status=status,
+            message=evaluation.get("message") or "",
+            project_id=run.project_id,
+            project_site_id=run.project_site_id,
+            run_id=run.id,
+            page_id=page.id if page else None,
+            target_check_id=check.id,
+            similarity=(evaluation.get("best_match") or {}).get("similarity"),
+        )
+        db.add(
+            PageMonitoringNotificationOutbox(
+                subscription_id=subscription.id,
+                target_id=target.id,
+                target_check_id=check.id,
+                project_id=run.project_id,
+                channel_type=subscription.channel_type,
+                destination=subscription.destination,
+                event_status=status,
+                delivery_status="queued",
+                attempts=0,
+                max_attempts=monitoring_notification_max_attempts(),
+                next_attempt_at=None,
+                payload_json=payload,
+                last_error="",
+            )
+        )
+        subscription.last_enqueued_at = now
+        subscription.updated_at = now
+        enqueued += 1
+    if enqueued:
+        db.flush()
+    return enqueued
+
+
+def _run_monitoring_target_checks_for_run(db: Session, run: Run) -> int:
+    targets = (
+        db.query(PageMonitoringTarget)
+        .filter(
+            PageMonitoringTarget.project_id == run.project_id,
+            PageMonitoringTarget.project_site_id == run.project_site_id,
+            PageMonitoringTarget.crawl_persona_id == run.crawl_persona_id,
+            PageMonitoringTarget.is_active.is_(True),
+        )
+        .all()
+    )
+    if not targets:
+        return 0
+
+    pages_by_url = {
+        url: page
+        for url, page in db.query(Page.url, Page).filter(Page.run_id == run.id).all()
+    }
+    checks_count = 0
+    for target in targets:
+        page = pages_by_url.get(target.page_url)
+        if page is None:
+            evaluation = {
+                "status": "missing",
+                "message": "Страница цели не найдена в этом прогоне.",
+                "matches": [],
+                "best_match": None,
+            }
+        else:
+            try:
+                evaluation = _evaluate_monitoring_target_on_page(target, page)
+            except Exception:
+                evaluation = {
+                    "status": "not_checkable",
+                    "message": "Цель не удалось проверить автоматически. Нужна ручная проверка.",
+                    "matches": [],
+                    "best_match": None,
+                }
+        check = _store_monitoring_target_check(db, target=target, run=run, page=page, evaluation=evaluation)
+        db.flush()
+        _emit_monitoring_target_event(db, target=target, run=run, check=check, page=page, evaluation=evaluation)
+        _enqueue_monitoring_target_notifications(db, target=target, run=run, check=check, page=page, evaluation=evaluation)
+        checks_count += 1
+    db.flush()
+    return checks_count
 
 
 def _is_retryable_job_failure(failure_code: str | None) -> bool:
@@ -982,6 +1505,8 @@ def _execute_site_run(
                     )
                     pages.append(fetched_page)
                     db.add(fetched_page)
+                    db.flush()
+                    _persist_response_rendered_snapshot(fetched_page, resp)
                     run.pages_total = len(pages)
                     run.current_batch_no = (len(pages) // CRAWL_PROGRESS_BATCH_SIZE) + 1
                     run.progress_updated_at = datetime.utcnow()
@@ -1094,6 +1619,7 @@ def _execute_site_run(
         run.finished_at = datetime.utcnow()
         run.current_url = None
         run.progress_updated_at = run.finished_at
+        _run_monitoring_target_checks_for_run(db, run)
         _emit_run_completion_event(
             db,
             run=run,
@@ -1534,6 +2060,32 @@ def run_worker_tick(
             },
         )
     return process_next_worker_job(db)
+
+
+@router.post("/monitoring-notifications/worker/tick")
+def monitoring_notification_worker_tick(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("audit.view")),
+):
+    rows = deliver_queued_outbox(db, limit=limit)
+    sent = len([row for row in rows if row.delivery_status == "sent"])
+    failed = len([row for row in rows if row.delivery_status == "failed"])
+    return {
+        "ok": True,
+        "processed": len(rows),
+        "sent": sent,
+        "failed": failed,
+        "items": [_serialize_monitoring_outbox(row) for row in rows],
+    }
+
+
+@router.get("/monitoring-notifications/diagnostics")
+def monitoring_notification_diagnostics(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_permission("audit.view")),
+):
+    return monitoring_delivery_diagnostics(db)
 
 
 @router.post("/{run_id}/retry-pages")
@@ -2098,6 +2650,408 @@ def get_rendered_page_snapshot(
     return FileResponse(image_path, media_type="image/jpeg", filename=f"page-{page.id}.jpg")
 
 
+@router.post("/{run_id}/monitoring-targets")
+def create_page_monitoring_target(
+    run_id: int,
+    payload: CreateMonitoringTargetIn,
+    url: str = Query(min_length=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    require_project_write(db, project_id=run.project_id, user=current_user)
+    page = db.query(Page).filter(Page.run_id == run_id, Page.url == url).first()
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found in this run")
+    element = payload.element
+    fingerprint = _target_fingerprint(element)
+    name = (payload.name or "").strip() or f"{element.tag.lower()} · {element.selector[:160]}"
+    row = PageMonitoringTarget(
+        project_id=run.project_id,
+        project_site_id=run.project_site_id,
+        run_id=run.id,
+        page_id=page.id,
+        crawl_persona_id=run.crawl_persona_id,
+        created_by_user_id=current_user.id,
+        name=name[:240],
+        page_url=page.url,
+        selector=element.selector,
+        tag=element.tag.lower(),
+        element_text=element.text or "",
+        element_html=element.outerHTML or "",
+        element_rect_json=element.rect,
+        fingerprint_hash=_fingerprint_hash(fingerprint),
+        fingerprint_json=fingerprint,
+        source=payload.source or "rendered_snapshot",
+        is_active=True,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _serialize_monitoring_target(row)
+
+
+@router.get("/monitoring-targets/by-project/{project_id}")
+def list_project_monitoring_targets(
+    project_id: int,
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("data.view")),
+):
+    require_project_read(db, project_id=project_id, user=current_user)
+    rows = (
+        db.query(PageMonitoringTarget)
+        .filter(PageMonitoringTarget.project_id == project_id)
+        .order_by(PageMonitoringTarget.created_at.desc(), PageMonitoringTarget.id.desc())
+        .limit(limit)
+        .all()
+    )
+    target_ids = [row.id for row in rows]
+    latest_checks: dict[int, PageMonitoringTargetCheck] = {}
+    if target_ids:
+        check_rows = (
+            db.query(PageMonitoringTargetCheck)
+            .filter(PageMonitoringTargetCheck.target_id.in_(target_ids))
+            .order_by(PageMonitoringTargetCheck.target_id.asc(), PageMonitoringTargetCheck.checked_at.desc(), PageMonitoringTargetCheck.id.desc())
+            .all()
+        )
+        for check in check_rows:
+            if (check.result_json or {}).get("is_test"):
+                continue
+            if check.target_id not in latest_checks:
+                latest_checks[check.target_id] = check
+    return {
+        "items": [_serialize_monitoring_target(row, latest_check=latest_checks.get(row.id)) for row in rows],
+        "total": len(rows),
+    }
+
+
+@router.get("/monitoring-targets/{target_id}/checks")
+def list_monitoring_target_checks(
+    target_id: int,
+    limit: int = Query(default=20, ge=1, le=100),
+    include_tests: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("data.view")),
+):
+    target = db.get(PageMonitoringTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Monitoring target not found")
+    require_project_read(db, project_id=target.project_id, user=current_user)
+    rows = (
+        db.query(PageMonitoringTargetCheck)
+        .filter(PageMonitoringTargetCheck.target_id == target_id)
+        .order_by(PageMonitoringTargetCheck.checked_at.desc(), PageMonitoringTargetCheck.id.desc())
+        .limit(limit * 2 if not include_tests else limit)
+        .all()
+    )
+    if not include_tests:
+        rows = [row for row in rows if not (row.result_json or {}).get("is_test")][:limit]
+    return {
+        "target": _serialize_monitoring_target(target),
+        "items": [_serialize_monitoring_target_check(row) for row in rows],
+        "total": len(rows),
+    }
+
+
+@router.patch("/monitoring-targets/{target_id}")
+def update_monitoring_target(
+    target_id: int,
+    payload: UpdateMonitoringTargetIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    target = db.get(PageMonitoringTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Monitoring target not found")
+    require_project_write(db, project_id=target.project_id, user=current_user)
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="Target name cannot be empty")
+        target.name = name[:240]
+    if payload.is_active is not None:
+        target.is_active = payload.is_active
+    target.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(target)
+    return _serialize_monitoring_target(target)
+
+
+@router.delete("/monitoring-targets/{target_id}")
+def delete_monitoring_target(
+    target_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    target = db.get(PageMonitoringTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Monitoring target not found")
+    require_project_write(db, project_id=target.project_id, user=current_user)
+    db.delete(target)
+    db.commit()
+    return {"deleted": True, "target_id": target_id}
+
+
+@router.get("/monitoring-targets/{target_id}/subscriptions")
+def list_monitoring_target_subscriptions(
+    target_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("data.view")),
+):
+    target = db.get(PageMonitoringTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Monitoring target not found")
+    require_project_read(db, project_id=target.project_id, user=current_user)
+    rows = (
+        db.query(PageMonitoringTargetSubscription)
+        .filter(PageMonitoringTargetSubscription.target_id == target_id)
+        .order_by(PageMonitoringTargetSubscription.created_at.desc(), PageMonitoringTargetSubscription.id.desc())
+        .all()
+    )
+    return {"items": [_serialize_monitoring_subscription(row) for row in rows], "total": len(rows)}
+
+
+@router.post("/monitoring-targets/{target_id}/subscriptions")
+def create_monitoring_target_subscription(
+    target_id: int,
+    payload: CreateMonitoringTargetSubscriptionIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    target = db.get(PageMonitoringTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Monitoring target not found")
+    require_project_write(db, project_id=target.project_id, user=current_user)
+    row = PageMonitoringTargetSubscription(
+        target_id=target.id,
+        project_id=target.project_id,
+        created_by_user_id=current_user.id,
+        channel_type=_clean_subscription_channel(payload.channel_type),
+        destination=payload.destination.strip(),
+        statuses_json=_clean_subscription_statuses(payload.statuses),
+        min_interval_minutes=payload.min_interval_minutes,
+        is_active=True,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _serialize_monitoring_subscription(row)
+
+
+@router.patch("/monitoring-subscriptions/{subscription_id}")
+def update_monitoring_target_subscription(
+    subscription_id: int,
+    payload: UpdateMonitoringTargetSubscriptionIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    row = db.get(PageMonitoringTargetSubscription, subscription_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Monitoring subscription not found")
+    require_project_write(db, project_id=row.project_id, user=current_user)
+    if payload.destination is not None:
+        row.destination = payload.destination.strip()
+    if payload.statuses is not None:
+        row.statuses_json = _clean_subscription_statuses(payload.statuses)
+    if payload.min_interval_minutes is not None:
+        row.min_interval_minutes = payload.min_interval_minutes
+    if payload.is_active is not None:
+        row.is_active = payload.is_active
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return _serialize_monitoring_subscription(row)
+
+
+@router.delete("/monitoring-subscriptions/{subscription_id}")
+def delete_monitoring_target_subscription(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    row = db.get(PageMonitoringTargetSubscription, subscription_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Monitoring subscription not found")
+    require_project_write(db, project_id=row.project_id, user=current_user)
+    db.delete(row)
+    db.commit()
+    return {"deleted": True, "subscription_id": subscription_id}
+
+
+def _get_subscription_with_target_for_write(
+    db: Session,
+    *,
+    subscription_id: int,
+    current_user: User,
+) -> tuple[PageMonitoringTargetSubscription, PageMonitoringTarget]:
+    subscription = db.get(PageMonitoringTargetSubscription, subscription_id)
+    if not subscription:
+        raise HTTPException(status_code=404, detail="Monitoring subscription not found")
+    require_project_write(db, project_id=subscription.project_id, user=current_user)
+    target = db.get(PageMonitoringTarget, subscription.target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Monitoring target not found")
+    return subscription, target
+
+
+def _monitoring_subscription_preview_payload(
+    *,
+    subscription: PageMonitoringTargetSubscription,
+    target: PageMonitoringTarget,
+    status: str,
+) -> dict[str, Any]:
+    cleaned_status = _clean_subscription_statuses([status])[0]
+    message = "Тестовое уведомление: канал подключён к цели мониторинга. Реальные уведомления появятся только при изменении, пропаже или невозможности проверить выбранный блок."
+    payload = _build_monitoring_notification_payload(
+        target=target,
+        status=cleaned_status,
+        message=message,
+        project_id=subscription.project_id,
+        project_site_id=target.project_site_id,
+        run_id=target.run_id,
+        page_id=target.page_id,
+        target_check_id=None,
+        is_test=True,
+    )
+    subject, body = build_monitoring_notification_message(payload)
+    return {
+        "subscription": _serialize_monitoring_subscription(subscription),
+        "target": _serialize_monitoring_target(target),
+        "subject": subject,
+        "body": body,
+        "payload": payload,
+    }
+
+
+@router.post("/monitoring-subscriptions/{subscription_id}/preview")
+def preview_monitoring_target_subscription(
+    subscription_id: int,
+    payload: PreviewMonitoringTargetSubscriptionIn | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    subscription, target = _get_subscription_with_target_for_write(
+        db,
+        subscription_id=subscription_id,
+        current_user=current_user,
+    )
+    preview_status = (payload.status if payload else "not_checkable") or "not_checkable"
+    return _monitoring_subscription_preview_payload(subscription=subscription, target=target, status=preview_status)
+
+
+@router.post("/monitoring-subscriptions/{subscription_id}/test-send")
+def test_send_monitoring_target_subscription(
+    subscription_id: int,
+    payload: PreviewMonitoringTargetSubscriptionIn | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects.edit")),
+):
+    subscription, target = _get_subscription_with_target_for_write(
+        db,
+        subscription_id=subscription_id,
+        current_user=current_user,
+    )
+    preview_status = (payload.status if payload else "not_checkable") or "not_checkable"
+    preview = _monitoring_subscription_preview_payload(subscription=subscription, target=target, status=preview_status)
+    check = PageMonitoringTargetCheck(
+        target_id=target.id,
+        project_id=target.project_id,
+        project_site_id=target.project_site_id,
+        run_id=target.run_id,
+        page_id=target.page_id,
+        status=preview["payload"]["status"],
+        message="Тестовая проверка для проверки доставки уведомления.",
+        result_json={"status": preview["payload"]["status"], "message": preview["payload"]["message"], "is_test": True},
+    )
+    db.add(check)
+    db.flush()
+    preview["payload"]["target_check_id"] = check.id
+    row = PageMonitoringNotificationOutbox(
+        subscription_id=subscription.id,
+        target_id=target.id,
+        target_check_id=check.id,
+        project_id=target.project_id,
+        channel_type=subscription.channel_type,
+        destination=subscription.destination,
+        event_status=preview["payload"]["status"],
+        delivery_status="queued",
+        attempts=0,
+        max_attempts=monitoring_notification_max_attempts(),
+        next_attempt_at=None,
+        payload_json=preview["payload"],
+        last_error="",
+    )
+    db.add(row)
+    db.flush()
+    deliver_outbox_row(db, row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": row.delivery_status == "sent",
+        "preview": {key: preview[key] for key in ("subject", "body", "payload")},
+        "outbox": _serialize_monitoring_outbox(row),
+    }
+
+
+@router.get("/monitoring-targets/{target_id}/notification-outbox")
+def list_monitoring_target_notification_outbox(
+    target_id: int,
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("data.view")),
+):
+    target = db.get(PageMonitoringTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Monitoring target not found")
+    require_project_read(db, project_id=target.project_id, user=current_user)
+    rows = (
+        db.query(PageMonitoringNotificationOutbox)
+        .filter(PageMonitoringNotificationOutbox.target_id == target_id)
+        .order_by(PageMonitoringNotificationOutbox.created_at.desc(), PageMonitoringNotificationOutbox.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return {"items": [_serialize_monitoring_outbox(row) for row in rows], "total": len(rows)}
+
+
+@router.post("/monitoring-targets/{target_id}/check")
+def check_monitoring_target(
+    target_id: int,
+    run_id: int | None = Query(default=None),
+    url: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("data.view")),
+):
+    target = db.get(PageMonitoringTarget, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Monitoring target not found")
+    require_project_read(db, project_id=target.project_id, user=current_user)
+    query = db.query(Page)
+    if run_id is not None:
+        query = query.filter(Page.run_id == run_id)
+    else:
+        query = query.filter(Page.run_id == target.run_id)
+    query = query.filter(Page.url == (url or target.page_url))
+    page = query.first()
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found for target check")
+    run = db.get(Run, page.run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    require_project_read(db, project_id=run.project_id, user=current_user)
+    evaluation = _evaluate_monitoring_target_on_page(target, page)
+    return {
+        "target": _serialize_monitoring_target(target),
+        "checked_run_id": run.id,
+        "checked_page_id": page.id,
+        "checked_url": page.url,
+        **evaluation,
+    }
+
+
 @router.post("/{run_id}/consent-audit")
 def create_page_consent_audit(
     run_id: int,
@@ -2112,6 +3066,21 @@ def create_page_consent_audit(
     page = db.query(Page).filter(Page.run_id == run_id, Page.url == url).first()
     if not page:
         raise HTTPException(status_code=404, detail="Page not found in this run")
+    audit_row = PageConsentAudit(
+        project_id=run.project_id,
+        project_site_id=run.project_site_id,
+        run_id=run.id,
+        page_id=page.id,
+        crawl_persona_id=run.crawl_persona_id,
+        created_by_user_id=current_user.id,
+        status="RUNNING",
+        source="stored_html_live_scripts",
+        requested_at=datetime.utcnow(),
+        started_at=datetime.utcnow(),
+    )
+    db.add(audit_row)
+    db.commit()
+    db.refresh(audit_row)
     persona_browser_state = None
     persona = db.get(CrawlPersona, run.crawl_persona_id) if run.crawl_persona_id else None
     if persona and persona.has_secrets and persona.encrypted_session_bundle:
@@ -2121,6 +3090,11 @@ def create_page_consent_audit(
                 document_url=page.final_url or page.url,
             )
         except ValueError as exc:
+            audit_row.status = "FAILED"
+            audit_row.error_code = "persona_session_unavailable"
+            audit_row.error_message = "Сессию выбранной персоны не удалось расшифровать."
+            audit_row.completed_at = datetime.utcnow()
+            db.commit()
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -2129,10 +3103,28 @@ def create_page_consent_audit(
                 },
             ) from exc
     try:
-        return run_consent_audit(page, persona_browser_state=persona_browser_state)
+        result = run_consent_audit(page, persona_browser_state=persona_browser_state)
+        audit_row.status = "COMPLETED"
+        audit_row.result_json = result
+        audit_row.error_code = None
+        audit_row.error_message = None
+        audit_row.completed_at = datetime.utcnow()
+        db.commit()
+        db.refresh(audit_row)
+        return _serialize_consent_audit(audit_row)
     except ValueError as exc:
+        audit_row.status = "FAILED"
+        audit_row.error_code = "invalid_page"
+        audit_row.error_message = str(exc)
+        audit_row.completed_at = datetime.utcnow()
+        db.commit()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
+        audit_row.status = "FAILED"
+        audit_row.error_code = "browser_audit_failed"
+        audit_row.error_message = "Не удалось выполнить browser-аудит consent."
+        audit_row.completed_at = datetime.utcnow()
+        db.commit()
         raise HTTPException(
             status_code=503,
             detail=(
@@ -2140,3 +3132,33 @@ def create_page_consent_audit(
                 "и повторите попытку."
             ),
         ) from exc
+
+
+@router.get("/{run_id}/consent-audits")
+def list_page_consent_audits(
+    run_id: int,
+    url: str = Query(min_length=1),
+    limit: int = Query(default=5, ge=1, le=20),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("data.view")),
+):
+    run = db.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    require_project_read(db, project_id=run.project_id, user=current_user)
+    page = db.query(Page).filter(Page.run_id == run_id, Page.url == url).first()
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found in this run")
+    rows = (
+        db.query(PageConsentAudit)
+        .filter(PageConsentAudit.page_id == page.id)
+        .order_by(PageConsentAudit.requested_at.desc(), PageConsentAudit.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return {
+        "items": [_serialize_consent_audit(row) for row in rows],
+        "total": len(rows),
+        "queued_supported": False,
+        "queued_explanation": "Очередь consent-аудитов будет подключена после отдельного worker-контракта; текущие аудиты выполняются сразу по кнопке и сохраняются в истории.",
+    }

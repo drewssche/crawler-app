@@ -1,4 +1,4 @@
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type MouseEvent, type Ref, type UIEvent, useEffect, useRef, useState } from "react";
 import {
   createRenderedSnapshot,
   downloadRenderedSnapshot,
@@ -20,6 +20,8 @@ export default function RenderedSnapshotView({
   selectedElement,
   onElementSelected,
   onElementMiss,
+  scrollContainerRef,
+  onScroll,
 }: {
   runId: number;
   url: string;
@@ -31,6 +33,8 @@ export default function RenderedSnapshotView({
   selectedElement?: RenderedSnapshotElement | null;
   onElementSelected?: (element: RenderedSnapshotElement) => void;
   onElementMiss?: () => void;
+  scrollContainerRef?: Ref<HTMLDivElement>;
+  onScroll?: (event: UIEvent<HTMLDivElement>) => void;
 }) {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const [objectUrl, setObjectUrl] = useState("");
@@ -147,7 +151,11 @@ export default function RenderedSnapshotView({
       {!objectUrl && !error && <MetaText>Загружаем сохранённый снимок…</MetaText>}
       {error && <StatusText tone="danger">{error}</StatusText>}
       {objectUrl && (
-        <div className={`rendered-snapshot-scroll rendered-snapshot-${scale}${canPickElement ? " rendered-snapshot-picker-enabled" : ""}`}>
+        <div
+          ref={scrollContainerRef}
+          onScroll={onScroll}
+          className={`rendered-snapshot-scroll rendered-snapshot-${scale}${canPickElement ? " rendered-snapshot-picker-enabled" : ""}`}
+        >
           <div className="rendered-snapshot-image-wrap">
             <img
               ref={imageRef}

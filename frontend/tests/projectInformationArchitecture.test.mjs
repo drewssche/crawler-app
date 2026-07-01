@@ -21,6 +21,8 @@ const quotaErrorsSource = await readFile(new URL("../src/utils/quotaErrors.ts", 
 const cssSource = await readFile(new URL("../src/index.css", import.meta.url), "utf8");
 const renderedSnapshotSource = await readFile(new URL("../src/components/projects/RenderedSnapshotView.tsx", import.meta.url), "utf8");
 const highlightedTextSource = await readFile(new URL("../src/components/ui/HighlightedText.tsx", import.meta.url), "utf8");
+const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+const monitoringTargetsSource = await readFile(new URL("../src/api/monitoringTargets.ts", import.meta.url), "utf8");
 
 test("project page exposes the consolidated three-tab information architecture", () => {
   for (const label of ["Основная", "История", "Настройки"]) {
@@ -35,14 +37,79 @@ test("project page exposes the consolidated three-tab information architecture",
   );
 });
 
+test("heavy workspace pages stay behind lazy route chunks", () => {
+  assert.match(appSource, /const ProjectDashboardPage = lazy\(\(\) => import\("\.\/pages\/ProjectDashboardPage"\)\)/);
+  assert.match(appSource, /const ComparePage = lazy\(\(\) => import\("\.\/pages\/ComparePage"\)\)/);
+  assert.match(appSource, /const PageInspectorPage = lazy\(\(\) => import\("\.\/pages\/PageInspectorPage"\)\)/);
+  assert.match(appSource, /function LazyRoute/);
+  assert.doesNotMatch(appSource, /import ProjectDashboardPage from "\.\/pages\/ProjectDashboardPage"/);
+  assert.doesNotMatch(appSource, /import ComparePage from "\.\/pages\/ComparePage"/);
+  assert.doesNotMatch(appSource, /import PageInspectorPage from "\.\/pages\/PageInspectorPage"/);
+});
+
 test("main tab keeps minimal project workspace without duplicate summary blocks", () => {
   assert.match(source, /activeTab === "main"/);
   assert.match(source, /Структура сайта/);
+  assert.match(source, /Цели мониторинга/);
   assert.match(source, /ProjectSiteContextCards/);
   assert.doesNotMatch(source, /Рабочая сводка/);
   assert.doesNotMatch(source, /Показатели последнего прогона/);
   assert.doesNotMatch(source, /Контекст просмотра структуры и истории/);
   assert.doesNotMatch(source, /Если ничего не менять, crawler пойдёт/);
+});
+
+test("project page exposes saved monitoring targets with latest status and lazy history", () => {
+  assert.match(source, /listProjectMonitoringTargets/);
+  assert.match(source, /listMonitoringTargetChecks/);
+  assert.match(source, /updateMonitoringTarget/);
+  assert.match(source, /deleteMonitoringTarget/);
+  assert.match(source, /selectedSiteMonitoringTargets/);
+  assert.match(source, /monitoringTargetStatusMeta/);
+  assert.match(source, /На месте/);
+  assert.match(source, /Изменился/);
+  assert.match(source, /Не найден/);
+  assert.match(source, /Ждёт прогона/);
+  assert.match(source, /История проверок/);
+  assert.match(source, /loadTargetChecks\(target\.id\)/);
+  assert.match(source, /Переименовать/);
+  assert.match(source, /Пауза/);
+  assert.match(source, /Удалить цель мониторинга/);
+  assert.match(source, /handleToggleMonitoringTarget/);
+  assert.match(source, /handleDeleteMonitoringTarget/);
+  assert.match(source, /Уведомления/);
+  assert.match(source, /Добавить канал/);
+  assert.match(source, /Telegram/);
+  assert.match(source, /Последние доставки/);
+  assert.match(source, /Следующая попытка/);
+  assert.match(source, /Остановлено/);
+  assert.match(source, /Диагностика доставки целей мониторинга/);
+  assert.match(source, /notificationDiagnostics/);
+  assert.match(source, /Email \{notificationDiagnostics\.smtp_configured \? "готов" : "не настроен"\}/);
+  assert.match(source, /Telegram \{notificationDiagnostics\.telegram_configured \? "готов" : "не настроен"\}/);
+  assert.match(source, /Готовы к повтору/);
+  assert.match(source, /Ждут backoff/);
+  assert.match(source, /Остановлены/);
+  assert.match(source, /handlePreviewSubscription/);
+  assert.match(source, /handleTestSendSubscription/);
+  assert.match(source, /Preview сообщения/);
+  assert.match(source, /Тестовое уведомление отправлено/);
+  assert.match(source, /loadTargetSubscriptions/);
+  assert.match(source, /handleCreateSubscription/);
+  assert.match(source, /handleToggleSubscription/);
+  assert.match(monitoringTargetsSource, /latest_check/);
+  assert.match(monitoringTargetsSource, /apiPatch/);
+  assert.match(monitoringTargetsSource, /apiDelete/);
+  assert.match(monitoringTargetsSource, /MonitoringTargetSubscription/);
+  assert.match(monitoringTargetsSource, /telegram_chat/);
+  assert.match(monitoringTargetsSource, /createMonitoringTargetSubscription/);
+  assert.match(monitoringTargetsSource, /listMonitoringTargetNotificationOutbox/);
+  assert.match(monitoringTargetsSource, /next_attempt_at/);
+  assert.match(monitoringTargetsSource, /getMonitoringNotificationDiagnostics/);
+  assert.match(monitoringTargetsSource, /MonitoringNotificationDiagnostics/);
+  assert.match(monitoringTargetsSource, /previewMonitoringTargetSubscription/);
+  assert.match(monitoringTargetsSource, /testSendMonitoringTargetSubscription/);
+  assert.match(monitoringTargetsSource, /\/runs\/monitoring-subscriptions\/\$\{subscriptionId\}\/test-send/);
+  assert.match(monitoringTargetsSource, /\/runs\/monitoring-targets\/\$\{targetId\}\/checks/);
 });
 
 test("project disclosure blocks persist collapsed state locally", () => {
@@ -308,6 +375,14 @@ test("compare visual mode uses a full focus workspace and persisted rendered sna
   assert.match(compareSource, /Визуально/);
   assert.match(compareSource, /Обзор/);
   assert.match(compareSource, /Детально/);
+  assert.match(compareSource, /Скролл связан/);
+  assert.match(compareSource, /Скролл отдельно/);
+  assert.match(compareSource, /handleSyncedCompareScroll/);
+  assert.match(compareSource, /COMPARE_SYNC_SCROLL_STORAGE_KEY/);
+  assert.match(compareSource, /COMPARE_WORKSPACE_HEIGHT_STORAGE_KEY/);
+  assert.match(compareSource, /Компактно/);
+  assert.match(compareSource, /Удобно/);
+  assert.match(compareSource, /Высоко/);
   assert.match(compareSource, /Выбрать блоки/);
   assert.match(compareSource, /Блоки: \{selectedBlockCount\}\/2/);
   assert.match(compareSource, /Очистить оба блока/);
@@ -323,6 +398,12 @@ test("compare visual mode uses a full focus workspace and persisted rendered sna
   assert.match(compareSource, /Применить \{sideLabel\(suggestion\.side\)\}/);
   assert.match(compareSource, /selectedBlockCount === 1/);
   assert.match(compareSource, /Сравнение выбранных блоков/);
+  assert.match(compareSource, /createMonitoringTarget/);
+  assert.match(compareSource, /checkMonitoringTarget/);
+  assert.match(compareSource, /saveMonitoringTarget/);
+  assert.match(compareSource, /checkSavedMonitoringTarget/);
+  assert.match(compareSource, /Сохранить цель/);
+  assert.match(compareSource, /Проверить цель/);
   assert.match(compareSource, /HTML выбранных блоков/);
   assert.match(compareSource, /Текстовый diff выбранных блоков/);
   assert.match(compareSource, /buildBlockFingerprint/);
@@ -333,6 +414,9 @@ test("compare visual mode uses a full focus workspace and persisted rendered sna
   assert.match(compareSource, /разные HTML-теги/);
   assert.match(cssSource, /compare-block-diff/);
   assert.match(cssSource, /compare-fingerprint-table/);
+  assert.match(cssSource, /--compare-workspace-height/);
+  assert.match(cssSource, /is-height-compact/);
+  assert.match(cssSource, /is-height-tall/);
   assert.match(compareSource, /value: "both", label: "Обе"/);
   assert.match(compareSource, /value: "left", label: "Левая"/);
   assert.match(compareSource, /value: "right", label: "Правая"/);
@@ -417,8 +501,11 @@ test("sidebars support compact workspace and event-center view modes", () => {
 
 test("page inspector exposes on-demand runtime consent audit", () => {
   assert.match(reportSource, /createConsentAudit/);
+  assert.match(reportSource, /listConsentAudits/);
   assert.match(reportSource, /Browser-аудит до\/после согласия/);
   assert.match(reportSource, /Проверить до\/после/);
+  assert.match(reportSource, /История browser-аудитов/);
+  assert.match(reportSource, /consent-audit-history-row/);
   assert.match(reportSource, /До согласия/);
   assert.match(reportSource, /После согласия/);
   assert.match(reportSource, /Новые cookies/);

@@ -135,6 +135,13 @@ export function getPageContext(runId: number, url: string): Promise<PageContext>
 }
 
 export type ConsentAuditResult = {
+  id?: number;
+  status?: "COMPLETED" | "FAILED" | "RUNNING" | "QUEUED";
+  requested_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
   runtime_audit: "completed";
   audited_at: string;
   source: "stored_html_live_scripts";
@@ -173,6 +180,27 @@ export type ConsentAuditResult = {
 
 export function createConsentAudit(runId: number, url: string): Promise<ConsentAuditResult> {
   return apiPost<ConsentAuditResult>(`/runs/${runId}/consent-audit?url=${encodeURIComponent(url)}`, {});
+}
+
+export type ConsentAuditRecord = Partial<ConsentAuditResult> & {
+  id: number;
+  status: "COMPLETED" | "FAILED" | "RUNNING" | "QUEUED";
+  requested_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+};
+
+export type ConsentAuditHistory = {
+  items: ConsentAuditRecord[];
+  total: number;
+  queued_supported: boolean;
+  queued_explanation: string;
+};
+
+export function listConsentAudits(runId: number, url: string, limit = 5): Promise<ConsentAuditHistory> {
+  return apiGet<ConsentAuditHistory>(`/runs/${runId}/consent-audits?url=${encodeURIComponent(url)}&limit=${limit}`);
 }
 
 export type RetryPagesResult = {

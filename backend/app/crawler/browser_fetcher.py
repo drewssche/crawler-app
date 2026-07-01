@@ -7,6 +7,8 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
+from app.crawler.renderer import RenderedSnapshotArtifact, capture_live_browser_page_snapshot
+
 
 class BrowserCrawlerError(RuntimeError):
     def __init__(self, code: str, user_message: str, *, technical_message: str = ""):
@@ -48,6 +50,7 @@ class BrowserFetchResponse:
     headers: dict[str, str]
     text: str
     history: list[Any]
+    rendered_snapshot_artifact: RenderedSnapshotArtifact | None = None
 
 
 class BrowserPersonaClient:
@@ -131,6 +134,11 @@ class BrowserPersonaClient:
                 pass
             final_url = page.url
             html = page.content()
+            rendered_snapshot_artifact = None
+            try:
+                rendered_snapshot_artifact = capture_live_browser_page_snapshot(page)
+            except Exception:
+                rendered_snapshot_artifact = None
             status_code = int(response.status) if response is not None else 0
             headers = {str(key).lower(): str(value) for key, value in (response.headers if response is not None else {}).items()}
             if "content-type" not in headers and _looks_like_html_url(final_url):
@@ -141,6 +149,7 @@ class BrowserPersonaClient:
                 headers=headers,
                 text=html,
                 history=[],
+                rendered_snapshot_artifact=rendered_snapshot_artifact,
             )
         finally:
             page.close()
