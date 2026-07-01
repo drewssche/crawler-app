@@ -6,6 +6,7 @@ import time
 from app.api.runs import process_next_worker_job
 from app.db.session import SessionLocal
 from app.services.crawler_jobs import crawler_worker_enabled
+from app.services.project_schedules import run_due_schedules
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,24 @@ def crawler_worker_tick_limit() -> int:
     return _bounded_int_env("CRAWLER_WORKER_TICK_LIMIT", default=0, minimum=0, maximum=1_000_000)
 
 
+def crawler_schedules_enabled() -> bool:
+    return os.getenv("CRAWLER_SCHEDULES_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def crawler_schedule_poll_seconds() -> float:
+    return _bounded_float_env("CRAWLER_SCHEDULE_POLL_SECONDS", default=30.0, minimum=5.0, maximum=3600.0)
+
+
+def maybe_run_due_schedules(db, *, last_schedule_check_at: float, now_monotonic: float) -> tuple[float, dict | None]:
+    if not crawler_schedules_enabled():
+        return last_schedule_check_at, None
+    interval = crawler_schedule_poll_seconds()
+    if last_schedule_check_at > 0 and now_monotonic - last_schedule_check_at < interval:
+        return last_schedule_check_at, None
+    result = run_due_schedules(db)
+    return now_monotonic, result
+
+
 def run_worker_loop() -> int:
     if not crawler_worker_enabled():
         logger.error("CRAWLER_WORKER_ENABLED is not enabled; refusing to start crawler worker loop.")
@@ -57,11 +76,29 @@ def run_worker_loop() -> int:
 
     poll_seconds = crawler_worker_poll_seconds()
     tick_limit = crawler_worker_tick_limit()
+    last_schedule_check_at = 0.0
     ticks = 0
-    logger.info("crawler worker loop started poll_seconds=%s tick_limit=%s", poll_seconds, tick_limit or "unlimited")
+    logger.info(
+        "crawler worker loop started poll_seconds=%s tick_limit=%s schedules=%s schedule_poll_seconds=%s",
+        poll_seconds,
+        tick_limit or "unlimited",
+        "enabled" if crawler_schedules_enabled() else "disabled",
+        crawler_schedule_poll_seconds(),
+    )
 
     while not stop_requested:
         with SessionLocal() as db:
+            last_schedule_check_at, schedule_result = maybe_run_due_schedules(
+                db,
+                last_schedule_check_at=last_schedule_check_at,
+                now_monotonic=time.monotonic(),
+            )
+            if schedule_result and schedule_result.get("checked"):
+                logger.info(
+                    "crawler worker checked due schedules checked=%s results=%s",
+                    schedule_result.get("checked"),
+                    schedule_result.get("results"),
+                )
             result = process_next_worker_job(db)
         ticks += 1
         if result.get("processed"):

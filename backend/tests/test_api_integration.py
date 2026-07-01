@@ -4686,3 +4686,51 @@ def test_due_project_schedule_skips_when_project_has_active_job():
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
     engine.dispose()
+
+
+def test_worker_schedule_tick_enqueues_due_project_schedule(monkeypatch):
+    from app.worker.crawler_worker import maybe_run_due_schedules
+
+    engine, SessionLocal = _get_session_factory()
+    app.router.on_startup.clear()
+    app.router.on_shutdown.clear()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    monkeypatch.setenv("CRAWLER_SCHEDULES_ENABLED", "true")
+    monkeypatch.setenv("CRAWLER_SCHEDULE_POLL_SECONDS", "30")
+
+    with SessionLocal() as db:
+        db.add(_make_user(email="schedule-worker@test.local", role="admin", is_approved=True))
+        project = Project(name="Worker due schedule", start_url="https://worker-schedule.test")
+        db.add(project)
+        db.flush()
+        _grant_project_role_by_email(db, project, "schedule-worker@test.local")
+        site = _add_primary_site(db, project)
+        due_at = datetime.utcnow() - timedelta(minutes=1)
+        db.add(
+            ProjectSchedule(
+                project_id=project.id,
+                is_enabled=True,
+                frequency="daily",
+                time_of_day="09:00",
+                timezone="UTC",
+                next_run_at=due_at,
+            )
+        )
+        db.commit()
+        site_id = site.id
+
+    with SessionLocal() as db:
+        last_checked, result = maybe_run_due_schedules(db, last_schedule_check_at=0.0, now_monotonic=100.0)
+        assert last_checked == 100.0
+        assert result is not None
+        assert result["checked"] == 1
+
+    with SessionLocal() as db:
+        assert db.query(CrawlerRunJob).filter(CrawlerRunJob.project_site_id == site_id).count() == 1
+        last_checked, skipped = maybe_run_due_schedules(db, last_schedule_check_at=100.0, now_monotonic=110.0)
+        assert last_checked == 100.0
+        assert skipped is None
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
