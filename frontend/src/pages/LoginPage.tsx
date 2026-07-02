@@ -23,11 +23,9 @@ export default function LoginPage() {
   const location = useLocation();
   const { login, adminPasswordLogin, passwordLogin, verifyCode } = useAuth();
 
-  const [tab, setTab] = useState<AuthTab>("request");
+  const [tab, setTab] = useState<AuthTab>("signin");
   const [email, setEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
-  const [useAdminPassword, setUseAdminPassword] = useState(false);
-  const [usePassword, setUsePassword] = useState(false);
   const [challengeId, setChallengeId] = useState<number | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -94,16 +92,26 @@ export default function LoginPage() {
       const normalizedEmail = validateEmailOrThrow(email);
       setEmail(normalizedEmail);
 
-      if (tab === "signin" && useAdminPassword) {
-        await adminPasswordLogin(normalizedEmail, adminPassword);
-        navigate(redirectTo, { replace: true });
-        return;
-      }
-
-      if (tab === "signin" && usePassword) {
-        await passwordLogin(normalizedEmail, adminPassword);
-        navigate(redirectTo, { replace: true });
-        return;
+      const password = adminPassword.trim();
+      if (tab === "signin" && password) {
+        let adminLoginError: unknown = null;
+        if (ADMIN_PASSWORD_LOGIN_ENABLED) {
+          try {
+            await adminPasswordLogin(normalizedEmail, password);
+            navigate(redirectTo, { replace: true });
+            return;
+          } catch (err) {
+            adminLoginError = err;
+          }
+        }
+        if (PASSWORD_LOGIN_ENABLED) {
+          await passwordLogin(normalizedEmail, password);
+          navigate(redirectTo, { replace: true });
+          return;
+        }
+        if (adminLoginError) {
+          throw adminLoginError;
+        }
       }
 
       if (tab === "request") {
@@ -162,8 +170,6 @@ export default function LoginPage() {
             setChallengeId(null);
             setCode("");
             setAdminPassword("");
-            setUseAdminPassword(false);
-            setUsePassword(false);
             setError("");
             setMessage("");
           }}
@@ -182,56 +188,15 @@ export default function LoginPage() {
               style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
             />
 
-            {isSignIn && PASSWORD_LOGIN_ENABLED && (
-              <label style={{ display: "grid", gap: 8, fontSize: 13, opacity: 0.9 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={usePassword}
-                    onChange={(e) => {
-                      setUsePassword(e.target.checked);
-                      if (e.target.checked) setUseAdminPassword(false);
-                    }}
-                  />
-                  {"Войти по временному паролю"}
-                </span>
-                {usePassword && (
-                  <input
-                    value={adminPassword}
-                    onChange={(e) => setAdminPassword(e.target.value)}
-                    placeholder={"Временный пароль"}
-                    type="password"
-                    autoComplete="current-password"
-                    style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
-                  />
-                )}
-              </label>
-            )}
-
-            {isSignIn && ADMIN_PASSWORD_LOGIN_ENABLED && (
-              <label style={{ display: "grid", gap: 8, fontSize: 13, opacity: 0.9 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={useAdminPassword}
-                    onChange={(e) => {
-                      setUseAdminPassword(e.target.checked);
-                      if (e.target.checked) setUsePassword(false);
-                    }}
-                  />
-                  {"Войти как root-admin по паролю из env"}
-                </span>
-                {useAdminPassword && (
-                  <input
-                    value={adminPassword}
-                    onChange={(e) => setAdminPassword(e.target.value)}
-                    placeholder={"Пароль root-admin"}
-                    type="password"
-                    autoComplete="current-password"
-                    style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
-                  />
-                )}
-              </label>
+            {isSignIn && (ADMIN_PASSWORD_LOGIN_ENABLED || PASSWORD_LOGIN_ENABLED) && (
+              <input
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                placeholder={"Пароль"}
+                type="password"
+                autoComplete="current-password"
+                style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
+              />
             )}
 
             {error && <div style={{ color: "#d55", fontSize: 13 }}>{error}</div>}

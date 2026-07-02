@@ -111,6 +111,7 @@
   - [ ] после подключения SMTP основной сценарий остаётся email-code + approve/invite, временные пароли можно отключить env-флагом.
   - [ ] beta HTTPS hardening: `crawler-app.duckdns.org` поднят через nginx/Docker, но Let’s Encrypt certbot периодически падает на DNS timeout/SERVFAIL DuckDNS during secondary validation; повторить выпуск после стабилизации DNS, а при повторении проблемы перейти на стабильный DNS-провайдер/домен (например Cloudflare) и обновить deploy guide.
   - [ ] security follow-up: текущий beta fallback использует один `ADMIN_PASSWORD` для всех email из `ADMIN_EMAILS`; перед публичной beta решить, оставляем ли это как break-glass только для root-admin или переходим на персональные временные пароли/invite для каждого root-admin.
+  - [ ] cleanup follow-up: временный пароль оставить только как краткосрочный beta fallback без отдельного UI-чекбокса; после настройки нормального invite/email-code flow удалить temporary-password endpoint, генерацию и env-флаг из проекта.
 
 - [ ] **Post-review UX cleanup wave** (`P1`, screenshots 2026-07-02).
   Цель: минималистичный friendly UX без дублирующих подсказок, сломанных native selects и повторных уведомлений после навигации. Browser-smoke остаётся только по явному запросу пользователя.
