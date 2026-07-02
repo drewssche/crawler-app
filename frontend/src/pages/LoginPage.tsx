@@ -15,8 +15,6 @@ type RequestAccessResponse = {
 };
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const ADMIN_EMAILS_RAW = String(import.meta.env.VITE_ADMIN_EMAILS ?? "").trim();
-const DEFAULT_ADMIN_EMAIL = ADMIN_EMAILS_RAW.split(",").map((x) => x.trim()).filter(Boolean)[0] ?? "";
 const ADMIN_PASSWORD_LOGIN_ENABLED = String(import.meta.env.VITE_ADMIN_PASSWORD_LOGIN_ENABLED ?? "").trim().toLowerCase() === "true";
 const PASSWORD_LOGIN_ENABLED = String(import.meta.env.VITE_PASSWORD_LOGIN_ENABLED ?? "").trim().toLowerCase() === "true";
 
@@ -26,7 +24,7 @@ export default function LoginPage() {
   const { login, adminPasswordLogin, passwordLogin, verifyCode } = useAuth();
 
   const [tab, setTab] = useState<AuthTab>("request");
-  const [email, setEmail] = useState(DEFAULT_ADMIN_EMAIL);
+  const [email, setEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [useAdminPassword, setUseAdminPassword] = useState(false);
   const [usePassword, setUsePassword] = useState(false);
@@ -168,9 +166,6 @@ export default function LoginPage() {
             setUsePassword(false);
             setError("");
             setMessage("");
-            if (nextTab === "signin" && DEFAULT_ADMIN_EMAIL) {
-              setEmail(DEFAULT_ADMIN_EMAIL);
-            }
           }}
           options={[
             { value: "signin", label: "\u0412\u0445\u043e\u0434" },
@@ -183,7 +178,7 @@ export default function LoginPage() {
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder={isSignIn ? (DEFAULT_ADMIN_EMAIL || "Email \u0434\u043b\u044f \u0432\u0445\u043e\u0434\u0430") : "\u0412\u0430\u0448 \u0440\u0430\u0431\u043e\u0447\u0438\u0439 email"}
+              placeholder={isSignIn ? "Email \u0434\u043b\u044f \u0432\u0445\u043e\u0434\u0430" : "\u0412\u0430\u0448 \u0440\u0430\u0431\u043e\u0447\u0438\u0439 email"}
               style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
             />
 
