@@ -21,3 +21,4 @@ from .admin_audit_log import AdminAuditLog  # noqa: F401
 from .event_feed import EventFeed  # noqa: F401
 from .event_user_state import EventUserState  # noqa: F401
 from .login_history import LoginHistory  # noqa: F401
+from .access_invite import AccessInvite  # noqa: F401

@@ -26,6 +26,58 @@ docker compose up -d --build
 - Backend health: `http://localhost:8000/health`
 - Prometheus: `http://localhost:9090`
 
+## Beta deploy и доступы
+
+Пошаговый server guide: [`docs/BETA_DEPLOY_DUCKDNS.md`](docs/BETA_DEPLOY_DUCKDNS.md).
+
+Для beta на собственном сервере/DuckDNS держим две гарантии:
+
+- root-admin из env всегда может попасть в приложение после деплоя;
+- остальные пользователи получают доступ через заявку или одноразовую invite-ссылку.
+
+Минимальный server env:
+
+```env
+APP_ENV=beta
+PUBLIC_APP_URL=https://crawler-app.duckdns.org
+SECRET_KEY=replace-with-long-random-secret
+
+ADMIN_EMAILS=you@example.com
+EMERGENCY_ROOT_ADMIN_EMAIL=backup@example.com
+ADMIN_PASSWORD=replace-with-strong-admin-password
+AUTH_ADMIN_PASSWORD_LOGIN_ENABLED=true
+AUTH_PASSWORD_LOGIN_ENABLED=true
+AUTH_DEV_SHOW_CODE=false
+
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=...
+SMTP_PASSWORD=...
+SMTP_FROM=...
+SMTP_USE_TLS=true
+
+VITE_ADMIN_EMAILS=you@example.com
+VITE_ADMIN_PASSWORD_LOGIN_ENABLED=true
+VITE_PASSWORD_LOGIN_ENABLED=true
+```
+
+Как это работает:
+
+- `ADMIN_EMAILS` и `EMERGENCY_ROOT_ADMIN_EMAIL` принудительно дают root-admin права указанным email.
+- `ADMIN_PASSWORD` создаёт env-admin пользователя при старте backend.
+- `AUTH_ADMIN_PASSWORD_LOGIN_ENABLED=true` включает аварийный парольный вход только для email из root-admin env списка.
+- `AUTH_PASSWORD_LOGIN_ENABLED=true` включает временный beta-вход по паролю для подтверждённых пользователей. Admin/root-admin может сгенерировать пароль в карточке пользователя и передать его вручную.
+- Основной вход пользователей остаётся через email-код.
+- Если новый человек сам нажал `Запрос доступа`, admin/root-admin подтверждает его в `Пользователи`.
+- Если admin/root-admin создаёт invite в `Пользователи`, человек получает ссылку `/invite/:token`, подтверждает email-кодом и сразу получает заданную роль.
+
+Для публичной beta рекомендуется дополнительно закрыть индексацию:
+
+```text
+robots.txt: User-agent: * / Disallow: /
+X-Robots-Tag: noindex, nofollow
+```
+
 Остановить без удаления данных:
 
 ```bash

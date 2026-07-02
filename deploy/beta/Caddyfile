@@ -1,0 +1,21 @@
+{$BETA_DOMAIN} {
+  encode zstd gzip
+
+  header {
+    X-Robots-Tag "noindex, nofollow, noarchive"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "same-origin"
+  }
+
+  handle_path /api/* {
+    reverse_proxy backend:8000
+  }
+
+  handle /health {
+    reverse_proxy backend:8000
+  }
+
+  handle {
+    reverse_proxy frontend:80
+  }
+}

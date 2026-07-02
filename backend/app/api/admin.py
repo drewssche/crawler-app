@@ -1,5 +1,8 @@
 import os
 import logging
+import hashlib
+import secrets
+import string
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
@@ -25,9 +28,13 @@ from app.core.metrics import increment_counter
 from app.core.monitoring_cache import invalidate_cache_prefix
 from app.core.observability import log_business_event
 from app.core.security import (
+    _get_secret_key,
     get_user_role,
+    hash_password,
     require_permission,
 )
+from app.core.utils import send_plain_email
+from app.db.models.access_invite import AccessInvite
 from app.core.trust_policies import trust_policy_catalog_payload
 from app.db.models.login_history import LoginHistory
 from app.db.models.admin_audit_log import AdminAuditLog
@@ -141,6 +148,17 @@ class MonitoringSettingsIn(BaseModel):
     crit_error_rate: float
 
 
+class CreateInviteIn(BaseModel):
+    email: str
+    role: Literal["viewer", "editor", "admin"] = "viewer"
+    expires_days: int = 7
+    send_email: bool = True
+
+
+class GenerateUserPasswordIn(BaseModel):
+    reason: str | None = None
+
+
 class TrustedDeviceRevokeIn(BaseModel):
     reason: str | None = None
 
@@ -152,6 +170,48 @@ class TrustedDeviceRevokeExceptIn(BaseModel):
 
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _hash_invite_token(token: str) -> str:
+    return hashlib.sha256(f"invite:{token}:{_get_secret_key()}".encode("utf-8")).hexdigest()
+
+
+def _public_app_url(request: Request) -> str:
+    configured = os.getenv("PUBLIC_APP_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    scheme = forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}".rstrip("/")
+
+
+def _serialize_invite(invite: AccessInvite, *, link: str | None = None) -> dict:
+    status = "active"
+    now = _utc_now_naive()
+    if invite.revoked_at is not None:
+        status = "revoked"
+    elif invite.accepted_at is not None:
+        status = "accepted"
+    elif invite.expires_at < now:
+        status = "expired"
+    return {
+        "id": invite.id,
+        "email": invite.email,
+        "role": invite.role,
+        "status": status,
+        "created_at": invite.created_at.isoformat(),
+        "expires_at": invite.expires_at.isoformat(),
+        "sent_at": invite.sent_at.isoformat() if invite.sent_at else None,
+        "accepted_at": invite.accepted_at.isoformat() if invite.accepted_at else None,
+        "revoked_at": invite.revoked_at.isoformat() if invite.revoked_at else None,
+        "link": link,
+    }
+
+
+def _generate_temporary_password(length: int = 16) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 def _log_admin_action(
@@ -195,6 +255,144 @@ def _build_quota_overview_payload() -> dict:
         "source": "env:QUOTA_{ROLE}_...",
         "roles": roles,
     }
+
+
+@router.get("/invites")
+def list_invites(
+    request: Request,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_permission("users.manage")),
+):
+    safe_limit = max(1, min(int(limit or 20), 100))
+    invites = (
+        db.query(AccessInvite)
+        .order_by(AccessInvite.created_at.desc(), AccessInvite.id.desc())
+        .limit(safe_limit)
+        .all()
+    )
+    return success_response_payload(request, data={"items": [_serialize_invite(invite) for invite in invites]})
+
+
+@router.post("/invites")
+def create_invite(
+    payload: CreateInviteIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_permission("users.manage")),
+):
+    email = payload.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    if payload.role == "admin" and get_user_role(admin) != "root-admin":
+        raise HTTPException(status_code=403, detail="Only root-admin can invite admin users")
+
+    existing = db.query(User).filter(func.lower(User.email) == email).first()
+    if existing and existing.is_approved and not existing.is_deleted:
+        raise HTTPException(status_code=400, detail="User already has access")
+
+    token = secrets.token_urlsafe(32)
+    now = _utc_now_naive()
+    expires_days = max(1, min(int(payload.expires_days or 7), 30))
+    invite = AccessInvite(
+        email=email,
+        role=payload.role,
+        token_hash=_hash_invite_token(token),
+        created_by_user_id=admin.id,
+        created_at=now,
+        expires_at=now + timedelta(days=expires_days),
+        sent_at=None,
+        accepted_at=None,
+        revoked_at=None,
+    )
+    db.add(invite)
+    db.flush()
+
+    link = f"{_public_app_url(request)}/invite/{token}"
+    sent = False
+    if payload.send_email:
+        sent = send_plain_email(
+            email,
+            subject="Приглашение в Crawler App",
+            body=(
+                "Вас пригласили в Crawler App.\n\n"
+                f"Ссылка для входа: {link}\n"
+                f"Роль: {payload.role}\n"
+                f"Срок действия: {expires_days} дн.\n\n"
+                "После перехода по ссылке подтвердите вход кодом из письма."
+            ),
+        )
+        if sent:
+            invite.sent_at = now
+
+    _log_admin_action(
+        db,
+        request,
+        admin,
+        "create_invite",
+        target_user_id=existing.id if existing else None,
+        meta_json={"email": email, "role": payload.role, "expires_days": expires_days, "sent": sent},
+    )
+    db.commit()
+    db.refresh(invite)
+    return success_response_payload(
+        request,
+        data={**_serialize_invite(invite, link=link), "sent": sent},
+    )
+
+
+@router.post("/users/{user_id}/temporary-password")
+def generate_user_temporary_password(
+    user_id: int,
+    payload: GenerateUserPasswordIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_permission("users.manage")),
+):
+    if os.getenv("AUTH_PASSWORD_LOGIN_ENABLED", "false").lower() != "true":
+        raise HTTPException(status_code=404, detail="Password login is disabled")
+
+    user = db.get(User, user_id)
+    if not user or user.is_deleted:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.is_approved or user.is_blocked:
+        raise HTTPException(status_code=400, detail="Temporary password is available only for active approved users")
+    if user.email.lower() == admin.email.lower():
+        raise HTTPException(status_code=400, detail="Cannot generate temporary password for yourself")
+    if get_user_role(user) == "root-admin" and get_user_role(admin) != "root-admin":
+        raise HTTPException(status_code=403, detail="Only root-admin can manage root-admin credentials")
+    if user.role == "admin" and get_user_role(admin) != "root-admin":
+        raise HTTPException(status_code=403, detail="Only root-admin can manage admin credentials")
+
+    password = _generate_temporary_password()
+    user.hashed_password = hash_password(password)
+    user.token_version = int(user.token_version or 0) + 1
+    revoked = (
+        db.query(TrustedDevice)
+        .filter(TrustedDevice.user_id == user.id, TrustedDevice.revoked_at.is_(None))
+        .update({"revoked_at": _utc_now_naive()}, synchronize_session=False)
+    )
+    _log_admin_action(
+        db,
+        request,
+        admin,
+        "generate_temporary_password",
+        target_user_id=user.id,
+        meta_json={
+            "reason": (payload.reason or "").strip() or None,
+            "revoked_trusted_devices": int(revoked or 0),
+        },
+    )
+    db.commit()
+    return success_response_payload(
+        request,
+        data={
+            "ok": True,
+            "email": user.email,
+            "password": password,
+            "message": "Передайте пароль пользователю вручную. После настройки SMTP лучше вернуться к входу по email-коду.",
+        },
+    )
 
 
 def _calc_trusted_days_left(db: Session, user_id: int) -> float | None:
@@ -1253,9 +1451,16 @@ def approve_user(
         meta_json={"old_role": previous_role, "new_role": payload.role},
     )
     db.commit()
+    login_code_delivery = send_login_code_for_user(db, user)
     return success_response_payload(
         request,
-        data={"ok": True, "id": user.id, "role": user.role, "is_approved": user.is_approved},
+        data={
+            "ok": True,
+            "id": user.id,
+            "role": user.role,
+            "is_approved": user.is_approved,
+            "login_code_sent": bool(login_code_delivery.get("sent")),
+        },
     )
 
 
@@ -1322,6 +1527,15 @@ def bulk_users(
 
     if changed:
         db.commit()
+    if changed and payload.action == "approve":
+        for result in results:
+            if not result.get("ok"):
+                continue
+            target = user_map.get(int(result.get("user_id") or 0))
+            if not target:
+                continue
+            delivery = send_login_code_for_user(db, target)
+            result["login_code_sent"] = bool(delivery.get("sent"))
     increment_counter("admin_bulk_result_total", action=payload.action, changed=str(changed).lower())
 
     return success_response_payload(request, data={"ok": True, "results": results})

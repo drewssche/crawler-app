@@ -1,6 +1,6 @@
-﻿import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { apiPost, isAbortError } from "../api/client";
+import { apiGet, apiPost, isAbortError } from "../api/client";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import ClearableInput from "../components/ui/ClearableInput";
@@ -62,6 +62,19 @@ type ActionPayload = {
   reason?: string;
 };
 
+type AccessInvite = {
+  id: number;
+  email: string;
+  role: UserRole;
+  status: "active" | "accepted" | "expired" | "revoked" | string;
+  created_at: string;
+  expires_at: string;
+  sent_at?: string | null;
+  accepted_at?: string | null;
+  link?: string | null;
+  sent?: boolean;
+};
+
 const TXT = {
   title: "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0438",
   tabAll: "\u0412\u0441\u0435",
@@ -109,6 +122,11 @@ export default function UsersPage() {
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<UserRole>("viewer");
+  const [inviteSendEmail, setInviteSendEmail] = useState(true);
+  const [inviteLink, setInviteLink] = useState("");
+  const [invites, setInvites] = useState<AccessInvite[]>([]);
 
   const [actionCatalog, setActionCatalog] = useState<Record<BulkAction, ActionCatalogItem>>({} as Record<BulkAction, ActionCatalogItem>);
   const [trustPolicyCatalog, setTrustPolicyCatalog] = useState<Record<TrustPolicy, TrustPolicyCatalogItem>>({} as Record<TrustPolicy, TrustPolicyCatalogItem>);
@@ -290,6 +308,32 @@ export default function UsersPage() {
     });
   }
 
+  const loadInvites = useCallback(async () => {
+    const data = await apiGet<{ items: AccessInvite[] }>("/admin/invites?limit=8");
+    setInvites(data.items || []);
+  }, []);
+
+  async function createInvite(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    setMessage("");
+    setInviteLink("");
+    try {
+      const created = await apiPost<AccessInvite>("/admin/invites", {
+        email: inviteEmail.trim().toLowerCase(),
+        role: inviteRole,
+        expires_days: 7,
+        send_email: inviteSendEmail,
+      });
+      setInviteLink(created.link || "");
+      setMessage(created.sent ? "Приглашение создано и отправлено на email." : "Приглашение создано. Скопируйте ссылку вручную.");
+      setInviteEmail("");
+      await loadInvites();
+    } catch (e2) {
+      setError(normalizeError(e2));
+    }
+  }
+
   useWorkspaceInfiniteScroll({
     canLoadMore: hasMore,
     isLoading: isUsersLoading,
@@ -317,6 +361,10 @@ export default function UsersPage() {
     resetUsersList({ nextTab: tab, nextQuery: query });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
+
+  useEffect(() => {
+    loadInvites().catch(() => undefined);
+  }, [loadInvites]);
 
   useEffect(() => {
     if (selectedIds.length === 0) {
@@ -430,6 +478,56 @@ export default function UsersPage() {
           </Button>
         )}
       </div>
+
+      <Card>
+        <form onSubmit={createInvite} style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div>
+              <h3 style={{ margin: 0 }}>Приглашение по ссылке</h3>
+              <MetaText>Создайте одноразовую ссылку: пользователь подтвердит email-кодом и получит выбранную роль.</MetaText>
+            </div>
+            <label style={{ display: "inline-flex", gap: 8, alignItems: "center", opacity: 0.86 }}>
+              <input type="checkbox" checked={inviteSendEmail} onChange={(e) => setInviteSendEmail(e.target.checked)} />
+              {"Отправить на email"}
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) auto auto", gap: 8, alignItems: "center" }}>
+            <input
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="email пользователя"
+              style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
+            />
+            <SegmentedControl
+              value={inviteRole}
+              onChange={(value) => setInviteRole(value as UserRole)}
+              options={[
+                { value: "viewer", label: "Наблюдатель" },
+                { value: "editor", label: "Редактор" },
+                { value: "admin", label: "Админ" },
+              ]}
+            />
+            <Button type="submit" variant="primary">Создать</Button>
+          </div>
+          {inviteLink && (
+            <div style={{ display: "grid", gap: 6 }}>
+              <MetaText>Ссылка приглашения</MetaText>
+              <input readOnly value={inviteLink} onFocus={(e) => e.currentTarget.select()} style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }} />
+            </div>
+          )}
+          {invites.length > 0 && (
+            <div style={{ display: "grid", gap: 6 }}>
+              <MetaText>Последние приглашения</MetaText>
+              {invites.slice(0, 4).map((invite) => (
+                <div key={invite.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, opacity: 0.86, flexWrap: "wrap" }}>
+                  <span>{invite.email} · {invite.role}</span>
+                  <span>{invite.status} · до {new Date(invite.expires_at).toLocaleDateString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </form>
+      </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
         <ClearableInput

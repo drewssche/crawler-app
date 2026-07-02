@@ -1,6 +1,8 @@
 ﻿import os
 import re
 import logging
+import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -24,10 +26,14 @@ from app.core.security import (
     hash_login_code,
     hash_password,
     hash_trusted_device_token,
+    verify_password,
     verify_login_code,
     require_permission,
 )
+from app.core.admin_sync import is_root_admin_email
+from app.core.security import _get_secret_key
 from app.core.utils import send_auth_code_email
+from app.db.models.access_invite import AccessInvite
 from app.db.models.login_code import LoginCode
 from app.db.models.login_history import LoginHistory
 from app.db.models.trusted_device import TrustedDevice
@@ -64,6 +70,20 @@ class RequestAccessIn(BaseModel):
     email: str
 
 
+class AdminPasswordLoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class PasswordLoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class InviteAcceptIn(BaseModel):
+    token: str
+
+
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -75,6 +95,18 @@ def _normalize_email(email: str) -> str:
 def _validate_email(email: str) -> None:
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Invalid email format")
+
+
+def _hash_invite_token(token: str) -> str:
+    return hashlib.sha256(f"invite:{token}:{_get_secret_key()}".encode("utf-8")).hexdigest()
+
+
+def _load_valid_invite(db: Session, token: str) -> AccessInvite:
+    invite = db.query(AccessInvite).filter(AccessInvite.token_hash == _hash_invite_token(token)).first()
+    now = _utc_now_naive()
+    if not invite or invite.revoked_at is not None or invite.accepted_at is not None or invite.expires_at < now:
+        raise HTTPException(status_code=404, detail="Invite not found or expired")
+    return invite
 
 
 def _trusted_device_days(policy: str) -> int | None:
@@ -114,6 +146,19 @@ def _issue_login_code(db: Session, user: User) -> dict:
         response["message"] = "SMTP не настроен. Dev-код возвращен в ответе."
 
     return response
+
+
+def _issue_auth_token_for_user(db: Session, request: Request, user: User, *, source: str) -> dict:
+    role = get_user_role(user)
+    token = create_access_token({"sub": user.email, "role": role, "tv": int(user.token_version)})
+    _write_login_history(db, request, email=user.email.lower(), result="success", source=source, user=user)
+    return {
+        "status": "authenticated",
+        "message": "Вход выполнен.",
+        "access_token": token,
+        "token_type": "bearer",
+        "role": role,
+    }
 
 
 def _client_ip(request: Request) -> str | None:
@@ -243,6 +288,85 @@ def start_auth(payload: StartIn, request: Request, db: Session = Depends(get_db)
 @router.post("/login")
 def login_alias(payload: StartIn, request: Request, db: Session = Depends(get_db)):
     return start_auth(payload, request, db)
+
+
+@router.post("/admin-password-login")
+def admin_password_login(payload: AdminPasswordLoginIn, request: Request, db: Session = Depends(get_db)):
+    if os.getenv("AUTH_ADMIN_PASSWORD_LOGIN_ENABLED", "false").lower() != "true":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    email = _normalize_email(payload.email)
+    _validate_email(email)
+    check_rate_limit(db, email, "admin_password_login", limit=5, window_minutes=15)
+    record_attempt(db, email, "admin_password_login")
+
+    admin_password = os.getenv("ADMIN_PASSWORD", "")
+    if not admin_password or not is_root_admin_email(email):
+        _write_login_history(db, request, email=email, result="not_allowed", source="admin_password", user=None)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    user = db.query(User).filter(User.email == email).first()
+    valid_password = hmac.compare_digest(payload.password, admin_password)
+    if user and not valid_password and user.hashed_password:
+        valid_password = verify_password(payload.password, user.hashed_password)
+    if not valid_password:
+        _write_login_history(db, request, email=email, result="invalid_password", source="admin_password", user=user)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    if not user:
+        user = User(
+            email=email,
+            hashed_password=hash_password(admin_password),
+            role="admin",
+            trust_policy="permanent",
+            is_admin=True,
+            is_approved=True,
+            is_blocked=False,
+            is_deleted=False,
+            token_version=0,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    else:
+        user.role = "admin"
+        user.trust_policy = "permanent"
+        user.is_admin = True
+        user.is_approved = True
+        user.is_blocked = False
+        user.is_deleted = False
+        if user.token_version is None:
+            user.token_version = 0
+        db.commit()
+        db.refresh(user)
+
+    increment_counter("auth_admin_password_login_result_total", result="success")
+    log_business_event(logger, request, event="auth.admin_password_login", result="success", email=email)
+    return success_response_payload(request, data=_issue_auth_token_for_user(db, request, user, source="admin_password"))
+
+
+@router.post("/password-login")
+def password_login(payload: PasswordLoginIn, request: Request, db: Session = Depends(get_db)):
+    if os.getenv("AUTH_PASSWORD_LOGIN_ENABLED", "false").lower() != "true":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    email = _normalize_email(payload.email)
+    _validate_email(email)
+    check_rate_limit(db, email, "password_login", limit=5, window_minutes=15)
+    record_attempt(db, email, "password_login")
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user or user.is_deleted or user.is_blocked or not user.is_approved:
+        _write_login_history(db, request, email=email, result="not_allowed", source="password", user=user)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    if not verify_password(payload.password, user.hashed_password):
+        _write_login_history(db, request, email=email, result="invalid_password", source="password", user=user)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    increment_counter("auth_password_login_result_total", result="success")
+    log_business_event(logger, request, event="auth.password_login", result="success", email=email)
+    return success_response_payload(request, data=_issue_auth_token_for_user(db, request, user, source="password"))
 
 
 @router.post("/verify-code")
@@ -421,6 +545,60 @@ def request_access(payload: RequestAccessIn, request: Request, db: Session = Dep
     )
 
 
+@router.get("/invites/{token}")
+def invite_preview(token: str, request: Request, db: Session = Depends(get_db)):
+    invite = _load_valid_invite(db, token)
+    return success_response_payload(
+        request,
+        data={
+            "email": invite.email,
+            "role": invite.role,
+            "expires_at": invite.expires_at.isoformat(),
+        },
+    )
+
+
+@router.post("/invites/accept")
+def invite_accept(payload: InviteAcceptIn, request: Request, db: Session = Depends(get_db)):
+    invite = _load_valid_invite(db, payload.token)
+    email = _normalize_email(invite.email)
+    user = db.query(User).filter(User.email == email).first()
+    if user and user.is_blocked:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is blocked")
+
+    if not user:
+        user = User(
+            email=email,
+            hashed_password=hash_password(f"invite:{email}:{_utc_now_naive().timestamp()}"),
+            role=invite.role,
+            trust_policy="standard",
+            is_admin=invite.role == "admin",
+            is_approved=True,
+            is_blocked=False,
+            is_deleted=False,
+            token_version=0,
+        )
+        db.add(user)
+        db.flush()
+    else:
+        user.role = invite.role
+        user.is_admin = invite.role == "admin"
+        user.is_approved = True
+        user.is_deleted = False
+        if user.token_version is None:
+            user.token_version = 0
+
+    db.commit()
+    db.refresh(user)
+    increment_counter("auth_invite_accept_result_total", result="accepted")
+    log_business_event(logger, request, event="auth.invite_accept", result="accepted", email=email, role=invite.role)
+    code_payload = _issue_login_code(db, user)
+    if code_payload.get("status") == "code_sent" or code_payload.get("dev_code"):
+        invite.accepted_at = _utc_now_naive()
+        db.commit()
+    return success_response_payload(request, data=code_payload)
+
+
 @router.get("/me")
 def me(request: Request, current_user: User = Depends(get_current_user)):
     return success_response_payload(
@@ -452,6 +630,3 @@ def ui_debug_capabilities(
             "environment": environment,
         },
     )
-
-
-

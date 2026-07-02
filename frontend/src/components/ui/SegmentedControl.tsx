@@ -16,6 +16,7 @@ export default function SegmentedControl<T extends string>({ value, options, onC
     <div className="segmented-control">
       {options.map((option) => (
         <Button
+          type="button"
           key={option.value}
           size="sm"
           variant="ghost"

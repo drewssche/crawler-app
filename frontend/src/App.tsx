@@ -5,6 +5,7 @@ import RequirePermission from "./components/RequirePermission";
 import AppLayout from "./components/layout/AppLayout";
 import LoginPage from "./pages/LoginPage";
 
+const InvitePage = lazy(() => import("./pages/InvitePage"));
 const WorkspaceHomePage = lazy(() => import("./pages/WorkspaceHomePage"));
 const ProjectNewPage = lazy(() => import("./pages/ProjectNewPage"));
 const ProjectDashboardPage = lazy(() => import("./pages/ProjectDashboardPage"));
@@ -30,6 +31,14 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/invite/:token"
+        element={
+          <LazyRoute>
+            <InvitePage />
+          </LazyRoute>
+        }
+      />
 
       <Route
         path="/*"

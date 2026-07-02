@@ -29,6 +29,8 @@ type AuthContextValue = {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string) => Promise<LoginStartResponse>;
+  adminPasswordLogin: (email: string, password: string) => Promise<void>;
+  passwordLogin: (email: string, password: string) => Promise<void>;
   verifyCode: (challengeId: number, code: string) => Promise<void>;
   logout: () => void;
   refreshMe: () => Promise<AuthUser | null>;
@@ -80,6 +82,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return res;
   }, []);
 
+  const adminPasswordLogin = useCallback(async (email: string, password: string) => {
+    const data = await apiPost<VerifyCodeResponse & { access_token: string }>("/auth/admin-password-login", {
+      email,
+      password,
+    });
+    setToken(data.access_token);
+    setTokenState(data.access_token);
+    const me = await apiGet<AuthUser>("/auth/me");
+    setUser(me);
+  }, []);
+
+  const passwordLogin = useCallback(async (email: string, password: string) => {
+    const data = await apiPost<VerifyCodeResponse & { access_token: string }>("/auth/password-login", {
+      email,
+      password,
+    });
+    setToken(data.access_token);
+    setTokenState(data.access_token);
+    const me = await apiGet<AuthUser>("/auth/me");
+    setUser(me);
+  }, []);
+
   const verifyCode = useCallback(async (challengeId: number, code: string) => {
     const data = await apiPost<VerifyCodeResponse>("/auth/verify-code", {
       challenge_id: challengeId,
@@ -113,8 +137,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refreshMe, token]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ token, user, loading, login, verifyCode, logout, refreshMe }),
-    [token, user, loading, login, verifyCode, logout, refreshMe],
+    () => ({ token, user, loading, login, adminPasswordLogin, passwordLogin, verifyCode, logout, refreshMe }),
+    [token, user, loading, login, adminPasswordLogin, passwordLogin, verifyCode, logout, refreshMe],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

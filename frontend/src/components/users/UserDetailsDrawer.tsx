@@ -17,6 +17,8 @@ import { shortUserAgent } from "../../utils/userAgent";
 import { UI_BULLET } from "../../utils/uiText";
 import { resolveDisplayRole } from "../../utils/roles";
 import { formatApiDateTime } from "../../utils/datetime";
+import { apiPost } from "../../api/client";
+import { normalizeError } from "../../utils/errors";
 
 export type UserDetailsResponse = {
   user: {
@@ -113,6 +115,9 @@ export default function UserDetailsDrawer({
   const [showAllTrustedDevices, setShowAllTrustedDevices] = useState(false);
   const [deviceActionBusy, setDeviceActionBusy] = useState<number | "except_latest" | null>(null);
   const [deviceActionError, setDeviceActionError] = useState("");
+  const [tempPassword, setTempPassword] = useState("");
+  const [tempPasswordBusy, setTempPasswordBusy] = useState(false);
+  const [tempPasswordError, setTempPasswordError] = useState("");
 
   const normalizedAvailable = availableActions ?? [];
   const isSelfUser =
@@ -193,6 +198,23 @@ export default function UserDetailsDrawer({
     }
   }
 
+  async function handleGenerateTemporaryPassword() {
+    if (!data) return;
+    setTempPassword("");
+    setTempPasswordError("");
+    setTempPasswordBusy(true);
+    try {
+      const response = await apiPost<{ password: string }>(`/admin/users/${data.user.id}/temporary-password`, {
+        reason: "Beta access without SMTP",
+      });
+      setTempPassword(response.password);
+    } catch (e) {
+      setTempPasswordError(normalizeError(e));
+    } finally {
+      setTempPasswordBusy(false);
+    }
+  }
+
   return (
     <SlidePanel open={open} onClose={onClose}>
       <div style={{ padding: 16, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -267,6 +289,38 @@ export default function UserDetailsDrawer({
               trustPolicyCatalog={trustPolicyCatalog as Record<TrustPolicy, TrustPolicyCatalogItem>}
               onRunAction={onRunAction}
             />
+
+            {data.user.is_approved && !data.user.is_deleted && !data.user.is_blocked && !isSelfUser && (
+              <Card>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <SectionHeaderRow
+                    title="Временный пароль"
+                    actions={(
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={handleGenerateTemporaryPassword}
+                        disabled={tempPasswordBusy}
+                      >
+                        {tempPasswordBusy ? "Генерация..." : "Сгенерировать"}
+                      </Button>
+                    )}
+                  />
+                  <MetaText opacity={0.75}>
+                    Для beta без SMTP: сгенерируйте пароль и передайте пользователю вручную. Старые сессии пользователя будут отозваны.
+                  </MetaText>
+                  {tempPasswordError && <StatusText tone="error" style={{ fontSize: 12 }}>{tempPasswordError}</StatusText>}
+                  {tempPassword && (
+                    <input
+                      readOnly
+                      value={tempPassword}
+                      onFocus={(e) => e.currentTarget.select()}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8 }}
+                    />
+                  )}
+                </div>
+              </Card>
+            )}
 
             <Card>
               <div style={{ display: "grid", gap: 8 }}>

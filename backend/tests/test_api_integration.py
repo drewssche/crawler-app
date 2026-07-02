@@ -3,6 +3,7 @@ import os
 import tempfile
 import threading
 import time
+from urllib.parse import urlparse
 from collections.abc import Generator
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -94,6 +95,116 @@ def _extract_success_data(response):
     assert "data" in payload
     assert "request_id" in payload
     return payload["data"]
+
+
+def _reset_db_override() -> tuple:
+    engine, SessionLocal = _get_session_factory()
+    app.dependency_overrides[get_db] = _override_get_db(SessionLocal)
+    return engine, SessionLocal
+
+
+def test_env_root_admin_can_login_with_admin_password(monkeypatch):
+    monkeypatch.setenv("SECRET_KEY", "test-secret")
+    monkeypatch.setenv("ADMIN_EMAILS", "root@test.local")
+    monkeypatch.setenv("ADMIN_PASSWORD", "root-pass")
+    monkeypatch.setenv("AUTH_ADMIN_PASSWORD_LOGIN_ENABLED", "true")
+    engine, SessionLocal = _reset_db_override()
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/auth/admin-password-login",
+            json={"email": "root@test.local", "password": "root-pass"},
+        )
+        assert response.status_code == 200
+        data = _extract_success_data(response)
+        assert data["status"] == "authenticated"
+        assert data["role"] == "root-admin"
+
+        with SessionLocal() as db:
+            user = db.query(User).filter(User.email == "root@test.local").one()
+            assert user.is_approved is True
+            assert user.is_admin is True
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+
+def test_admin_invite_link_grants_access_and_starts_email_code(monkeypatch):
+    monkeypatch.setenv("SECRET_KEY", "test-secret")
+    monkeypatch.setenv("ADMIN_EMAILS", "admin@test.local")
+    monkeypatch.setenv("AUTH_DEV_SHOW_CODE", "true")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://crawler.test")
+    engine, SessionLocal = _reset_db_override()
+    try:
+        with SessionLocal() as db:
+            db.add(_make_user(email="admin@test.local", role="admin", is_admin=True, is_approved=True))
+            db.commit()
+
+        client = TestClient(app)
+        create_response = client.post(
+            "/admin/invites",
+            json={"email": "guest@test.local", "role": "viewer", "send_email": False},
+            headers=_auth_header("admin@test.local", role="root-admin"),
+        )
+        assert create_response.status_code == 200
+        invite = _extract_success_data(create_response)
+        assert invite["email"] == "guest@test.local"
+        token = urlparse(invite["link"]).path.rsplit("/", 1)[-1]
+
+        preview_response = client.get(f"/auth/invites/{token}")
+        assert preview_response.status_code == 200
+        assert _extract_success_data(preview_response)["role"] == "viewer"
+
+        accept_response = client.post("/auth/invites/accept", json={"token": token})
+        assert accept_response.status_code == 200
+        accept = _extract_success_data(accept_response)
+        assert accept["status"] == "code_not_sent"
+        assert accept["dev_code"]
+
+        verify_response = client.post(
+            "/auth/verify-code",
+            json={"challenge_id": accept["challenge_id"], "code": accept["dev_code"]},
+        )
+        assert verify_response.status_code == 200
+        assert _extract_success_data(verify_response)["access_token"]
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+
+def test_admin_generates_temporary_password_and_user_logs_in(monkeypatch):
+    monkeypatch.setenv("SECRET_KEY", "test-secret")
+    monkeypatch.setenv("ADMIN_EMAILS", "admin@test.local")
+    monkeypatch.setenv("AUTH_PASSWORD_LOGIN_ENABLED", "true")
+    engine, SessionLocal = _reset_db_override()
+    try:
+        with SessionLocal() as db:
+            db.add(_make_user(email="admin@test.local", role="admin", is_admin=True, is_approved=True))
+            db.add(_make_user(email="user@test.local", role="viewer", is_approved=True))
+            db.commit()
+            user_id = db.query(User).filter(User.email == "user@test.local").one().id
+
+        client = TestClient(app)
+        password_response = client.post(
+            f"/admin/users/{user_id}/temporary-password",
+            json={"reason": "beta"},
+            headers=_auth_header("admin@test.local", role="root-admin"),
+        )
+        assert password_response.status_code == 200
+        generated = _extract_success_data(password_response)["password"]
+        assert len(generated) >= 12
+
+        login_response = client.post(
+            "/auth/password-login",
+            json={"email": "user@test.local", "password": generated},
+        )
+        assert login_response.status_code == 200
+        data = _extract_success_data(login_response)
+        assert data["status"] == "authenticated"
+        assert data["role"] == "viewer"
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
 
 
 def _get_session_factory():

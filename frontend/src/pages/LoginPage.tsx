@@ -17,14 +17,19 @@ type RequestAccessResponse = {
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const ADMIN_EMAILS_RAW = String(import.meta.env.VITE_ADMIN_EMAILS ?? "").trim();
 const DEFAULT_ADMIN_EMAIL = ADMIN_EMAILS_RAW.split(",").map((x) => x.trim()).filter(Boolean)[0] ?? "";
+const ADMIN_PASSWORD_LOGIN_ENABLED = String(import.meta.env.VITE_ADMIN_PASSWORD_LOGIN_ENABLED ?? "").trim().toLowerCase() === "true";
+const PASSWORD_LOGIN_ENABLED = String(import.meta.env.VITE_PASSWORD_LOGIN_ENABLED ?? "").trim().toLowerCase() === "true";
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, verifyCode } = useAuth();
+  const { login, adminPasswordLogin, passwordLogin, verifyCode } = useAuth();
 
   const [tab, setTab] = useState<AuthTab>("request");
   const [email, setEmail] = useState(DEFAULT_ADMIN_EMAIL);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [useAdminPassword, setUseAdminPassword] = useState(false);
+  const [usePassword, setUsePassword] = useState(false);
   const [challengeId, setChallengeId] = useState<number | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -91,6 +96,18 @@ export default function LoginPage() {
       const normalizedEmail = validateEmailOrThrow(email);
       setEmail(normalizedEmail);
 
+      if (tab === "signin" && useAdminPassword) {
+        await adminPasswordLogin(normalizedEmail, adminPassword);
+        navigate(redirectTo, { replace: true });
+        return;
+      }
+
+      if (tab === "signin" && usePassword) {
+        await passwordLogin(normalizedEmail, adminPassword);
+        navigate(redirectTo, { replace: true });
+        return;
+      }
+
       if (tab === "request") {
         await onRequestAccess(normalizedEmail);
         return;
@@ -146,6 +163,9 @@ export default function LoginPage() {
             setTab(nextTab);
             setChallengeId(null);
             setCode("");
+            setAdminPassword("");
+            setUseAdminPassword(false);
+            setUsePassword(false);
             setError("");
             setMessage("");
             if (nextTab === "signin" && DEFAULT_ADMIN_EMAIL) {
@@ -166,6 +186,58 @@ export default function LoginPage() {
               placeholder={isSignIn ? (DEFAULT_ADMIN_EMAIL || "Email \u0434\u043b\u044f \u0432\u0445\u043e\u0434\u0430") : "\u0412\u0430\u0448 \u0440\u0430\u0431\u043e\u0447\u0438\u0439 email"}
               style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
             />
+
+            {isSignIn && PASSWORD_LOGIN_ENABLED && (
+              <label style={{ display: "grid", gap: 8, fontSize: 13, opacity: 0.9 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={usePassword}
+                    onChange={(e) => {
+                      setUsePassword(e.target.checked);
+                      if (e.target.checked) setUseAdminPassword(false);
+                    }}
+                  />
+                  {"Войти по временному паролю"}
+                </span>
+                {usePassword && (
+                  <input
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    placeholder={"Временный пароль"}
+                    type="password"
+                    autoComplete="current-password"
+                    style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
+                  />
+                )}
+              </label>
+            )}
+
+            {isSignIn && ADMIN_PASSWORD_LOGIN_ENABLED && (
+              <label style={{ display: "grid", gap: 8, fontSize: 13, opacity: 0.9 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={useAdminPassword}
+                    onChange={(e) => {
+                      setUseAdminPassword(e.target.checked);
+                      if (e.target.checked) setUsePassword(false);
+                    }}
+                  />
+                  {"Войти как root-admin по паролю из env"}
+                </span>
+                {useAdminPassword && (
+                  <input
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    placeholder={"Пароль root-admin"}
+                    type="password"
+                    autoComplete="current-password"
+                    style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 10 }}
+                  />
+                )}
+              </label>
+            )}
 
             {error && <div style={{ color: "#d55", fontSize: 13 }}>{error}</div>}
             {message && <div style={{ color: "#8fd18f", fontSize: 13 }}>{message}</div>}
