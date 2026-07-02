@@ -34,6 +34,7 @@ services:
     environment:
       ENV_FILE_PATH: /app/.env.root
       CRAWLER_WORKER_ENABLED: "1"
+      MONITORING_ANOMALY_ENABLED: ${MONITORING_ANOMALY_ENABLED:-false}
     volumes:
       - ./${BETA_ENV_FILE:-.env.beta}:/app/.env.root
       - rendered_beta_snapshots:/app/data/rendered_snapshots
