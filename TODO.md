@@ -109,7 +109,7 @@
   - [ ] в карточке пользователя admin/root-admin может сгенерировать временный пароль и вручную передать его человеку;
   - [ ] генерация пароля сбрасывает доверенные устройства/JWT пользователя и пишется в audit;
   - [ ] после подключения SMTP основной сценарий остаётся email-code + approve/invite, временные пароли можно отключить env-флагом.
-  - [ ] beta HTTPS hardening: `crawler-app.duckdns.org` поднят через nginx/Docker, но Let’s Encrypt certbot периодически падает на DNS timeout/SERVFAIL DuckDNS during secondary validation; повторить выпуск после стабилизации DNS, а при повторении проблемы перейти на стабильный DNS-провайдер/домен (например Cloudflare) и обновить deploy guide.
+  - [x] beta HTTPS hardening: для `crawler-app.duckdns.org` выпущен отдельный Let’s Encrypt-сертификат, nginx перенаправляет HTTP на HTTPS, автоматическое продление настроено Certbot; при повторении DNS timeout/SERVFAIL DuckDNS рассмотреть стабильный DNS-провайдер/домен (например Cloudflare).
   - [ ] security follow-up: текущий beta fallback использует один `ADMIN_PASSWORD` для всех email из `ADMIN_EMAILS`; перед публичной beta решить, оставляем ли это как break-glass только для root-admin или переходим на персональные временные пароли/invite для каждого root-admin.
   - [ ] cleanup follow-up: временный пароль оставить только как краткосрочный beta fallback без отдельного UI-чекбокса; после настройки нормального invite/email-code flow удалить temporary-password endpoint, генерацию и env-флаг из проекта.
 
