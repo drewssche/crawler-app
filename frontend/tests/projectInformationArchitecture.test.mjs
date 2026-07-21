@@ -25,12 +25,14 @@ const renderedSnapshotSource = await readFile(new URL("../src/components/project
 const highlightedTextSource = await readFile(new URL("../src/components/ui/HighlightedText.tsx", import.meta.url), "utf8");
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
 const monitoringTargetsSource = await readFile(new URL("../src/api/monitoringTargets.ts", import.meta.url), "utf8");
+const statusShortcutsSource = await readFile(new URL("../src/components/projects/ProjectStatusShortcuts.tsx", import.meta.url), "utf8");
+const monitoringPageSource = await readFile(new URL("../src/pages/monitoring/MonitoringPage.tsx", import.meta.url), "utf8");
 
 test("project page exposes the consolidated three-tab information architecture", () => {
   for (const label of ["Основная", "История", "Настройки"]) {
     assert.match(source, new RegExp(`label: "${label}"`));
   }
-  for (const removedLabel of ["Сводка", "Расписание", "Структура"]) {
+  for (const removedLabel of ["Сводка", "Структура"]) {
     assert.doesNotMatch(source, new RegExp(`label: "${removedLabel}"`));
   }
   assert.ok(
@@ -52,7 +54,7 @@ test("heavy workspace pages stay behind lazy route chunks", () => {
 test("main tab keeps minimal project workspace without duplicate summary blocks", () => {
   assert.match(source, /activeTab === "main"/);
   assert.match(source, /Структура сайта/);
-  assert.match(source, /Цели мониторинга/);
+  assert.match(source, /Отслеживаемые блоки/);
   assert.match(source, /ProjectSiteContextCards/);
   assert.doesNotMatch(source, /Рабочая сводка/);
   assert.doesNotMatch(source, /Показатели последнего прогона/);
@@ -75,7 +77,7 @@ test("project page exposes saved monitoring targets with latest status and lazy 
   assert.match(source, /loadTargetChecks\(target\.id\)/);
   assert.match(source, /Переименовать/);
   assert.match(source, /Пауза/);
-  assert.match(source, /Удалить цель мониторинга/);
+  assert.match(source, /Удалить отслеживаемый блок/);
   assert.match(source, /handleToggleMonitoringTarget/);
   assert.match(source, /handleDeleteMonitoringTarget/);
   assert.match(source, /Уведомления/);
@@ -84,13 +86,9 @@ test("project page exposes saved monitoring targets with latest status and lazy 
   assert.match(source, /Последние доставки/);
   assert.match(source, /Следующая попытка/);
   assert.match(source, /Остановлено/);
-  assert.match(source, /Доставка уведомлений/);
-  assert.match(source, /notificationDiagnostics/);
-  assert.match(source, /Email \{notificationDiagnostics\.smtp_configured \? "готов" : "не настроен"\}/);
-  assert.match(source, /Telegram \{notificationDiagnostics\.telegram_configured \? "готов" : "не настроен"\}/);
-  assert.match(source, /Готовы к повтору/);
-  assert.match(source, /Ждут паузу/);
-  assert.match(source, /Остановлены/);
+  assert.doesNotMatch(source, /notificationDiagnostics/);
+  assert.match(source, /active_subscription_count/);
+  assert.match(source, /active_subscription_channels/);
   assert.match(source, /handlePreviewSubscription/);
   assert.match(source, /handleTestSendSubscription/);
   assert.match(source, /Предпросмотр сообщения/);
@@ -114,24 +112,49 @@ test("project page exposes saved monitoring targets with latest status and lazy 
   assert.match(monitoringTargetsSource, /\/runs\/monitoring-targets\/\$\{targetId\}\/checks/);
 });
 
-test("monitoring targets stay compact and settings avoid delivery-diagnostics flicker", () => {
+test("tracked blocks stay compact and global delivery diagnostics stay out of project", () => {
   assert.match(source, /storageKey="monitoring-targets"/);
   assert.match(source, /defaultOpen=\{selectedSiteMonitoringTargets\.length > 0\}/);
-  assert.match(source, /Целей пока нет\./);
+  assert.match(source, /Блоки не добавлены\./);
+  assert.match(source, /Выбрать блок/);
   assert.doesNotMatch(source, /Откройте сравнение страниц, выделите нужный блок/);
-  assert.match(source, /activeTab !== "settings" && canViewOperations && \(notificationDiagnostics/);
-  assert.match(source, /Доставка уведомлений/);
-  assert.match(source, /Повтор:/);
+  assert.doesNotMatch(source, /getMonitoringNotificationDiagnostics/);
+  assert.doesNotMatch(source, /\/crawler\/readiness/);
   assert.match(source, /Часовой пояс/);
   assert.doesNotMatch(source, /Timezone/);
+});
+
+test("project overview shortcuts are project-scoped, clickable and URL-addressable", () => {
+  for (const label of ["Сайты", "Контексты", "Расписание", "Отслеживаемые блоки", "Уведомления", "Участники"]) {
+    assert.match(source, new RegExp(`label: "${label}"`));
+  }
+  assert.match(source, /useSearchParams/);
+  assert.match(source, /next\.set\("tab", tab\)/);
+  assert.match(source, /next\.set\("section", section\)/);
+  assert.match(source, /next\.set\("focus", focus\)/);
+  assert.match(source, /id="project-tracked-blocks"/);
+  assert.match(source, /Требует внимания/);
+  assert.match(statusShortcutsSource, /aria-label="Сводка проекта"/);
+  assert.match(statusShortcutsSource, /className="interactive-row"/);
+});
+
+test("global crawler and delivery diagnostics live in system monitoring", () => {
+  assert.match(monitoringPageSource, /Состояние системы/);
+  assert.match(monitoringPageSource, /\/crawler\/readiness/);
+  assert.match(monitoringPageSource, /getMonitoringNotificationDiagnostics/);
+  assert.match(monitoringPageSource, /Очередь пуста/);
+  assert.match(monitoringPageSource, /Готовы к повторной отправке/);
+  assert.match(monitoringPageSource, /Следующая попытка позже/);
+  assert.match(monitoringPageSource, /Не доставлены/);
+  assert.doesNotMatch(source, /getMonitoringNotificationDiagnostics/);
 });
 
 test("project header handles long names and keeps operational noise out of the happy path", () => {
   assert.match(source, /maxWidth: "min\(58vw, 760px\)"/);
   assert.match(source, /textOverflow: "ellipsis"/);
   assert.match(source, /whiteSpace: "nowrap"/);
-  assert.match(source, /showCrawlerReadinessPanel/);
-  assert.match(source, /!crawlerReadiness\.ready \|\| readinessIssues\.length > 0/);
+  assert.doesNotMatch(source, /showCrawlerReadinessPanel/);
+  assert.doesNotMatch(source, /crawlerReadiness/);
   assert.match(source, /gridTemplateColumns: projectHasMultipleSites \? "repeat\(3, minmax\(150px, 1fr\)\)" : "repeat\(2, minmax\(165px, 1fr\)\)"/);
   assert.doesNotMatch(source, /Диагностика доставки целей мониторинга/);
   assert.doesNotMatch(source, /Ненастроенный канал не ломает проверку целей/);
@@ -167,7 +190,7 @@ test("settings contain real project parameters and a saved schedule contract", (
   assert.match(source, /Не участвуют:/);
   assert.doesNotMatch(source, /Manual-only/);
   assert.match(source, />Опасная зона</);
-  assert.match(source, /setActiveSettingsSection/);
+  assert.match(source, /openProjectArea\("settings", item\.id\)/);
   assert.match(source, /aria-pressed=\{activeSettingsSection === item\.id\}/);
   assert.match(source, /<ProjectSitesSettings[\s\S]*compactHeader/);
   assert.match(source, /<ProjectMembersSettings[\s\S]*compactHeader/);
@@ -445,8 +468,8 @@ test("compare visual mode uses a full focus workspace and persisted rendered sna
   assert.match(compareSource, /checkMonitoringTarget/);
   assert.match(compareSource, /saveMonitoringTarget/);
   assert.match(compareSource, /checkSavedMonitoringTarget/);
-  assert.match(compareSource, /Сохранить цель/);
-  assert.match(compareSource, /Проверить цель/);
+  assert.match(compareSource, /Отслеживать блок/);
+  assert.match(compareSource, /Проверить блок/);
   assert.match(compareSource, /HTML выбранных блоков/);
   assert.match(compareSource, /Текстовый diff выбранных блоков/);
   assert.match(compareSource, /buildBlockFingerprint/);

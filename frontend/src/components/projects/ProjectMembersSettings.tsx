@@ -108,7 +108,15 @@ function lookupStatusMeta(user: UserLookupRow, memberEmails: Set<string>): { lab
   return { label: "Можно добавить", tone: "neutral", blocked: false };
 }
 
-export default function ProjectMembersSettings({ projectId, compactHeader = false }: { projectId: number; compactHeader?: boolean }) {
+export default function ProjectMembersSettings({
+  projectId,
+  compactHeader = false,
+  onChanged,
+}: {
+  projectId: number;
+  compactHeader?: boolean;
+  onChanged?: () => void;
+}) {
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState("");
@@ -215,6 +223,7 @@ export default function ProjectMembersSettings({ projectId, compactHeader = fals
       setUserLookupTouched(false);
       setRole("viewer");
       setMessage("Участник добавлен. Доступ применится сразу.");
+      onChanged?.();
     } catch (err) {
       setError(memberErrorMessage(err));
     } finally {
@@ -231,6 +240,7 @@ export default function ProjectMembersSettings({ projectId, compactHeader = fals
       const saved = await updateProjectMemberRole(projectId, member.id, nextRole);
       setMembers((current) => current.map((item) => item.id === member.id ? saved : item));
       setMessage("Роль участника обновлена.");
+      onChanged?.();
     } catch (err) {
       setError(memberErrorMessage(err));
     } finally {
@@ -248,6 +258,7 @@ export default function ProjectMembersSettings({ projectId, compactHeader = fals
       setMembers((current) => current.filter((member) => member.id !== deleteMember.id));
       setDeleteMember(null);
       setMessage("Участник удалён из проекта.");
+      onChanged?.();
     } catch (err) {
       setError(memberErrorMessage(err));
       setDeleteMember(null);

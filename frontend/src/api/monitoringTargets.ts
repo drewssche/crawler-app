@@ -19,6 +19,8 @@ export type MonitoringTarget = {
   created_at?: string | null;
   updated_at?: string | null;
   latest_check?: MonitoringTargetCheckRecord | null;
+  active_subscription_count?: number;
+  active_subscription_channels?: string[];
   next_step: string;
 };
 

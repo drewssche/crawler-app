@@ -8,6 +8,16 @@ function scopeLabel(site: ProjectSiteSummary): string {
   return site.scope_mode === "whole_site" ? "Весь сайт" : `Раздел ${site.path_prefix}`;
 }
 
+function shouldShowStartUrl(site: ProjectSiteSummary): boolean {
+  try {
+    const host = new URL(site.start_url).hostname.replace(/^www\./, "").toLowerCase();
+    const name = site.name.trim().replace(/^www\./, "").toLowerCase();
+    return name !== host;
+  } catch {
+    return site.name.trim() !== site.start_url.trim();
+  }
+}
+
 export default function ProjectSiteContextCards({
   sites,
   selectedSiteId,
@@ -56,9 +66,11 @@ export default function ProjectSiteContextCards({
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 750, overflow: "hidden", textOverflow: "ellipsis" }}>{site.name}</div>
-                <MetaText opacity={0.68} style={{ marginTop: 2, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {site.start_url}
-                </MetaText>
+                {shouldShowStartUrl(site) && (
+                  <MetaText opacity={0.68} style={{ marginTop: 2, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {site.start_url}
+                  </MetaText>
+                )}
               </div>
               <ProjectRunBadge status={lastRun?.status} />
             </div>

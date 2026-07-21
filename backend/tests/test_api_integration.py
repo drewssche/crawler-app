@@ -3507,6 +3507,8 @@ def test_selected_block_can_be_saved_as_monitoring_target(monkeypatch):
     listed = list_response.json()
     assert listed["total"] == 1
     assert listed["items"][0]["id"] == payload["id"]
+    assert listed["items"][0]["active_subscription_count"] == 0
+    assert listed["items"][0]["active_subscription_channels"] == []
 
     email_subscription_response = client.post(
         f"/runs/monitoring-targets/{payload['id']}/subscriptions",
@@ -3531,6 +3533,11 @@ def test_selected_block_can_be_saved_as_monitoring_target(monkeypatch):
     subscriptions_response = client.get(f"/runs/monitoring-targets/{payload['id']}/subscriptions", headers=headers)
     assert subscriptions_response.status_code == 200
     assert subscriptions_response.json()["total"] == 2
+    list_with_subscriptions = client.get(f"/runs/monitoring-targets/by-project/{project_id}", headers=headers)
+    assert list_with_subscriptions.status_code == 200
+    listed_target = list_with_subscriptions.json()["items"][0]
+    assert listed_target["active_subscription_count"] == 2
+    assert listed_target["active_subscription_channels"] == ["email", "telegram_chat"]
 
     preview_response = client.post(
         f"/runs/monitoring-subscriptions/{email_subscription['id']}/preview",

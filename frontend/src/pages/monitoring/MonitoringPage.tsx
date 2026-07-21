@@ -23,6 +23,11 @@ import SectionHeaderRow from "../../components/ui/SectionHeaderRow";
 import SegmentedControl from "../../components/ui/SegmentedControl";
 import { MetaText, StatusText } from "../../components/ui/StatusText";
 import UiSelect from "../../components/ui/UiSelect";
+import AccentPill from "../../components/ui/AccentPill";
+import {
+  getMonitoringNotificationDiagnostics,
+  type MonitoringNotificationDiagnostics,
+} from "../../api/monitoringTargets";
 import { useWorkspaceInfiniteScroll } from "../../hooks/useWorkspaceInfiniteScroll";
 import { extractHttpStatusFromLabels, getHttpStatusVisualMeta } from "../../utils/httpStatusVisual";
 import { BigChart, SmallHistoryCard } from "./chartCards";
@@ -43,6 +48,16 @@ const AUTO_REFRESH_MS = 15000;
 const BASE_ROWS = 20;
 const PRIMARY_METRIC_PREFIXES = ["http_", "events_"] as const;
 
+type CrawlerReadiness = {
+  ready: boolean;
+  mode: string;
+  jobs?: {
+    queued?: number;
+    running?: number;
+    cancel_requested?: number;
+  };
+};
+
 export default function MonitoringPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -57,6 +72,9 @@ export default function MonitoringPage() {
   const [editingThresholds, setEditingThresholds] = useState(false);
   const [zoomSeries, setZoomSeries] = useState<MonitoringPrimaryChartKey | null>(null);
   const [showAdditional, setShowAdditional] = useState(false);
+  const [crawlerReadiness, setCrawlerReadiness] = useState<CrawlerReadiness | null>(null);
+  const [deliveryDiagnostics, setDeliveryDiagnostics] = useState<MonitoringNotificationDiagnostics | null>(null);
+  const [systemStatusError, setSystemStatusError] = useState("");
   const [customRangeEnabled, setCustomRangeEnabled] = useState(false);
   const [customRangeHours, setCustomRangeHours] = useState(1);
 
@@ -138,6 +156,20 @@ export default function MonitoringPage() {
     }
   }, []);
 
+  const loadSystemStatus = useCallback(async () => {
+    try {
+      const [nextReadiness, nextDelivery] = await Promise.all([
+        apiGet<CrawlerReadiness>("/crawler/readiness"),
+        getMonitoringNotificationDiagnostics(),
+      ]);
+      setCrawlerReadiness(nextReadiness);
+      setDeliveryDiagnostics(nextDelivery);
+      setSystemStatusError("");
+    } catch (e) {
+      setSystemStatusError(normalizeError(e));
+    }
+  }, []);
+
   const loadFocus = useCallback(async () => {
     if (!focusMetric) {
       focusAbortRef.current?.abort();
@@ -167,7 +199,8 @@ export default function MonitoringPage() {
   useEffect(() => {
     loadMetricsHistory();
     loadSettings();
-  }, [loadMetricsHistory, loadSettings]);
+    loadSystemStatus();
+  }, [loadMetricsHistory, loadSettings, loadSystemStatus]);
 
   useEffect(() => {
     loadFocus();
@@ -177,12 +210,13 @@ export default function MonitoringPage() {
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       loadMetricsHistory();
+      loadSystemStatus();
       if (focusMetric) {
         loadFocus();
       }
     }, AUTO_REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [focusMetric, loadFocus, loadMetricsHistory]);
+  }, [focusMetric, loadFocus, loadMetricsHistory, loadSystemStatus]);
 
   useEffect(() => {
     return () => {
@@ -297,7 +331,7 @@ export default function MonitoringPage() {
   }
 
   async function refreshMonitoring() {
-    await loadMetricsHistory();
+    await Promise.all([loadMetricsHistory(), loadSystemStatus()]);
     if (focusMetric) {
       await loadFocus();
     }
@@ -405,6 +439,60 @@ export default function MonitoringPage() {
       <div>
         <h2 style={{ marginTop: 0, marginBottom: 4 }}>Мониторинг</h2>
       </div>
+
+      <Card style={{ display: "grid", gap: 10 }}>
+        <SectionHeaderRow
+          title={<div style={{ fontWeight: 800 }}>Состояние системы</div>}
+          actions={(
+            <AccentPill tone={systemStatusError || crawlerReadiness?.ready === false ? "warning" : crawlerReadiness ? "success" : "neutral"}>
+              {systemStatusError ? "Не удалось обновить" : !crawlerReadiness ? "Загрузка" : crawlerReadiness.ready ? "Работает" : "Требует внимания"}
+            </AccentPill>
+          )}
+        />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8 }}>
+          <Card style={{ display: "grid", gap: 4 }}>
+            <MetaText opacity={0.68}>Crawler</MetaText>
+            <strong>{crawlerReadiness?.ready ? "Готов к запускам" : "Проверка состояния"}</strong>
+          </Card>
+          <Card style={{ display: "grid", gap: 4 }}>
+            <MetaText opacity={0.68}>Очередь задач</MetaText>
+            <strong>
+              {(crawlerReadiness?.jobs?.queued || 0) + (crawlerReadiness?.jobs?.running || 0) > 0
+                ? `${crawlerReadiness?.jobs?.queued || 0} ждут · ${crawlerReadiness?.jobs?.running || 0} выполняются`
+                : "Пуста"}
+            </strong>
+          </Card>
+          <Card style={{ display: "grid", gap: 4 }}>
+            <MetaText opacity={0.68}>Каналы</MetaText>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <AccentPill tone={deliveryDiagnostics?.smtp_configured ? "success" : "neutral"}>
+                Email {deliveryDiagnostics?.smtp_configured ? "готов" : "не настроен"}
+              </AccentPill>
+              <AccentPill tone={deliveryDiagnostics?.telegram_configured ? "success" : "neutral"}>
+                Telegram {deliveryDiagnostics?.telegram_configured ? "готов" : "не настроен"}
+              </AccentPill>
+            </div>
+          </Card>
+          <Card style={{ display: "grid", gap: 4 }}>
+            <MetaText opacity={0.68}>Доставка уведомлений</MetaText>
+            {deliveryDiagnostics && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                {deliveryDiagnostics.counts.queued === 0
+                  && deliveryDiagnostics.counts.retry_ready === 0
+                  && deliveryDiagnostics.counts.failed_waiting === 0
+                  && deliveryDiagnostics.counts.dead === 0
+                  && <strong>Очередь пуста</strong>}
+                {deliveryDiagnostics.counts.queued > 0 && <AccentPill tone="info">В очереди: {deliveryDiagnostics.counts.queued}</AccentPill>}
+                {deliveryDiagnostics.counts.retry_ready > 0 && <AccentPill tone="warning">Готовы к повторной отправке: {deliveryDiagnostics.counts.retry_ready}</AccentPill>}
+                {deliveryDiagnostics.counts.failed_waiting > 0 && <AccentPill tone="warning">Следующая попытка позже: {deliveryDiagnostics.counts.failed_waiting}</AccentPill>}
+                {deliveryDiagnostics.counts.dead > 0 && <AccentPill tone="danger">Не доставлены: {deliveryDiagnostics.counts.dead}</AccentPill>}
+              </div>
+            )}
+            {!deliveryDiagnostics && <strong>Проверка состояния</strong>}
+          </Card>
+        </div>
+        {systemStatusError && <StatusText tone="warning">{systemStatusError}</StatusText>}
+      </Card>
 
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 10, flexWrap: "wrap" }}>

@@ -531,7 +531,9 @@ def _serialize_monitoring_target(
     row: PageMonitoringTarget,
     *,
     latest_check: PageMonitoringTargetCheck | None = None,
+    subscriptions: list[PageMonitoringTargetSubscription] | None = None,
 ) -> dict[str, Any]:
+    active_subscriptions = [item for item in (subscriptions or []) if item.is_active]
     return {
         "id": row.id,
         "project_id": row.project_id,
@@ -550,7 +552,9 @@ def _serialize_monitoring_target(
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         "latest_check": _serialize_monitoring_target_check(latest_check) if latest_check else None,
-        "next_step": "Цель сохранена. При следующих успешных прогонах crawler будет проверять, сохранился ли этот блок на странице.",
+        "active_subscription_count": len(active_subscriptions),
+        "active_subscription_channels": sorted({item.channel_type for item in active_subscriptions}),
+        "next_step": "Блок сохранён. После следующих успешных прогонов crawler проверит, остался ли он на странице.",
     }
 
 
@@ -640,7 +644,7 @@ def _build_monitoring_notification_payload(
     is_test: bool = False,
 ) -> dict[str, Any]:
     return {
-        "title": "Тест уведомления цели мониторинга" if is_test else "Цель мониторинга требует внимания",
+        "title": "Тест уведомления отслеживаемого блока" if is_test else "Отслеживаемый блок требует внимания",
         "target_name": target.name,
         "status": status,
         "message": message,
@@ -696,7 +700,7 @@ def _evaluate_monitoring_target_on_page(target: PageMonitoringTarget, page: Page
     if not page.html:
         return {
             "status": "not_checkable",
-            "message": "У выбранной страницы нет сохранённого HTML для поиска цели.",
+            "message": "У выбранной страницы нет сохранённого HTML для поиска блока.",
             "matches": [],
             "best_match": None,
         }
@@ -739,10 +743,10 @@ def _evaluate_monitoring_target_on_page(target: PageMonitoringTarget, page: Page
     best = matches[0] if matches else None
     if not best:
         status = "missing"
-        message = "Цель не найдена на выбранной версии страницы."
+        message = "Блок не найден на выбранной версии страницы."
     elif best["strategy"] == "selector" and int(best["similarity"]) >= 85:
         status = "matched"
-        message = "Цель найдена по сохранённому selector и структурно похожа на исходный блок."
+        message = "Блок найден по сохранённому selector и структурно похож на исходный вариант."
     elif int(best["similarity"]) >= 70:
         status = "changed"
         message = "Похожий блок найден, но структура отличается. Нужна визуальная проверка."
@@ -808,8 +812,8 @@ def _emit_monitoring_target_event(
         event_type="monitoring.target.changed",
         channel=EVENT_CHANNEL_NOTIFICATION,
         severity=severity,
-        title=f"Цель мониторинга: {status_label}",
-        body=f"«{target.name}» на странице {page_path}: {evaluation.get('message') or 'Проверьте цель мониторинга.'}",
+        title=f"Отслеживаемый блок: {status_label}",
+        body=f"«{target.name}» на странице {page_path}: {evaluation.get('message') or 'Проверьте отслеживаемый блок.'}",
         target_path=f"/projects/{run.project_id}",
         target_ref=f"monitoring_target:{target.id}:check:{check.id}",
         actor_user_id=None,
@@ -921,7 +925,7 @@ def _run_monitoring_target_checks_for_run(db: Session, run: Run) -> int:
         if page is None:
             evaluation = {
                 "status": "missing",
-                "message": "Страница цели не найдена в этом прогоне.",
+                "message": "Страница отслеживаемого блока не найдена в этом прогоне.",
                 "matches": [],
                 "best_match": None,
             }
@@ -931,7 +935,7 @@ def _run_monitoring_target_checks_for_run(db: Session, run: Run) -> int:
             except Exception:
                 evaluation = {
                     "status": "not_checkable",
-                    "message": "Цель не удалось проверить автоматически. Нужна ручная проверка.",
+                    "message": "Блок не удалось проверить автоматически. Нужна ручная проверка.",
                     "matches": [],
                     "best_match": None,
                 }
@@ -2710,6 +2714,7 @@ def list_project_monitoring_targets(
     )
     target_ids = [row.id for row in rows]
     latest_checks: dict[int, PageMonitoringTargetCheck] = {}
+    subscriptions_by_target: dict[int, list[PageMonitoringTargetSubscription]] = {}
     if target_ids:
         check_rows = (
             db.query(PageMonitoringTargetCheck)
@@ -2722,8 +2727,22 @@ def list_project_monitoring_targets(
                 continue
             if check.target_id not in latest_checks:
                 latest_checks[check.target_id] = check
+        subscription_rows = (
+            db.query(PageMonitoringTargetSubscription)
+            .filter(PageMonitoringTargetSubscription.target_id.in_(target_ids))
+            .all()
+        )
+        for subscription in subscription_rows:
+            subscriptions_by_target.setdefault(subscription.target_id, []).append(subscription)
     return {
-        "items": [_serialize_monitoring_target(row, latest_check=latest_checks.get(row.id)) for row in rows],
+        "items": [
+            _serialize_monitoring_target(
+                row,
+                latest_check=latest_checks.get(row.id),
+                subscriptions=subscriptions_by_target.get(row.id),
+            )
+            for row in rows
+        ],
         "total": len(rows),
     }
 
@@ -2904,7 +2923,7 @@ def _monitoring_subscription_preview_payload(
     status: str,
 ) -> dict[str, Any]:
     cleaned_status = _clean_subscription_statuses([status])[0]
-    message = "Тестовое уведомление: канал подключён к цели мониторинга. Реальные уведомления появятся только при изменении, пропаже или невозможности проверить выбранный блок."
+    message = "Тестовое уведомление: канал подключён к отслеживаемому блоку. Реальные уведомления появятся при изменении, пропаже или невозможности проверить блок."
     payload = _build_monitoring_notification_payload(
         target=target,
         status=cleaned_status,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode, type SyntheticEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   getProjectSchedule,
   listProjectSitePersonas,
@@ -22,7 +22,6 @@ import {
   createMonitoringTargetSubscription,
   deleteMonitoringTarget,
   deleteMonitoringTargetSubscription,
-  getMonitoringNotificationDiagnostics,
   listMonitoringTargetChecks,
   listMonitoringTargetNotificationOutbox,
   listMonitoringTargetSubscriptions,
@@ -31,7 +30,6 @@ import {
   testSendMonitoringTargetSubscription,
   updateMonitoringTarget,
   updateMonitoringTargetSubscription,
-  type MonitoringNotificationDiagnostics,
   type MonitoringNotificationOutboxItem,
   type MonitoringNotificationPreview,
   type MonitoringTarget,
@@ -42,6 +40,7 @@ import { ApiError, apiDelete, apiGet, apiPost } from "../api/client";
 import PageContextDrawer from "../components/projects/PageContextDrawer";
 import DirectoryContextDrawer from "../components/projects/DirectoryContextDrawer";
 import ProjectSiteContextCards from "../components/projects/ProjectSiteContextCards";
+import ProjectStatusShortcuts, { type ProjectStatusShortcut } from "../components/projects/ProjectStatusShortcuts";
 import ProjectMembersSettings from "../components/projects/ProjectMembersSettings";
 import ProjectSitesSettings from "../components/projects/ProjectSitesSettings";
 import AccentPill from "../components/ui/AccentPill";
@@ -67,6 +66,7 @@ import { formatQuotaError, isQuotaError } from "../utils/quotaErrors";
 import { useAuth } from "../hooks/auth";
 import { hasPermission } from "../utils/permissions";
 import { refreshEventCenterPollingNow } from "../utils/eventCenterPollingManager";
+import { listProjectMembers } from "../api/projectMembers";
 
 type ProjectDetails = {
   id: number;
@@ -194,28 +194,6 @@ type PendingCrawlerJob = {
   failureCode?: string | null;
   failureMessage?: string | null;
   source: "site" | "project";
-};
-
-type CrawlerReadiness = {
-  ready: boolean;
-  status: "ok" | "degraded" | string;
-  mode: "worker" | "synchronous" | string;
-  jobs?: {
-    queued?: number;
-    running?: number;
-    cancel_requested?: number;
-    recovered_expired_jobs?: number;
-    diagnostics?: {
-      stale_queued?: number;
-      oldest_queued_age_seconds?: number | null;
-    };
-  };
-  issues?: Array<{
-    code: string;
-    severity: "warning" | "critical" | string;
-    message: string;
-    count?: number;
-  }>;
 };
 
 type ActiveSiteJobResponse = {
@@ -431,9 +409,9 @@ function monitoringTargetStatusMeta(status?: MonitoringTargetCheckRecord["status
     return { label: "Не найден", tone: "danger", text: "Страница или блок не найдены в проверенном прогоне." };
   }
   if (status === "not_checkable") {
-    return { label: "Нужна проверка", tone: "warning", text: "Автоматическая проверка не смогла уверенно оценить цель." };
+    return { label: "Нужна проверка", tone: "warning", text: "Автоматическая проверка не смогла уверенно оценить блок." };
   }
-  return { label: "Ждёт прогона", tone: "neutral", text: "Цель начнёт проверяться после следующего успешного прогона." };
+  return { label: "Ждёт прогона", tone: "neutral", text: "Блок начнёт проверяться после следующего успешного прогона." };
 }
 
 function shortUrlPath(url: string): string {
@@ -443,6 +421,13 @@ function shortUrlPath(url: string): string {
   } catch {
     return url;
   }
+}
+
+function countLabel(count: number, one: string, few: string, many: string): string {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  const form = mod100 >= 11 && mod100 <= 14 ? many : mod10 === 1 ? one : mod10 >= 2 && mod10 <= 4 ? few : many;
+  return `${count} ${form}`;
 }
 
 function monitoringChannelLabel(channel: string): string {
@@ -473,14 +458,22 @@ function ProjectPersistentDetails({
   summary,
   children,
   summaryStyle,
+  forceOpen = false,
 }: {
   storageKey: string;
   defaultOpen?: boolean;
   summary: ReactNode;
   children: ReactNode;
   summaryStyle?: CSSProperties;
+  forceOpen?: boolean;
 }) {
   const [open, setOpen] = useState(() => readStoredDisclosureState(storageKey, defaultOpen));
+
+  useEffect(() => {
+    if (!forceOpen) return;
+    const frame = window.requestAnimationFrame(() => setOpen(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, [forceOpen]);
 
   function handleToggle(event: SyntheticEvent<HTMLDetailsElement>) {
     const nextOpen = event.currentTarget.open;
@@ -633,44 +626,6 @@ function pendingJobRetryText(job: PendingCrawlerJob): string | null {
   return `Повторная ${attemptText}${waitText ? ` · ${waitText}` : ""}. Причина: ${reason}.`;
 }
 
-function formatSecondsCompact(seconds?: number | null): string {
-  if (seconds == null) return "—";
-  if (seconds < 60) return `${Math.max(0, Math.round(seconds))} сек`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} мин`;
-  const hours = Math.floor(minutes / 60);
-  const restMinutes = minutes % 60;
-  return restMinutes > 0 ? `${hours} ч ${restMinutes} мин` : `${hours} ч`;
-}
-
-function crawlerModeLabel(mode?: string): string {
-  if (mode === "worker") return "worker";
-  if (mode === "synchronous") return "sync";
-  return mode || "—";
-}
-
-function crawlerReadinessLabel(readiness: CrawlerReadiness): string {
-  if (readiness.ready && readiness.status === "ok") return "Готов";
-  if (readiness.status === "degraded") return "Есть предупреждения";
-  return readiness.ready ? "Готов" : "Требует внимания";
-}
-
-function notificationDiagnosticsTone(diagnostics: MonitoringNotificationDiagnostics): "success" | "warning" | "danger" {
-  if (diagnostics.counts.dead > 0) return "danger";
-  if (!diagnostics.smtp_configured && !diagnostics.telegram_configured) return "warning";
-  if (diagnostics.counts.failed_waiting > 0 || diagnostics.counts.retry_ready > 0) return "warning";
-  return "success";
-}
-
-function notificationDiagnosticsLabel(diagnostics: MonitoringNotificationDiagnostics): string {
-  if (diagnostics.counts.dead > 0) return "Есть остановленные";
-  if (!diagnostics.smtp_configured && !diagnostics.telegram_configured) return "Каналы не настроены";
-  if (diagnostics.counts.retry_ready > 0) return "Есть готовые к повтору";
-  if (diagnostics.counts.failed_waiting > 0) return "Ждёт повторной доставки";
-  if (diagnostics.counts.queued > 0) return "Есть очередь";
-  return "Готово";
-}
-
 function pendingJobsFromActiveProjectJobs(
   payload: ActiveProjectJobsResponse,
   sites: ProjectSiteSummary[],
@@ -700,6 +655,7 @@ function pendingJobsFromActiveProjectJobs(
 
 export default function ProjectDashboardPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = useState<ProjectDetails | null>(null);
@@ -720,8 +676,15 @@ export default function ProjectDashboardPage() {
   const [runsError, setRunsError] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
-  const [activeTab, setActiveTab] = useState<ProjectTab>("main");
-  const [activeSettingsSection, setActiveSettingsSection] = useState<ProjectSettingsSectionId>("sites");
+  const requestedTab = searchParams.get("tab");
+  const activeTab: ProjectTab = requestedTab === "history" || requestedTab === "settings" ? requestedTab : "main";
+  const requestedSettingsSection = searchParams.get("section");
+  const requestedFocus = searchParams.get("focus");
+  const activeSettingsSection: ProjectSettingsSectionId = requestedSettingsSection === "members"
+    || requestedSettingsSection === "schedule"
+    || requestedSettingsSection === "danger"
+    ? requestedSettingsSection
+    : "sites";
   const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
   const [domainPickerSearch, setDomainPickerSearch] = useState("");
   const [structureSearch, setStructureSearch] = useState("");
@@ -753,10 +716,7 @@ export default function ProjectDashboardPage() {
   const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
   const [runToasts, setRunToasts] = useState<ToastItem[]>([]);
   const [pendingCrawlerJobs, setPendingCrawlerJobs] = useState<Record<number, PendingCrawlerJob>>({});
-  const [crawlerReadiness, setCrawlerReadiness] = useState<CrawlerReadiness | null>(null);
-  const [notificationDiagnostics, setNotificationDiagnostics] = useState<MonitoringNotificationDiagnostics | null>(null);
-  const [notificationDiagnosticsLoading, setNotificationDiagnosticsLoading] = useState(false);
-  const [notificationDiagnosticsError, setNotificationDiagnosticsError] = useState("");
+  const [projectMembersCount, setProjectMembersCount] = useState(0);
   const [sitePersonas, setSitePersonas] = useState<CrawlPersonaSummary[]>([]);
   const [sitePersonasLoading, setSitePersonasLoading] = useState(false);
   const [selectedRunPersonaId, setSelectedRunPersonaId] = useState<number | null>(null);
@@ -789,12 +749,19 @@ export default function ProjectDashboardPage() {
   const canRunCrawler = hasPermission(user?.role, "crawler.run");
   const canEditProject = hasPermission(user?.role, "projects.edit");
   const canViewEvents = hasPermission(user?.role, "events.view");
-  const canViewOperations = hasPermission(user?.role, "audit.view");
 
   function showRunToast(item: Omit<ToastItem, "id">) {
     const toast = { ...item, id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` };
     setRunToasts((current) => [toast, ...current].slice(0, 3));
   }
+
+  const openProjectArea = useCallback((tab: ProjectTab, section?: ProjectSettingsSectionId, focus?: string) => {
+    const next = new URLSearchParams();
+    if (tab !== "main") next.set("tab", tab);
+    if (tab === "settings" && section) next.set("section", section);
+    if (tab === "main" && focus) next.set("focus", focus);
+    setSearchParams(next);
+  }, [setSearchParams]);
 
   async function fetchRunPages(runId: number): Promise<ProjectPage[]> {
     const rows = await apiGet<ProjectPage[]>(`/runs/${runId}/pages`);
@@ -869,14 +836,16 @@ export default function ProjectDashboardPage() {
       listProjectSiteSummaries(Number(id)),
       apiGet<ActiveProjectJobsResponse>(`/runs/active-jobs/by-project/${id}`),
       getProjectSchedule(Number(id)),
+      listProjectMembers(Number(id)).catch(() => []),
     ])
-      .then(([nextProject, nextSites, activeJobs, nextSchedule]) => {
+      .then(([nextProject, nextSites, activeJobs, nextSchedule, nextMembers]) => {
         setProject(nextProject);
         setSites(nextSites);
         setProjectSchedule(nextSchedule);
         setScheduleForm(scheduleToInput(nextSchedule));
         setSelectedSiteId(nextSites.find((site) => site.is_enabled)?.id ?? nextSites[0]?.id ?? null);
         setPendingCrawlerJobs(pendingJobsFromActiveProjectJobs(activeJobs, nextSites));
+        setProjectMembersCount(nextMembers.length);
       })
       .catch((e) => setError(String(e)))
       .finally(() => {
@@ -898,7 +867,7 @@ export default function ProjectDashboardPage() {
         if (!cancelled) setMonitoringTargets(payload.items || []);
       })
       .catch((e) => {
-        if (!cancelled) setMonitoringTargetsError(e instanceof Error ? e.message : "Не удалось загрузить цели мониторинга.");
+        if (!cancelled) setMonitoringTargetsError(e instanceof Error ? e.message : "Не удалось загрузить отслеживаемые блоки.");
       })
       .finally(() => {
         if (!cancelled) setMonitoringTargetsLoading(false);
@@ -907,6 +876,18 @@ export default function ProjectDashboardPage() {
       cancelled = true;
     };
   }, [project]);
+
+  useEffect(() => {
+    if (activeTab !== "main" || requestedFocus !== "tracked-blocks") return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById("project-tracked-blocks")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, monitoringTargetsLoading, requestedFocus]);
+
+  useEffect(() => {
+    if (activeTab === "settings" && !canEditProject) openProjectArea("main");
+  }, [activeTab, canEditProject, openProjectArea]);
 
   useEffect(() => {
     if (selectedSiteId === null) {
@@ -968,11 +949,6 @@ export default function ProjectDashboardPage() {
     const timer = window.setInterval(() => {
       void loadRuns(selectedSiteId, true);
       if (project) void loadSiteSummaries(project.id, true);
-      if (canViewOperations) {
-        apiGet<CrawlerReadiness>("/crawler/readiness")
-          .then(setCrawlerReadiness)
-          .catch(() => undefined);
-      }
       if (hasPendingJob) {
         apiGet<ActiveSiteJobResponse>(`/runs/active-job/by-site/${selectedSiteId}`)
           .then((payload) => {
@@ -1009,37 +985,7 @@ export default function ProjectDashboardPage() {
       }
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [selectedSiteId, runs, project, loadRuns, loadSiteSummaries, pendingCrawlerJobs, sites, canViewOperations]);
-
-  useEffect(() => {
-    if (!project || !canViewOperations) {
-      setCrawlerReadiness(null);
-      setNotificationDiagnostics(null);
-      setNotificationDiagnosticsError("");
-      return;
-    }
-    let cancelled = false;
-    apiGet<CrawlerReadiness>("/crawler/readiness")
-      .then((payload) => {
-        if (!cancelled) setCrawlerReadiness(payload);
-      })
-      .catch(() => undefined);
-    setNotificationDiagnosticsLoading(true);
-    setNotificationDiagnosticsError("");
-    getMonitoringNotificationDiagnostics()
-      .then((payload) => {
-        if (!cancelled) setNotificationDiagnostics(payload);
-      })
-      .catch((e) => {
-        if (!cancelled) setNotificationDiagnosticsError(e instanceof Error ? e.message : "Не удалось загрузить диагностику уведомлений.");
-      })
-      .finally(() => {
-        if (!cancelled) setNotificationDiagnosticsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [project, canViewOperations]);
+  }, [selectedSiteId, runs, project, loadRuns, loadSiteSummaries, pendingCrawlerJobs, sites]);
 
   useEffect(() => {
     if (selectedSiteId === null) return;
@@ -1188,7 +1134,6 @@ export default function ProjectDashboardPage() {
           body: `Job #${result.job_id}. Worker заберёт задачу автоматически; можно оставаться на странице.`,
           accent: "info",
         });
-        if (canViewOperations) void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
       }
       await Promise.all([
         loadRuns(selectedSite.id, true),
@@ -1265,7 +1210,6 @@ export default function ProjectDashboardPage() {
           }
           return next;
         });
-        if (canViewOperations) void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
       }
       await loadSiteSummaries(project.id, true);
       if (selectedSiteId !== null) await loadRuns(selectedSiteId, true);
@@ -1403,7 +1347,7 @@ export default function ProjectDashboardPage() {
     } catch (e) {
       setTargetChecksErrorById((current) => ({
         ...current,
-        [targetId]: e instanceof Error ? e.message : "Не удалось загрузить историю проверок цели.",
+        [targetId]: e instanceof Error ? e.message : "Не удалось загрузить историю проверок блока.",
       }));
     } finally {
       setTargetChecksLoadingId(null);
@@ -1424,7 +1368,7 @@ export default function ProjectDashboardPage() {
       setTargetSubscriptionsById((current) => ({ ...current, [targetId]: subscriptionsPayload.items || [] }));
       setTargetOutboxById((current) => ({ ...current, [targetId]: outboxPayload.items || [] }));
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Не удалось загрузить уведомления цели.";
+      const message = e instanceof Error ? e.message : "Не удалось загрузить уведомления блока.";
       setTargetSubscriptionsErrorById((current) => ({ ...current, [targetId]: message }));
       setTargetOutboxErrorById((current) => ({ ...current, [targetId]: message }));
     } finally {
@@ -1451,6 +1395,17 @@ export default function ProjectDashboardPage() {
     });
   }
 
+  function syncMonitoringTargetSubscriptions(targetId: number, subscriptions: MonitoringTargetSubscription[]) {
+    const active = subscriptions.filter((item) => item.is_active);
+    setMonitoringTargets((current) => current.map((target) => target.id === targetId
+      ? {
+        ...target,
+        active_subscription_count: active.length,
+        active_subscription_channels: [...new Set(active.map((item) => item.channel_type))].sort(),
+      }
+      : target));
+  }
+
   async function handleCreateSubscription(target: MonitoringTarget) {
     const destination = subscriptionDestination.trim();
     if (!destination || subscriptionActionPendingId) return;
@@ -1464,10 +1419,12 @@ export default function ProjectDashboardPage() {
         statuses: subscriptionStatuses,
         min_interval_minutes: Number.isFinite(minInterval) && minInterval > 0 ? minInterval : 0,
       });
+      const nextSubscriptions = [created, ...(targetSubscriptionsById[target.id] || [])];
       setTargetSubscriptionsById((current) => ({
         ...current,
-        [target.id]: [created, ...(current[target.id] || [])],
+        [target.id]: nextSubscriptions,
       }));
+      syncMonitoringTargetSubscriptions(target.id, nextSubscriptions);
       setSubscriptionFormTargetId(null);
       setSubscriptionDestination("");
     } catch (e) {
@@ -1483,10 +1440,12 @@ export default function ProjectDashboardPage() {
     setTargetActionError("");
     try {
       const updated = await updateMonitoringTargetSubscription(subscription.id, { is_active: !subscription.is_active });
+      const nextSubscriptions = (targetSubscriptionsById[subscription.target_id] || []).map((item) => item.id === updated.id ? updated : item);
       setTargetSubscriptionsById((current) => ({
         ...current,
-        [subscription.target_id]: (current[subscription.target_id] || []).map((item) => item.id === updated.id ? updated : item),
+        [subscription.target_id]: nextSubscriptions,
       }));
+      syncMonitoringTargetSubscriptions(subscription.target_id, nextSubscriptions);
     } catch (e) {
       setTargetActionError(e instanceof Error ? e.message : "Не удалось обновить подписку.");
     } finally {
@@ -1529,9 +1488,6 @@ export default function ProjectDashboardPage() {
         ...current,
         [subscription.target_id]: [result.outbox, ...(current[subscription.target_id] || []).filter((item) => item.id !== result.outbox.id)].slice(0, 8),
       }));
-      void getMonitoringNotificationDiagnostics()
-        .then(setNotificationDiagnostics)
-        .catch(() => undefined);
     } catch (e) {
       setTargetActionError(e instanceof Error ? e.message : "Не удалось выполнить тестовую отправку.");
     } finally {
@@ -1545,10 +1501,12 @@ export default function ProjectDashboardPage() {
     setTargetActionError("");
     try {
       await deleteMonitoringTargetSubscription(subscription.id);
+      const nextSubscriptions = (targetSubscriptionsById[subscription.target_id] || []).filter((item) => item.id !== subscription.id);
       setTargetSubscriptionsById((current) => ({
         ...current,
-        [subscription.target_id]: (current[subscription.target_id] || []).filter((item) => item.id !== subscription.id),
+        [subscription.target_id]: nextSubscriptions,
       }));
+      syncMonitoringTargetSubscriptions(subscription.target_id, nextSubscriptions);
     } catch (e) {
       setTargetActionError(e instanceof Error ? e.message : "Не удалось удалить подписку.");
     } finally {
@@ -1564,7 +1522,7 @@ export default function ProjectDashboardPage() {
       const updated = await updateMonitoringTarget(target.id, { is_active: !target.is_active });
       setMonitoringTargets((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
     } catch (e) {
-      setTargetActionError(e instanceof Error ? e.message : "Не удалось обновить цель мониторинга.");
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось обновить отслеживаемый блок.");
     } finally {
       setTargetActionPendingId(null);
     }
@@ -1587,7 +1545,7 @@ export default function ProjectDashboardPage() {
       setTargetRenameId(null);
       setTargetRenameValue("");
     } catch (e) {
-      setTargetActionError(e instanceof Error ? e.message : "Не удалось переименовать цель мониторинга.");
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось переименовать отслеживаемый блок.");
     } finally {
       setTargetActionPendingId(null);
     }
@@ -1617,7 +1575,7 @@ export default function ProjectDashboardPage() {
         setTargetRenameValue("");
       }
     } catch (e) {
-      setTargetActionError(e instanceof Error ? e.message : "Не удалось удалить цель мониторинга.");
+      setTargetActionError(e instanceof Error ? e.message : "Не удалось удалить отслеживаемый блок.");
     } finally {
       setTargetActionPendingId(null);
     }
@@ -1713,9 +1671,86 @@ export default function ProjectDashboardPage() {
   const projectHasMultipleSites = sites.length > 1;
   const scheduleEnabledSites = useMemo(() => sites.filter((site) => site.is_enabled), [sites]);
   const scheduleDisabledSitesCount = sites.length - scheduleEnabledSites.length;
-  const readinessIssues = crawlerReadiness?.issues || [];
-  const showCrawlerReadinessPanel = canViewOperations && crawlerReadiness && (!crawlerReadiness.ready || readinessIssues.length > 0);
   const selectedRunLaunchIssue = personaLaunchIssue(selectedRunPersona);
+  const activeMonitoringTargets = selectedSiteMonitoringTargets.filter((target) => target.is_active);
+  const monitoringProblemsCount = activeMonitoringTargets.filter((target) => {
+    const status = target.latest_check?.status;
+    return status === "changed" || status === "missing" || status === "not_checkable";
+  }).length;
+  const activeExternalSubscriptions = selectedSiteMonitoringTargets.reduce(
+    (total, target) => total + (target.active_subscription_count || 0),
+    0,
+  );
+  const externalSubscriptionChannels = new Set(
+    selectedSiteMonitoringTargets.flatMap((target) => target.active_subscription_channels || []),
+  );
+  const notificationSummary = activeExternalSubscriptions > 0
+    ? `${activeExternalSubscriptions} · ${[
+      externalSubscriptionChannels.has("email") ? "Email" : "",
+      externalSubscriptionChannels.has("telegram_chat") ? "Telegram" : "",
+    ].filter(Boolean).join(" + ")}`
+    : "В приложении";
+  const settingsShortcutDisabled = !canEditProject;
+  const failedSitesCount = sites.filter((site) => site.last_run?.status === "FAILED").length;
+  const projectStatusShortcuts: ProjectStatusShortcut[] = [
+    {
+      id: "sites",
+      label: "Сайты",
+      value: `${sites.filter((site) => site.is_enabled).length} из ${sites.length}`,
+      tone: sites.some((site) => !site.is_enabled) ? "neutral" : "success",
+      title: settingsShortcutDisabled ? "Настройки доступны владельцу или редактору проекта." : "Открыть настройки сайтов.",
+      disabled: settingsShortcutDisabled,
+      onClick: () => openProjectArea("settings", "sites"),
+    },
+    {
+      id: "contexts",
+      label: "Контексты",
+      value: sitePersonasLoading ? "Загрузка…" : `${enabledPersonas.length || 1} · ${selectedRunPersona?.label || "Гость"}`,
+      tone: "neutral",
+      title: settingsShortcutDisabled ? "Настройки доступны владельцу или редактору проекта." : "Открыть контексты выбранного сайта.",
+      disabled: settingsShortcutDisabled,
+      onClick: () => openProjectArea("settings", "sites"),
+    },
+    {
+      id: "schedule",
+      label: "Расписание",
+      value: projectSchedule?.is_enabled ? "Включено" : "На паузе",
+      tone: projectSchedule?.is_enabled ? "success" : "neutral",
+      title: settingsShortcutDisabled ? "Настройки доступны владельцу или редактору проекта." : "Открыть расписание.",
+      disabled: settingsShortcutDisabled,
+      onClick: () => openProjectArea("settings", "schedule"),
+    },
+    {
+      id: "tracked-blocks",
+      label: "Отслеживаемые блоки",
+      value: monitoringProblemsCount > 0
+        ? `${countLabel(monitoringProblemsCount, "требует", "требуют", "требуют")} внимания`
+        : activeMonitoringTargets.length > 0
+          ? countLabel(activeMonitoringTargets.length, "активный", "активных", "активных")
+          : "Нет",
+      tone: monitoringProblemsCount > 0 ? "warning" : activeMonitoringTargets.length > 0 ? "success" : "neutral",
+      onClick: () => openProjectArea("main", undefined, "tracked-blocks"),
+    },
+    {
+      id: "notifications",
+      label: "Уведомления",
+      value: notificationSummary,
+      tone: activeExternalSubscriptions > 0 ? "success" : "neutral",
+      title: activeExternalSubscriptions > 0
+        ? "Внешние каналы настроены у отслеживаемых блоков."
+        : "События видны в приложении. Email и Telegram подключаются у конкретного блока.",
+      onClick: () => openProjectArea("main", undefined, "tracked-blocks"),
+    },
+    {
+      id: "members",
+      label: "Участники",
+      value: projectMembersCount,
+      tone: "neutral",
+      title: settingsShortcutDisabled ? "Настройки доступны владельцу проекта." : "Открыть участников и права.",
+      disabled: settingsShortcutDisabled,
+      onClick: () => openProjectArea("settings", "members"),
+    },
+  ];
   const structureUpdatePending = hasRunning || Boolean(selectedPendingJob) || runPending || projectRunPending;
   const structureRunId = displayedStructureRun?.id ?? null;
   const previousStructureRunId = structureIsLive
@@ -1746,7 +1781,6 @@ export default function ProjectDashboardPage() {
               source: "site",
             },
           }));
-          if (canViewOperations) void apiGet<CrawlerReadiness>("/crawler/readiness").then(setCrawlerReadiness).catch(() => undefined);
           return;
         }
         setPendingCrawlerJobs((current) => {
@@ -1760,7 +1794,7 @@ export default function ProjectDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSiteId, selectedSite?.name, selectedSite?.default_persona?.label, canViewOperations]);
+  }, [selectedSiteId, selectedSite?.name, selectedSite?.default_persona?.label]);
 
   useEffect(() => {
     setSelectedDomains((current) => current.filter((domain) => domains.includes(domain)));
@@ -2046,150 +2080,6 @@ export default function ProjectDashboardPage() {
                   </div>
                 ) : undefined}
               />
-              {showCrawlerReadinessPanel && (
-                <Card
-                  variant={crawlerReadiness.ready ? "hint" : "warning"}
-                  style={{ padding: 10, display: "grid", gap: 8 }}
-                >
-                  <ProjectPersistentDetails
-                    storageKey="admin-readiness"
-                    summary={
-                      <>
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                          <AccentPill tone={crawlerReadiness.ready ? "success" : "warning"}>
-                            Crawler: {crawlerReadinessLabel(crawlerReadiness)}
-                          </AccentPill>
-                          <AccentPill tone={crawlerReadiness.mode === "worker" ? "info" : "neutral"}>
-                            Режим: {crawlerModeLabel(crawlerReadiness.mode)}
-                          </AccentPill>
-                          <MetaText opacity={0.82}>
-                            Очередь: <strong>{crawlerReadiness.jobs?.queued ?? 0}</strong> · В работе: <strong>{crawlerReadiness.jobs?.running ?? 0}</strong>
-                          </MetaText>
-                        </div>
-                        <MetaText opacity={0.72}>Операционная панель admin/root-admin · раскрыть детали</MetaText>
-                      </>
-                    }
-                    summaryStyle={{
-                        cursor: "pointer",
-                        listStyle: "none",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 8,
-                        flexWrap: "wrap",
-                        alignItems: "center",
-                    }}
-                  >
-                    <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                        <MetaText opacity={0.86}>Очередь: <strong>{crawlerReadiness.jobs?.queued ?? 0}</strong></MetaText>
-                        <MetaText opacity={0.86}>В работе: <strong>{crawlerReadiness.jobs?.running ?? 0}</strong></MetaText>
-                        {(crawlerReadiness.jobs?.cancel_requested ?? 0) > 0 && (
-                          <MetaText opacity={0.86}>Остановка: <strong>{crawlerReadiness.jobs?.cancel_requested}</strong></MetaText>
-                        )}
-                        {crawlerReadiness.jobs?.diagnostics?.oldest_queued_age_seconds != null && (
-                          <MetaText opacity={0.86}>
-                            Старейшая задача ждёт: <strong>{formatSecondsCompact(crawlerReadiness.jobs.diagnostics.oldest_queued_age_seconds)}</strong>
-                          </MetaText>
-                        )}
-                        {(crawlerReadiness.jobs?.recovered_expired_jobs ?? 0) > 0 && (
-                          <MetaText opacity={0.86}>
-                            Восстановлено зависших: <strong>{crawlerReadiness.jobs?.recovered_expired_jobs}</strong>
-                          </MetaText>
-                        )}
-                      </div>
-                      {readinessIssues.length > 0 && (
-                        <div style={{ display: "grid", gap: 4 }}>
-                          {readinessIssues.slice(0, 2).map((issue) => (
-                            <StatusText
-                              key={`${issue.code}-${issue.message}`}
-                              tone={issue.severity === "critical" ? "danger" : "warning"}
-                              style={{ fontSize: 12 }}
-                            >
-                              {issue.message}{issue.count ? ` · ${issue.count}` : ""}
-                            </StatusText>
-                          ))}
-                          {readinessIssues.length > 2 && (
-                            <MetaText opacity={0.72}>Ещё предупреждений: {readinessIssues.length - 2}</MetaText>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </ProjectPersistentDetails>
-                </Card>
-              )}
-              {activeTab !== "settings" && canViewOperations && (notificationDiagnostics || notificationDiagnosticsLoading || notificationDiagnosticsError) && (
-                <Card
-                  variant={notificationDiagnostics && notificationDiagnosticsTone(notificationDiagnostics) === "danger" ? "warning" : "hint"}
-                  style={{ padding: 10, display: "grid", gap: 8 }}
-                >
-                  <ProjectPersistentDetails
-                    storageKey="admin-notification-delivery"
-                    summary={
-                      <>
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                          <AccentPill tone={notificationDiagnostics ? notificationDiagnosticsTone(notificationDiagnostics) : "neutral"}>
-                            Уведомления: {notificationDiagnostics ? notificationDiagnosticsLabel(notificationDiagnostics) : "Загрузка"}
-                          </AccentPill>
-                          {notificationDiagnostics && (
-                            <>
-                              <AccentPill tone={notificationDiagnostics.smtp_configured ? "success" : "warning"}>
-                                Email {notificationDiagnostics.smtp_configured ? "готов" : "не настроен"}
-                              </AccentPill>
-                              <AccentPill tone={notificationDiagnostics.telegram_configured ? "success" : "warning"}>
-                                Telegram {notificationDiagnostics.telegram_configured ? "готов" : "не настроен"}
-                              </AccentPill>
-                              <MetaText opacity={0.82}>
-                                Очередь: <strong>{notificationDiagnostics.counts.queued}</strong> · Повтор:{" "}
-                                <strong>{notificationDiagnostics.counts.retry_ready + notificationDiagnostics.counts.failed_waiting}</strong>
-                              </MetaText>
-                            </>
-                          )}
-                        </div>
-                        <MetaText opacity={0.72}>Доставка уведомлений</MetaText>
-                      </>
-                    }
-                    summaryStyle={{
-                      cursor: "pointer",
-                      listStyle: "none",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      flexWrap: "wrap",
-                      alignItems: "center",
-                    }}
-                  >
-                    <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                      {notificationDiagnosticsLoading && <MetaText>Загружаем доставку...</MetaText>}
-                      {notificationDiagnosticsError && (
-                        <StatusText tone="warning" style={{ fontSize: 12 }}>
-                          {notificationDiagnosticsError}
-                        </StatusText>
-                      )}
-                      {notificationDiagnostics && (
-                        <>
-                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
-                            {[
-                              { label: "В очереди", value: notificationDiagnostics.counts.queued, tone: "info" as const },
-                              { label: "Готовы к повтору", value: notificationDiagnostics.counts.retry_ready, tone: "warning" as const },
-                              { label: "Ждут паузу", value: notificationDiagnostics.counts.failed_waiting, tone: "warning" as const },
-                              { label: "Отправлены", value: notificationDiagnostics.counts.sent, tone: "success" as const },
-                              { label: "Остановлены", value: notificationDiagnostics.counts.dead, tone: "danger" as const },
-                            ].map((item) => (
-                              <Card key={item.label} style={{ padding: 10, background: "rgba(255,255,255,0.025)" }}>
-                                <MetaText opacity={0.68}>{item.label}</MetaText>
-                                <div style={{ marginTop: 4, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                                  <strong style={{ fontSize: 22 }}>{item.value}</strong>
-                                  <AccentPill tone={item.tone}>{item.value > 0 ? "Есть" : "0"}</AccentPill>
-                                </div>
-                              </Card>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </ProjectPersistentDetails>
-                </Card>
-              )}
               {activeTab !== "settings" && selectedPendingJob && (
                 <Card variant="hint" style={{ padding: 10, display: "grid", gap: 6 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
@@ -2222,7 +2112,7 @@ export default function ProjectDashboardPage() {
           <Card variant="hint" style={{ padding: 10 }}>
             <SegmentedControl
               value={activeTab}
-              onChange={(next) => setActiveTab(next)}
+              onChange={(next) => openProjectArea(next, next === "settings" ? activeSettingsSection : undefined)}
               options={[
                 { value: "main", label: "Основная" },
                 { value: "history", label: "История" },
@@ -2230,6 +2120,36 @@ export default function ProjectDashboardPage() {
               ]}
             />
           </Card>
+
+          {activeTab === "main" && (
+            <>
+              <Card>
+                <ProjectStatusShortcuts items={projectStatusShortcuts} />
+              </Card>
+              {(monitoringProblemsCount > 0 || failedSitesCount > 0) && (
+                <Card variant="warning" style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ display: "grid", gap: 3 }}>
+                    <strong>Требует внимания</strong>
+                    <MetaText>
+                      {[
+                        failedSitesCount > 0
+                          ? `${countLabel(failedSitesCount, "сайт завершился", "сайта завершились", "сайтов завершились")} с ошибкой`
+                          : "",
+                        monitoringProblemsCount > 0
+                          ? `${countLabel(monitoringProblemsCount, "блок изменился или не найден", "блока изменились или не найдены", "блоков изменились или не найдены")}`
+                          : "",
+                      ].filter(Boolean).join(" · ")}
+                    </MetaText>
+                  </div>
+                  {monitoringProblemsCount > 0 && (
+                    <CardActionButton compact onClick={() => openProjectArea("main", undefined, "tracked-blocks")}>
+                      Открыть блоки
+                    </CardActionButton>
+                  )}
+                </Card>
+              )}
+            </>
+          )}
 
           {activeTab !== "settings" && (
             <Card>
@@ -2319,14 +2239,15 @@ export default function ProjectDashboardPage() {
 
           {activeTab === "main" && (
             <>
-              <Card>
+              <Card id="project-tracked-blocks" style={{ scrollMarginTop: 16 }}>
                 <ProjectPersistentDetails
                   storageKey="monitoring-targets"
                   defaultOpen={selectedSiteMonitoringTargets.length > 0}
+                  forceOpen={requestedFocus === "tracked-blocks"}
                   summary={
                     <SectionHeaderRow
-                      title={<div style={{ fontWeight: 700 }}>Цели мониторинга</div>}
-                      actions={<ListTotalMeta label="Целей" total={selectedSiteMonitoringTargets.length} />}
+                      title={<div style={{ fontWeight: 700 }}>Отслеживаемые блоки</div>}
+                      actions={<ListTotalMeta label="Блоков" total={selectedSiteMonitoringTargets.length} />}
                       style={{ width: "100%" }}
                     />
                   }
@@ -2336,12 +2257,20 @@ export default function ProjectDashboardPage() {
                   }}
                 >
                 <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-                  {monitoringTargetsLoading && <MetaText>Загружаем цели...</MetaText>}
+                  {monitoringTargetsLoading && <MetaText>Загружаем блоки...</MetaText>}
                   {monitoringTargetsError && <StatusText tone="danger">{monitoringTargetsError}</StatusText>}
                   {targetActionError && <StatusText tone="danger">{targetActionError}</StatusText>}
                   {!monitoringTargetsLoading && !monitoringTargetsError && selectedSiteMonitoringTargets.length === 0 && (
-                    <Card variant="hint" style={{ padding: 10 }}>
-                      <MetaText>Целей пока нет.</MetaText>
+                    <Card style={{ padding: 10, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <MetaText>Блоки не добавлены.</MetaText>
+                      {canEditProject && (
+                        <CardActionButton
+                          compact
+                          onClick={() => navigate(`/projects/${project.id}/compare`, { state: { projectName: project.name } })}
+                        >
+                          Выбрать блок
+                        </CardActionButton>
+                      )}
                     </Card>
                   )}
                   {selectedSiteMonitoringTargets.length > 0 && (
@@ -2459,7 +2388,7 @@ export default function ProjectDashboardPage() {
                             )}
                             <ProjectPersistentDetails
                               storageKey={`target-${target.id}`}
-                              summary="Детали цели"
+                              summary="Детали блока"
                               summaryStyle={{ cursor: "pointer", color: "var(--muted)", fontSize: 13 }}
                             >
                               <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
@@ -3318,11 +3247,11 @@ export default function ProjectDashboardPage() {
                         tabIndex={0}
                         aria-pressed={activeSettingsSection === item.id}
                         variant={item.id === "danger" ? "danger" : "default"}
-                        onClick={() => setActiveSettingsSection(item.id)}
+                        onClick={() => openProjectArea("settings", item.id)}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" && event.key !== " ") return;
                           event.preventDefault();
-                          setActiveSettingsSection(item.id);
+                          openProjectArea("settings", item.id);
                         }}
                         style={{
                           padding: 10,
@@ -3356,7 +3285,13 @@ export default function ProjectDashboardPage() {
 
               {activeSettingsSection === "members" && (
                 <Card>
-                  <ProjectMembersSettings projectId={project.id} compactHeader />
+                  <ProjectMembersSettings
+                    projectId={project.id}
+                    compactHeader
+                    onChanged={() => {
+                      void listProjectMembers(project.id).then((members) => setProjectMembersCount(members.length));
+                    }}
+                  />
                 </Card>
               )}
 
@@ -3577,8 +3512,8 @@ export default function ProjectDashboardPage() {
       />
       <ConfirmDialog
         open={targetDeleteConfirm !== null}
-        title="Удалить цель мониторинга?"
-        description={targetDeleteConfirm ? `Цель "${targetDeleteConfirm.name}" и история её проверок будут удалены.` : ""}
+        title="Удалить отслеживаемый блок?"
+        description={targetDeleteConfirm ? `Блок "${targetDeleteConfirm.name}" и история его проверок будут удалены.` : ""}
         confirmText="Удалить"
         cancelText="Отмена"
         confirmVariant="danger"

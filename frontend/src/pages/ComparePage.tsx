@@ -446,7 +446,7 @@ function SelectedBlockCard({
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             {onSaveTarget && (
               <button type="button" className="element-picker-toggle" disabled={savingTarget} onClick={onSaveTarget}>
-                {savingTarget ? "Сохраняем..." : "Сохранить цель"}
+                {savingTarget ? "Сохраняем..." : "Отслеживать блок"}
               </button>
             )}
             <button type="button" className="element-picker-toggle" onClick={onReset}>
@@ -954,9 +954,9 @@ export default function ComparePage() {
         element,
       });
       setSavedTarget(target);
-      setTargetMessage(`Цель «${target.name}» сохранена. ${target.next_step}`);
+      setTargetMessage(`Блок «${target.name}» сохранён. ${target.next_step}`);
     } catch (err) {
-      setTargetError(err instanceof Error ? err.message : "Не удалось сохранить цель мониторинга.");
+      setTargetError(err instanceof Error ? err.message : "Не удалось сохранить отслеживаемый блок.");
     } finally {
       setSavingTargetSide(null);
     }
@@ -975,9 +975,9 @@ export default function ComparePage() {
           : result.status === "missing"
             ? "не найдена"
             : "не проверяется";
-      setTargetMessage(`Проверка цели: ${label}. ${result.message}`);
+      setTargetMessage(`Проверка блока: ${label}. ${result.message}`);
     } catch (err) {
-      setTargetError(err instanceof Error ? err.message : "Не удалось проверить цель мониторинга.");
+      setTargetError(err instanceof Error ? err.message : "Не удалось проверить отслеживаемый блок.");
     } finally {
       setCheckingTarget(false);
     }
@@ -1371,7 +1371,7 @@ export default function ComparePage() {
                     <StatusText tone="success">{targetMessage}</StatusText>
                     {savedTarget && (
                       <Button size="sm" variant="secondary" disabled={checkingTarget} onClick={() => void checkSavedMonitoringTarget()}>
-                        {checkingTarget ? "Проверяем..." : "Проверить цель"}
+                        {checkingTarget ? "Проверяем..." : "Проверить блок"}
                       </Button>
                     )}
                   </Card>
