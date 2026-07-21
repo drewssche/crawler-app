@@ -11,6 +11,7 @@ import { hasPermission } from "../../utils/permissions";
 
 const SIDEBAR_LEFT_COLLAPSED_STORAGE_KEY = "crawler.sidebarLeft.collapsed";
 const SIDEBAR_RIGHT_COLLAPSED_STORAGE_KEY = "crawler.sidebarRight.collapsed";
+const APP_TITLE = "Crawler App";
 
 function readSidebarLeftCollapsed(): boolean {
   if (typeof window === "undefined") return false;
@@ -52,13 +53,20 @@ export default function AppLayout() {
   const { user } = useAuth();
   const [leftCollapsed, setLeftCollapsed] = useState(() => readSidebarLeftCollapsed());
   const [rightCollapsed, setRightCollapsed] = useState(() => readSidebarRightCollapsed());
-  const [projectCrumbLabel, setProjectCrumbLabel] = useState<string | null>(null);
+  const [loadedProjectLabel, setLoadedProjectLabel] = useState<{ projectId: number; label: string } | null>(null);
 
   const path = location.pathname.split("?")[0];
   const stateProjectName =
     location.state && typeof location.state === "object" && "projectName" in location.state
       ? String((location.state as { projectName?: unknown }).projectName || "")
       : "";
+  const projectPathMatch = path.match(/^\/projects\/([0-9]+)(?:\/(?:compare|inspect))?$/);
+  const routeProjectId = projectPathMatch ? Number(projectPathMatch[1]) : null;
+  const projectCrumbLabel = routeProjectId && stateProjectName
+    ? normalizeProjectLabel(stateProjectName, routeProjectId)
+    : routeProjectId && loadedProjectLabel?.projectId === routeProjectId
+      ? loadedProjectLabel.label
+      : null;
   const isSettingsTree =
     path === "/settings" ||
     path === "/users" ||
@@ -111,32 +119,47 @@ export default function AppLayout() {
 
   useEffect(() => {
     const match = path.match(/^\/projects\/([0-9]+)(?:\/(?:compare|inspect))?$/);
-    if (!match) return;
+    if (!match) {
+      document.title = APP_TITLE;
+      return;
+    }
     const projectId = Number(match[1]);
-    if (!Number.isFinite(projectId) || projectId <= 0) return;
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      document.title = APP_TITLE;
+      return;
+    }
+
+    const immediateLabel = normalizeProjectLabel(stateProjectName, projectId);
+    document.title = `${immediateLabel} · ${APP_TITLE}`;
 
     let cancelled = false;
+    function applyProjectLabel(name: string | null | undefined) {
+      if (cancelled) return;
+      const label = normalizeProjectLabel(name, projectId);
+      setLoadedProjectLabel({ projectId, label });
+      document.title = `${label} · ${APP_TITLE}`;
+    }
+
     async function loadProjectLabel() {
       try {
         const cached = await getProjectsCached(false);
         if (cancelled) return;
         const hit = cached.find((p) => p.id === projectId);
         if (hit?.name) {
-          setProjectCrumbLabel(normalizeProjectLabel(hit.name, projectId));
+          applyProjectLabel(hit.name);
           return;
         }
         const row = await apiGet<{ id: number; name: string }>(`/projects/${projectId}`);
-        if (cancelled) return;
-        setProjectCrumbLabel(normalizeProjectLabel(row?.name, projectId));
+        applyProjectLabel(row?.name);
       } catch {
-        if (cancelled) return;
-        setProjectCrumbLabel(`\u041f\u0440\u043e\u0435\u043a\u0442 #${projectId}`);
+        applyProjectLabel(null);
       }
     }
     void loadProjectLabel();
 
     return () => {
       cancelled = true;
+      document.title = APP_TITLE;
     };
   }, [path, stateProjectName]);
 
